@@ -49,12 +49,17 @@ TEMPLATES = {
 # ================= МЕНЮ ПОЛЬЗОВАТЕЛЯ =================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
-        InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
-    )
-    bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
+    try:
+        print(f"🚀 Получена команда /start от пользователя {message.from_user.id}")
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
+            InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
+        )
+        bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
+        print("✅ Приветствие успешно отправлено в Telegram!")
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ОТПРАВКИ: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('btn_'))
 def handle_user_query(call):
@@ -585,13 +590,23 @@ def handle_admin_replies(message):
         target_uid = topic_to_user[thread_id]
         bot.send_message(target_uid, message.text)
 
-# ==================== WEBHOOK ====================
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
-    bot.process_new_updates([update])
-    return 'ok', 200
+# ================= WEBHOOK И ЗАПУСК СЕРВЕРА =================
+app = Flask(__name__)
 
-if __name__ == '__main__':
-    print("Бот запущен — мягкая версия с приветствием и удалением сообщений (кроме сети ПАРНИ)")
-    app.run(host='0.0.0.0', port=5000)
+# Сюда Telegram будет присылать новые сообщения (обработчик вебхука)
+@app.route('/' + TOKEN, methods=['POST'])
+def getMessage():
+    json_string = request.get_data().decode('utf-8')
+    print(f"📥 ТЕЛЕГРАМ ПРИСЛАЛ: {json_string}") # <--- Эта строчка покажет всё!
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "!", 200
+
+# Этот блок срабатывает при запуске скрипта
+if __name__ == "__main__":
+    # Бот сам автоматически регистрирует вебхук в Telegram при старте
+    bot.remove_webhook()
+    bot.set_webhook(url=APP_URL + '/' + TOKEN)
+    
+    # Запуск Flask-сервера (Render сам подставит нужный PORT)
+    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))
