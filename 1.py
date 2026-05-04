@@ -12,7 +12,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 APP_URL = os.getenv("APP_URL") # Ссылка на твой апп на Render (например, https://my-bot.onrender.com)
 
-STAFF_GROUP_ID = "-1003719274383" # ID группы можно оставить в коде, это не страшно
+STAFF_GROUP_ID = "-1002196190507" # ID группы можно оставить в коде, это не страшно
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client['elite_bot_db']
