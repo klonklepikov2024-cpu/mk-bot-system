@@ -18,7 +18,7 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client['elite_bot_db']
 archive_collection = db['grouphelp_archive']
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 
 topic_to_user = {} 
 user_to_topic = {}
