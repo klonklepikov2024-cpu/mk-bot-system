@@ -65,8 +65,16 @@ def send_welcome(message):
 def handle_user_query(call):
     bot.answer_callback_query(call.id)
     uid = call.from_user.id
-    name = call.from_user.first_name or "Скрыто"
+    
+    # 1. ЗАЩИТА ОТ "НЕВИДИМОК" (Исправляем пустые имена в топиках)
+    name = call.from_user.first_name
+    if not name or name == '\u3164' or name == 'ㅤ':
+        name = f"Без Имени (ID {uid})"
+
     username = f"@{call.from_user.username}" if call.from_user.username else f"ID {uid}"
+    
+    # 2. ЗАЩИТА ОТ КРАША MARKDOWN (Экранируем нижнее подчеркивание)
+    safe_username = username.replace('_', '\\_')
 
     user_data = paid_collection.find_one({"uid": uid}) or {"uid": uid, "status": 0, "strikes": 0, "thread_id": None}
     thread_id = user_data.get("thread_id")
@@ -93,16 +101,16 @@ def handle_user_query(call):
             markup_ban.add(InlineKeyboardButton("🚷 Заблокировать (Спам)", callback_data=f"ban_{uid}"))
             
             if thread_id:
-                caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {username}\n\n{history_text}"
+                # Используем безопасный safe_username
+                caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
-                # Обновляем тип топика на случай, если он пришел из рекламы
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
             else:
                 topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
                 thread_id = topic.message_thread_id
-                # Ставим штамп "unban"
                 paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}}, upsert=True)
-                caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {username}\n\n{history_text}"
+                # Используем безопасный safe_username
+                caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
             
             topic_to_user[thread_id] = uid
@@ -126,14 +134,15 @@ def handle_user_query(call):
         markup.add(InlineKeyboardButton("🚨 Это хитрец (Впаять страйк)", callback_data=f"trap_{uid}"))
         
         if thread_id:
-            bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            # Используем безопасный safe_username
+            bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
         else:
             topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
             thread_id = topic.message_thread_id
-            # Ставим штамп "ads"
             paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
-            bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            # Используем безопасный safe_username
+            bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         
         topic_to_user[thread_id] = uid
         user_to_topic[uid] = thread_id
