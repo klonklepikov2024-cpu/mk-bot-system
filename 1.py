@@ -116,6 +116,10 @@ def handle_user_query(call):
             markup_ban.add(InlineKeyboardButton("🚷 Заблокировать (Спам)", callback_data=f"ban_{uid}"))
             
             if thread_id:
+                # ВОСКРЕШАЕМ ТОПИК
+                try: bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
+                except: pass
+                
                 caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
@@ -147,6 +151,10 @@ def handle_user_query(call):
         markup.add(InlineKeyboardButton("🚨 Это хитрец (Впаять страйк)", callback_data=f"trap_{uid}"))
         
         if thread_id:
+            # ВОСКРЕШАЕМ ТОПИК, ЕСЛИ ОН БЫЛ ЗАКРЫТ
+            try: bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
+            except: pass
+            
             bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
         else:
@@ -160,16 +168,21 @@ def handle_user_query(call):
         return
 
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
+# ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private', content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])
 def handle_user_messages(message):
     uid = message.from_user.id
-    
-    # Загружаем профиль юзера
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
-    # 🛑 ВЫШИБАЛА: Если у юзера 3 страйка и нет оплаты — сообщения летят в пустоту
+    # 🛑 ВЫШИБАЛА: Если у юзера 3 страйка и нет оплаты — игнор
     if user_data.get("strikes", 0) >= 3 and user_data.get("status") != 1:
-        return # Бот просто игнорирует всё
+        return 
+        
+    # 🛑 ЗАЩИТА: ЕСЛИ ТИКЕТ ЗАКРЫТ — НЕ ДАЕМ ПИСАТЬ
+    topic_type = user_data.get("topic_type")
+    if not topic_type:
+        bot.send_message(message.chat.id, "🏁 Ваше обращение закрыто.\nДля создания нового выберите нужный раздел в меню /start.")
+        return
         
     # 🩹 ЛЕКАРСТВО ОТ АМНЕЗИИ
     if uid not in user_to_topic and "thread_id" in user_data:
@@ -178,22 +191,26 @@ def handle_user_messages(message):
 
     if uid in user_to_topic:
         thread_id = user_to_topic[uid]
-        topic_type = user_data.get("topic_type", "unban") # Читаем штамп
         
-        # 💬 Если юзер прислал ТЕКСТ
+        # 🧹 ФУНКЦИЯ ОЧИСТКИ ПРЕДЫДУЩИХ КНОПОК
+        def cleanup_old_buttons():
+            last_msg_id = user_data.get("last_admin_msg_id")
+            if last_msg_id:
+                try: bot.edit_message_reply_markup(STAFF_GROUP_ID, last_msg_id, reply_markup=None)
+                except: pass
+
+        # 💬 ТЕКСТ
         if message.content_type == 'text':
-            
-            # --- АВТОМАТИЧЕСКАЯ ВЫДАЧА ФРАЗЫ И ЗАПУСК ТАЙМЕРА ---
             if message.text.lower() in ["готов", "готова", "готовы", "готов(а)"]:
-                user_verif_timer[uid] = datetime.datetime.now() # Засекаем 10 минут
+                user_verif_timer[uid] = datetime.datetime.now()
                 text_phrase = "⏳ **Таймер запущен! У вас ровно 10 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК из [ВАШ ГОРОД], сейчас на часах [СКОЛЬКО ВРЕМЕНИ]»*."
                 bot.send_message(uid, text_phrase, parse_mode="Markdown")
                 bot.send_message(STAFF_GROUP_ID, "⏳ *Пользователь написал «Готов». Бот выдал фразу и запустил таймер 10 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
-                return # Прерываем, чтобы не кидать вам меню кнопок на одно слово
-            # ----------------------------------------------------
+                return 
 
+            cleanup_old_buttons()
+            
             if topic_type == "unban":
-                # Показывать 9 кнопок только для нарушителей
                 markup = InlineKeyboardMarkup(row_width=2)
                 markup.add(
                     InlineKeyboardButton("🔞 Запрос /18", callback_data="tpl_18"),
@@ -206,55 +223,44 @@ def handle_user_messages(message):
                     InlineKeyboardButton("🔗 Ссылка БИО", callback_data="tpl_bio"),
                     InlineKeyboardButton("👶 Реакция 18-", callback_data="tpl_minor")
                 )
-                # Две главные кнопки управления диалогом
-                markup.add(
-                    InlineKeyboardButton("🔓 РАЗБАН (Снять ограничения)", callback_data="force_unban"),
-                    InlineKeyboardButton("🏁 Закрыть (Без разбана)", callback_data="close_ticket")
-                )
-                bot.send_message(STAFF_GROUP_ID, f"📩 {message.text}", message_thread_id=thread_id, reply_markup=markup)
+                markup.add(InlineKeyboardButton("🔓 РАЗБАН (Снять ограничения)", callback_data="force_unban"), InlineKeyboardButton("🏁 Закрыть (Без разбана)", callback_data="close_ticket"))
             else:
-                # Для рекламщиков только кнопка закрытия
                 markup = InlineKeyboardMarkup()
                 markup.add(InlineKeyboardButton("🏁 Закрыть диалог", callback_data="close_ticket"))
-                bot.send_message(STAFF_GROUP_ID, f"📩 {message.text}", message_thread_id=thread_id, reply_markup=markup)
+                
+            sent_msg = bot.send_message(STAFF_GROUP_ID, f"📩 {message.text}", message_thread_id=thread_id, reply_markup=markup)
+            paid_collection.update_one({"uid": uid}, {"$set": {"last_admin_msg_id": sent_msg.message_id}})
         
-        # 🎙 Если юзер прислал ГОЛОСОВОЕ, ВИДЕО или СТИКЕР (Фикс краша)
-        elif message.content_type in ['voice', 'video', 'sticker', 'audio']:
-            bot.copy_message(STAFF_GROUP_ID, message.chat.id, message.message_id, message_thread_id=thread_id)
-            # Текста здесь нет, поэтому просто дублируем медиа в админку без лишних кнопок
-        
-        # 📸 Если юзер прислал ФОТО или ДОКУМЕНТ (паспорт)
+        # 📸 ФОТО ИЛИ ДОКУМЕНТ
         elif message.content_type in ['photo', 'document']:
+            cleanup_old_buttons()
             markup = InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                InlineKeyboardButton("✅ Документ принят (Запросить видео)", callback_data="doc_ok"),
-                InlineKeyboardButton("❌ Плохое фото (Перезапросить)", callback_data="doc_bad")
-            )
+            markup.add(InlineKeyboardButton("✅ Документ принят (Запросить видео)", callback_data="doc_ok"), InlineKeyboardButton("❌ Плохое фото (Перезапросить)", callback_data="doc_bad"))
             if message.photo:
-                bot.send_photo(STAFF_GROUP_ID, message.photo[-1].file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
-            elif message.document:
-                bot.send_document(STAFF_GROUP_ID, message.document.file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                sent_msg = bot.send_photo(STAFF_GROUP_ID, message.photo[-1].file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            else:
+                sent_msg = bot.send_document(STAFF_GROUP_ID, message.document.file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            paid_collection.update_one({"uid": uid}, {"$set": {"last_admin_msg_id": sent_msg.message_id}})
         
-        # 🎥 Если юзер прислал КРУЖОК
+        # 🎥 КРУЖОК
         elif message.content_type == 'video_note':
+            cleanup_old_buttons()
             if uid in user_verif_timer:
                 time_diff = (datetime.datetime.now() - user_verif_timer[uid]).total_seconds()
                 if time_diff > 600:
                     bot.send_message(uid, "❌ **Время вышло!** Вы не уложились в 10 минут. Ожидайте решения администратора.")
-                    bot.send_message(STAFF_GROUP_ID, "⚠️ **ВНИМАНИЕ! Юзер просрочил таймер.** Прошло больше 10 минут. Тщательно проверьте на фейк!", message_thread_id=thread_id)
+                    bot.send_message(STAFF_GROUP_ID, "⚠️ **ВНИМАНИЕ! Юзер просрочил таймер.**", message_thread_id=thread_id)
                 del user_verif_timer[uid]
             
             markup = InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                InlineKeyboardButton("✅ Кружок принят (РАЗБАН)", callback_data="vid_ok"),
-                InlineKeyboardButton("❌ Плохое видео (Перезапросить)", callback_data="vid_bad")
-            )
-            bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
+            markup.add(InlineKeyboardButton("✅ Кружок принят (РАЗБАН)", callback_data="vid_ok"), InlineKeyboardButton("❌ Плохое видео (Перезапросить)", callback_data="vid_bad"))
+            sent_msg = bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
             bot.send_message(STAFF_GROUP_ID, "🎥 **Пользователь прислал кружок!**\nПроверьте лицо и фразу:", message_thread_id=thread_id, parse_mode="Markdown")
+            paid_collection.update_one({"uid": uid}, {"$set": {"last_admin_msg_id": sent_msg.message_id}})
 
-    else:
-        bot.send_message(message.chat.id, "Сначала выберите раздел в меню /start!")
-
+        # 🎙 ПРОЧЕЕ
+        elif message.content_type in ['voice', 'video', 'sticker', 'audio']:
+            bot.copy_message(STAFF_GROUP_ID, message.chat.id, message.message_id, message_thread_id=thread_id)
 # ================= ПРОВЕРКА ДОКУМЕНТОВ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['doc_ok', 'doc_bad'])
 def handle_doc_check(call):
@@ -302,12 +308,16 @@ def handle_admin_templates(call):
         template_text = TEMPLATES.get(call.data)
         
         if template_text:
-            bot.send_message(target_uid, template_text, parse_mode="Markdown")
-            bot.answer_callback_query(call.id, "✅ Шаблон успешно отправлен!")
-            bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил шаблон:*\n_{template_text.splitlines()[0]}_", message_thread_id=thread_id, parse_mode="Markdown")
-            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-    else:
-        bot.answer_callback_query(call.id, "❌ Ошибка: Пользователь не найден в базе.")
+            try:
+                bot.send_message(target_uid, template_text, parse_mode="Markdown")
+                bot.answer_callback_query(call.id, "✅ Шаблон успешно отправлен!")
+                bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил шаблон:*\n_{template_text.splitlines()[0]}_", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+            except Exception as e:
+                if "blocked" in str(e).lower():
+                    bot.answer_callback_query(call.id, "❌ Ошибка: Пользователь заблокировал бота!", show_alert=True)
+                    bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Невозможно отправить шаблон. Пользователь заблокировал бота!", message_thread_id=thread_id, parse_mode="Markdown")
+
 
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
@@ -385,7 +395,7 @@ def handle_vid_check(call):
                 pass 
             
             # Сбрасываем статус оплаты (юзер снова становится "С улицы")
-            paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}})
+            paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
             
         elif call.data == 'vid_bad':
             # Выдаем админу подменю с причинами
@@ -463,6 +473,7 @@ def handle_trap(call):
         bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
     except Exception:
         pass
+    paid_collection.update_one({"uid": target_uid}, {"$unset": {"topic_type": ""}})
 
 # ================= БЫСТРАЯ БЛОКИРОВКА АДМИНОМ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ban_'))
@@ -472,7 +483,7 @@ def handle_fast_ban(call):
     thread_id = call.message.message_thread_id
     
     # Выдаем 3 страйка и аннулируем билет
-    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 3, "status": 0}}, upsert=True)
+    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 3, "status": 0}, "$unset": {"topic_type": ""}}, upsert=True)
     bot.send_message(target_uid, "⛔️ **Вы были заблокированы администратором за нарушение правил общения.**")
     bot.edit_message_text(f"🚷 **Юзер заблокирован администратором!** Топик закрыт.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
@@ -524,6 +535,7 @@ def handle_close_ticket(call):
             bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
         except Exception:
             pass
+        paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
         
 # ================= ОБРАБОТКА ОЦЕНКИ И ПРЕМИЙ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rate_'))
@@ -613,7 +625,7 @@ def handle_force_unban(call):
         except Exception: pass
         
         # Аннулируем билет
-        paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}})
+        paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
 # ================= РУЧНЫЕ ОТВЕТЫ ОТ АДМИНА -> ЮЗЕРУ =================
 @bot.message_handler(func=lambda message: str(message.chat.id) == STAFF_GROUP_ID and message.is_topic_message)
@@ -629,7 +641,17 @@ def handle_admin_replies(message):
 
     if thread_id in topic_to_user:
         target_uid = topic_to_user[thread_id]
-        bot.send_message(target_uid, message.text)
+        
+        # 🛡 ЗАЩИТА ОТ БЛОКИРОВКИ БОТА
+        try:
+            bot.send_message(target_uid, message.text)
+        except Exception as e:
+            if "blocked" in str(e).lower():
+                bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Пользователь заблокировал бота! Ваше сообщение не доставлено.", message_thread_id=thread_id, parse_mode="Markdown")
+            elif "not found" in str(e).lower():
+                bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Чат с пользователем не найден (возможно, он удалил аккаунт).", message_thread_id=thread_id, parse_mode="Markdown")
+            else:
+                pass # Игнорируем другие мелкие ошибки
 
 # ================= WEBHOOK И ЗАПУСК СЕРВЕРА =================
 app = Flask(__name__)
