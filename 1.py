@@ -31,7 +31,7 @@ TEMPLATES = {
 
     "tpl_nark_react": "⛔️ **БЛОКИРОВКА: Реакция на запрещенные вещества**\n\nВы были заблокированы за положительную реакцию (смайлик) на сообщение, связанное с наркотическими веществами.\n\nℹ️ В нашей сети действует нулевая терпимость к любым формам поддержки запрещенных веществ.\n\n🔓 Разблокировка возможна только на платной основе (штраф).",
     
-    "tpl_verif": "⚠️ **Сработала система защиты**\n\nМы временно ограничили ваш доступ к сети МК из-за подозрительной активности аккаунта.\n\nℹ️ **Как снять ограничения:**\nДля подтверждения необходимо пройти видео-верификацию (записать видео-кружок). На видео должно быть четко видно ваше лицо, и вам нужно будет произнести специальную фразу.\n\n👉 Если вы готовы пройти проверку, напишите сюда: **«Пройти верификацию»**.",
+"tpl_verif": "⚠️ **Сработала система защиты**\n\nМы временно ограничили ваш доступ к сети МК из-за подозрительной активности аккаунта.\n\nℹ️ **Как снять ограничения:**\nДля подтверждения необходимо пройти видео-верификацию (записать видео-кружок). На видео должно быть четко видно ваше лицо, и вам нужно будет произнести специальную фразу.\n\n👉 Если вы готовы пройти проверку, напишите сюда: **«Готов»**.",
     
     "tpl_mp": "💰 **Ограничение: Коммерческая деятельность**\n\nВаши ограничения связаны с публикацией объявлений об оказании услуг за материальную помощь (МП).\n\nℹ️ Согласно правилам сети: любая коммерческая деятельность допускается *только после оплаты рекламного взноса*.\n\n🔓 **Для снятия ограничений** необходимо оплатить штраф за нарушение правил + оплатить рекламный пакет. Напишите, если готовы узнать условия.",
     
@@ -461,19 +461,21 @@ def handle_trap(call):
     # Начисляем страйк в базу
     user_data = paid_collection.find_one({"uid": target_uid}) or {"uid": target_uid, "strikes": 0}
     new_strikes = user_data.get("strikes", 0) + 1
-    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
+    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": new_strikes}, "$unset": {"topic_type": ""}}, upsert=True)
     
     # Бьем юзера током
     bot.send_message(target_uid, f"⛔️ **Вы выбрали раздел 'Реклама' для обхода системы.**\nВам начислен штрафной страйк за спам ({new_strikes}/3)! Для разбана используйте платную поддержку.")
     
-    # Отчитываемся в админке и закрываем топик
-    bot.edit_message_text(f"🚨 **Хитрец пойман!** Ему начислен страйк ({new_strikes}/3). Топик закрыт.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+    # Сохраняем старый текст и дописываем статус
+    try:
+        new_text = f"{call.message.html}\n\n🚨 <b>Хитрец пойман!</b> Ему начислен страйк ({new_strikes}/3). Топик закрыт."
+        bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+    except: pass
     
     try:
         bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
     except Exception:
         pass
-    paid_collection.update_one({"uid": target_uid}, {"$unset": {"topic_type": ""}})
 
 # ================= БЫСТРАЯ БЛОКИРОВКА АДМИНОМ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ban_'))
@@ -485,7 +487,13 @@ def handle_fast_ban(call):
     # Выдаем 3 страйка и аннулируем билет
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 3, "status": 0}, "$unset": {"topic_type": ""}}, upsert=True)
     bot.send_message(target_uid, "⛔️ **Вы были заблокированы администратором за нарушение правил общения.**")
-    bot.edit_message_text(f"🚷 **Юзер заблокирован администратором!** Топик закрыт.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+    
+    # Сохраняем старый текст и дописываем статус
+    try:
+        new_text = f"{call.message.html}\n\n🚷 <b>Юзер заблокирован администратором! Топик закрыт.</b>"
+        bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+    except: pass
+    
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
     except: pass
         
@@ -529,8 +537,12 @@ def handle_close_ticket(call):
             upsert=True
         )
         
-        # 3. Информируем админов
-        bot.edit_message_text(f"🏁 **Тикет закрыт.** Пользователю отправлен запрос оценки.", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        # 3. Информируем админов (СОХРАНЯЯ ТЕКСТ)
+        try:
+            new_text = f"{call.message.html}\n\n🏁 <b>Тикет закрыт.</b> Пользователю отправлен запрос оценки."
+            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+        except: pass
+        
         try:
             bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
         except Exception:
@@ -618,8 +630,11 @@ def handle_force_unban(call):
             upsert=True
         )
         
-        # 5. ЗАКРЫВАЕМ ТЕМУ В АДМИНКЕ
-        bot.edit_message_text(f"🔓 **Пользователь разбанен!** Приказ передан Скайнету. Тикет закрыт: `{ticket_num}`", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        # 5. ЗАКРЫВАЕМ ТЕМУ В АДМИНКЕ (СОХРАНЯЯ ТЕКСТ)
+        try:
+            new_text = f"{call.message.html}\n\n🔓 <b>Пользователь разбанен!</b> Приказ передан Скайнету. Тикет закрыт: {ticket_num}"
+            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+        except: pass
         
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
         except Exception: pass
