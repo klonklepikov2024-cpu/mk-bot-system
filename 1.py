@@ -64,16 +64,19 @@ def send_welcome(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('btn_'))
 def handle_user_query(call):
     bot.answer_callback_query(call.id)
+    
+    # --- УБИРАЕМ КНОПКИ У ЮЗЕРА, ЧТОБЫ НЕ СПАМИЛ ---
+    try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except: pass
+    
     uid = call.from_user.id
     
-    # 1. ЗАЩИТА ОТ "НЕВИДИМОК" (Исправляем пустые имена в топиках)
+    # ЗАЩИТА ОТ "НЕВИДИМОК"
     name = call.from_user.first_name
     if not name or name == '\u3164' or name == 'ㅤ':
         name = f"Без Имени (ID {uid})"
 
     username = f"@{call.from_user.username}" if call.from_user.username else f"ID {uid}"
-    
-    # 2. ЗАЩИТА ОТ КРАША MARKDOWN (Экранируем нижнее подчеркивание)
     safe_username = username.replace('_', '\\_')
 
     user_data = paid_collection.find_one({"uid": uid}) or {"uid": uid, "status": 0, "strikes": 0, "thread_id": None}
@@ -88,12 +91,24 @@ def handle_user_query(call):
         if user_data.get("status") == 1:
             paid_collection.update_one({"uid": uid}, {"$set": {"strikes": 0}}) 
             
-            user_record = archive_collection.find_one({"target": username}) or archive_collection.find_one({"target": str(uid)})
+            # --- УЛУЧШЕННЫЙ ПОИСК ИСТОРИИ (ID, Строка, Скайнет) ---
+            # Ищем в архиве GroupHelp всеми способами
+            user_record = archive_collection.find_one({"target": username}) or \
+                          archive_collection.find_one({"target": str(uid)}) or \
+                          archive_collection.find_one({"target": uid})
+            
+            # Ищем активный бан в базе Скайнета
+            skynet_ban = db['banned'].find_one({"_id": uid})
+            
             history_text = "🟢 История чиста."
             if user_record and "history" in user_record:
-                history_text = "⚠️ **Досье из GroupHelp:**\n"
-                for entry in user_record["history"][-15:]: 
+                history_text = "⚠️ **Досье пользователя:**\n"
+                for entry in user_record["history"][-10:]: # Последние 10 записей
                     history_text += f"• {entry['date']} — {entry['action']}\nПричина: {entry.get('reason', 'Не указана')}\n"
+            
+            if skynet_ban:
+                history_text += f"\n🚨 **АКТИВНЫЙ БАН СКАЙНЕТА:**\nПричина: {skynet_ban.get('reason', 'Не указана')}"
+            # ----------------------------------------------------
             
             bot.send_message(call.message.chat.id, "✅ Ваша оплата подтверждена. Напишите вашу проблему ниже, и мы начнем процесс верификации.")
 
@@ -101,7 +116,6 @@ def handle_user_query(call):
             markup_ban.add(InlineKeyboardButton("🚷 Заблокировать (Спам)", callback_data=f"ban_{uid}"))
             
             if thread_id:
-                # Используем безопасный safe_username
                 caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
@@ -109,7 +123,6 @@ def handle_user_query(call):
                 topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
                 thread_id = topic.message_thread_id
                 paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}}, upsert=True)
-                # Используем безопасный safe_username
                 caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
             
@@ -134,14 +147,12 @@ def handle_user_query(call):
         markup.add(InlineKeyboardButton("🚨 Это хитрец (Впаять страйк)", callback_data=f"trap_{uid}"))
         
         if thread_id:
-            # Используем безопасный safe_username
             bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
         else:
             topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
             thread_id = topic.message_thread_id
             paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
-            # Используем безопасный safe_username
             bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         
         topic_to_user[thread_id] = uid
@@ -274,27 +285,29 @@ def handle_doc_check(call):
 # ================= ОБРАБОТКА КНОПОК АДМИНА (ШАБЛОНЫ) =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('tpl_'))
 def handle_admin_templates(call):
-    # Проверка, что кнопку жмут в админском чате
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
     thread_id = call.message.message_thread_id
+    
+    # 🩹 ЛЕКАРСТВО ОТ АМНЕЗИИ ДЛЯ КНОПОК
+    if thread_id not in topic_to_user:
+        user_data = paid_collection.find_one({"thread_id": thread_id})
+        if user_data:
+            topic_to_user[thread_id] = user_data["uid"]
+            user_to_topic[user_data["uid"]] = thread_id
+            
     if thread_id in topic_to_user:
         target_uid = topic_to_user[thread_id]
         template_text = TEMPLATES.get(call.data)
         
         if template_text:
-            # 1. Отправляем юзеру
             bot.send_message(target_uid, template_text, parse_mode="Markdown")
-            # 2. Пишем всплывашку админу "Успешно"
-            bot.answer_callback_query(call.id, "✅ Шаблон успешно отправлен пользователю!")
-            # 3. Отчитываемся в теме, чтобы другие админы видели
+            bot.answer_callback_query(call.id, "✅ Шаблон успешно отправлен!")
             bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил шаблон:*\n_{template_text.splitlines()[0]}_", message_thread_id=thread_id, parse_mode="Markdown")
-            
-            # Убираем кнопки из исходного сообщения, чтобы не нажать дважды
             bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
     else:
-        bot.answer_callback_query(call.id, "❌ Ошибка: Не удалось найти пользователя.")
+        bot.answer_callback_query(call.id, "❌ Ошибка: Пользователь не найден в базе.")
 
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
@@ -361,7 +374,10 @@ def handle_vid_check(call):
             )
             
             # 5. ЗАКРЫВАЕМ ТЕМУ У АДМИНОВ И АННУЛИРУЕМ БИЛЕТ
-            bot.edit_message_caption(f"✅ *Видео-кружок одобрен!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+            # Убираем кнопки у кружка
+            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+            # Шлем отчет отдельным сообщением (так как у кружков нет подписей)
+            bot.send_message(call.message.chat.id, f"✅ *Видео-кружок одобрен!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
             
             try:
                 bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
@@ -379,7 +395,8 @@ def handle_vid_check(call):
                 InlineKeyboardButton("🤐 Не та фраза / Нет времени", callback_data="rej_vid_phrase"),
                 InlineKeyboardButton("🔇 Нет звука / Тишина", callback_data="rej_vid_sound")
             )
-            bot.edit_message_caption("❓ **Укажите причину отказа:**", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+            # Просто меняем кнопки на кружке
+            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 # ================= ОБРАБОТКА ПРИЧИН ОТКАЗА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rej_'))
@@ -412,8 +429,15 @@ def handle_rejections(call):
         if text_to_user:
             # Отправляем юзеру точную причину
             bot.send_message(target_uid, text_to_user, parse_mode="Markdown")
-            # Отчитываемся в теме, убираем кнопки
-            bot.edit_message_caption(f"❌ *Отклонено (Причина: {admin_report}). Запрошено повторно.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+            
+            # Отчитываемся в теме
+            try:
+                # Если это фото/паспорт (есть подпись)
+                bot.edit_message_caption(f"❌ *Отклонено (Причина: {admin_report}). Запрошено повторно.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+            except Exception:
+                # Если это кружок (подписи нет)
+                bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+                bot.send_message(call.message.chat.id, f"❌ *Отклонено (Причина: {admin_report}). Запрошено повторно.*", message_thread_id=thread_id, parse_mode="Markdown")
 
 # ================= КАПКАН ДЛЯ ХИТРЕЦОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('trap_'))
@@ -532,12 +556,20 @@ def handle_force_unban(call):
         return
         
     thread_id = call.message.message_thread_id
+    
+    # 🩹 ЛЕКАРСТВО ОТ АМНЕЗИИ ДЛЯ КНОПОК
+    if thread_id not in topic_to_user:
+        user_data = paid_collection.find_one({"thread_id": thread_id})
+        if user_data:
+            topic_to_user[thread_id] = user_data["uid"]
+            user_to_topic[user_data["uid"]] = thread_id
+
     if thread_id in topic_to_user:
         target_uid = topic_to_user[thread_id]
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
         
-        # 1. ПЕРЕДАЕМ ПРИКАЗ СКАЙНЕТУ ЧЕРЕЗ БАЗУ
+        # Передаем приказ Скайнету
         db['skynet_tasks'].insert_one({
             "uid": target_uid,
             "action": "full_unban",
