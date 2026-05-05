@@ -597,7 +597,7 @@ def handle_close_ticket(call):
     if thread_id in topic_to_user:
         target_uid = topic_to_user[thread_id]
         
-        # 1. Отправляем пользователю меню оценки
+        # 1. Отправляем пользователю меню оценки (с защитой от вылета)
         markup = InlineKeyboardMarkup(row_width=5)
         markup.add(
             InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
@@ -606,14 +606,21 @@ def handle_close_ticket(call):
             InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
             InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
         )
+        
         # КТО НАЖАЛ КНОПКУ? Запоминаем админа
         admin_username = call.from_user.username or call.from_user.first_name
         db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
-        bot.send_message(
-            target_uid, 
-            "🏁 **Ваше обращение закрыто.**\n\nПожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", 
-            reply_markup=markup
-        )
+        
+        try:
+            bot.send_message(
+                target_uid, 
+                "🏁 **Ваше обращение закрыто.**\n\nПожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", 
+                reply_markup=markup
+            )
+        except Exception as e:
+            # Если юзер удален или заблокировал бота, просто пишем об этом в админку и идем дальше
+            bot.send_message(STAFF_GROUP_ID, f"ℹ️ Не удалось отправить запрос оценки юзеру `{target_uid}` (удален или заблокировал бота).", message_thread_id=thread_id)
+
         
         # 2. Обновляем MongoDB (базовое закрытие)
         now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
