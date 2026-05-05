@@ -74,8 +74,10 @@ def handle_user_query(call):
     bot.answer_callback_query(call.id)
     
     # --- УБИРАЕМ КНОПКИ У ЮЗЕРА, ЧТОБЫ НЕ СПАМИЛ ---
-    try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except: pass
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except:
+        pass
     
     uid = call.from_user.id
     
@@ -99,24 +101,21 @@ def handle_user_query(call):
         if user_data.get("status") == 1:
             paid_collection.update_one({"uid": uid}, {"$set": {"strikes": 0}}) 
             
-            # --- УЛУЧШЕННЫЙ ПОИСК ИСТОРИИ (ID, Строка, Скайнет) ---
-            # Ищем в архиве GroupHelp всеми способами
+            # --- УЛУЧШЕННЫЙ ПОИСК ИСТОРИИ ---
             user_record = archive_collection.find_one({"target": username}) or \
                           archive_collection.find_one({"target": str(uid)}) or \
                           archive_collection.find_one({"target": uid})
             
-            # Ищем активный бан в базе Скайнета
             skynet_ban = db['banned'].find_one({"_id": uid})
             
             history_text = "🟢 История чиста."
             if user_record and "history" in user_record:
                 history_text = "⚠️ **Досье пользователя:**\n"
-                for entry in user_record["history"][-10:]: # Последние 10 записей
+                for entry in user_record["history"][-10:]:
                     history_text += f"• {entry['date']} — {entry['action']}\nПричина: {entry.get('reason', 'Не указана')}\n"
             
             if skynet_ban:
                 history_text += f"\n🚨 **АКТИВНЫЙ БАН СКАЙНЕТА:**\nПричина: {skynet_ban.get('reason', 'Не указана')}"
-            # ----------------------------------------------------
             
             bot.send_message(call.message.chat.id, "✅ Ваша оплата подтверждена. Напишите вашу проблему ниже, и мы начнем процесс верификации.")
 
@@ -124,10 +123,10 @@ def handle_user_query(call):
             markup_ban.add(InlineKeyboardButton("🚷 Заблокировать (Спам)", callback_data=f"ban_{uid}"))
             
             if thread_id:
-                # ВОСКРЕШАЕМ ТОПИК
-                try: bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
-                except: pass
-                
+                try:
+                    bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
+                except:
+                    pass
                 caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
@@ -142,15 +141,39 @@ def handle_user_query(call):
             user_to_topic[uid] = thread_id
             
         else:
-                new_strikes = user_data.get("strikes", 0) + 1
-                paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
-                
-                if new_strikes >= 3:
-                    bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Обращения без оплаты игнорируются.")
-                else:
-                    warning_text = f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 50 звезд.\n\nПопытка {new_strikes} из 3. После 3-й попытки бот вас заблокирует."
-                    bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True)
-            return
+            new_strikes = user_data.get("strikes", 0) + 1
+            paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
+            
+            if new_strikes >= 3:
+                bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Обращения без оплаты игнорируются.")
+            else:
+                warning_text = f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 50 звезд.\n\nПопытка {new_strikes} из 3. После 3-й попытки бот вас заблокирует."
+                bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True)
+        return
+
+    # ================= ЛОГИКА КНОПКИ РЕКЛАМЫ =================
+    elif call.data == "btn_ads":
+        bot.send_message(call.message.chat.id, "Вы выбрали раздел 'Купить рекламу'. Пожалуйста, напишите ваше предложение ниже:")
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🚨 Это хитрец (Впаять страйк)", callback_data=f"trap_{uid}"))
+        
+        if thread_id:
+            try:
+                bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
+            except:
+                pass
+            bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
+        else:
+            topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
+            thread_id = topic.message_thread_id
+            paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
+            bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+        
+        topic_to_user[thread_id] = uid
+        user_to_topic[uid] = thread_id
+        return
 
     # ================= ЛОГИКА КНОПКИ РЕКЛАМЫ =================
     elif call.data == "btn_ads":
