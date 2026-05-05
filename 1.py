@@ -6,6 +6,14 @@ import os
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 
+NETWORK_LINKS = (
+    "📍 **Ссылки для возврата в чаты:**\n"
+    "• [МК (Мужской Клуб)](https://t.me/clubofrm/44)\n"
+    "• [ПАРНИ 18+](https://t.me/znakparni/116)\n"
+    "• [ГЕЙ чаты (Инфо)](https://t.me/gaychatcities_info/4)\n"
+    "• [НС (Урал)](https://t.me/uralns/118)"
+)
+
 # ================= НАСТРОЙКИ (БЕЗОПАСНЫЕ) =================
 # Теперь мы не светим пароли! Сервер сам подставит их из настроек.
 TOKEN = os.getenv("BOT_TOKEN")
@@ -134,14 +142,15 @@ def handle_user_query(call):
             user_to_topic[uid] = thread_id
             
         else:
-            new_strikes = user_data.get("strikes", 0) + 1
-            paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
-            
-            if new_strikes >= 3:
-                bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Обращения без оплаты игнорируются.")
-            else:
-                bot.send_message(call.message.chat.id, f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе SUPPORT и оплатить 50 звезд.\nПопытка {new_strikes} из 3. После 3-й попытки бот вас заблокирует.")
-        return
+                new_strikes = user_data.get("strikes", 0) + 1
+                paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
+                
+                if new_strikes >= 3:
+                    bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Обращения без оплаты игнорируются.")
+                else:
+                    warning_text = f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 50 звезд.\n\nПопытка {new_strikes} из 3. После 3-й попытки бот вас заблокирует."
+                    bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True)
+            return
 
     # ================= ЛОГИКА КНОПКИ РЕКЛАМЫ =================
     elif call.data == "btn_ads":
@@ -212,6 +221,16 @@ def handle_user_messages(message):
             
             if topic_type == "unban":
                 markup = InlineKeyboardMarkup(row_width=2)
+                
+                # Кнопки штрафов
+                markup.add(
+                    InlineKeyboardButton("💳 250⭐️", callback_data="fine_250"),
+                    InlineKeyboardButton("💳 650⭐️", callback_data="fine_650"),
+                    InlineKeyboardButton("💳 1563⭐️", callback_data="fine_1563")
+                )
+                markup.add(InlineKeyboardButton("✍️ Указать свою сумму", callback_data="fine_custom"))
+                
+                # Стандартные шаблоны
                 markup.add(
                     InlineKeyboardButton("🔞 Запрос /18", callback_data="tpl_18"),
                     InlineKeyboardButton("🎥 Верификация", callback_data="tpl_verif"),
@@ -288,8 +307,8 @@ def handle_doc_check(call):
             )
             bot.edit_message_caption("❓ **Укажите причину отказа:**", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=markup)
 
-# ================= ОБРАБОТКА КНОПОК АДМИНА (ШАБЛОНЫ) =================
-@bot.callback_query_handler(func=lambda call: call.data.startswith('tpl_'))
+# ================= ОБРАБОТКА КНОПОК АДМИНА И ШТРАФОВ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('tpl_') or call.data.startswith('fine_'))
 def handle_admin_templates(call):
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
@@ -305,8 +324,35 @@ def handle_admin_templates(call):
             
     if thread_id in topic_to_user:
         target_uid = topic_to_user[thread_id]
+
+        # --- РУЧНОЙ ВВОД СУММЫ ---
+        if call.data == 'fine_custom':
+            msg = bot.send_message(STAFF_GROUP_ID, "✍️ **Введите сумму штрафа (от 1 до 10000):**\n_Просто отправьте число сообщением сюда._", message_thread_id=thread_id, parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_custom_fine, target_uid=target_uid, thread_id=thread_id, call_msg=call.message)
+            return
+
+        # --- ФИКСИРОВАННЫЙ ШТРАФ (250, 650, 1563) ---
+        if call.data.startswith('fine_'):
+            amount = int(call.data.split('_')[1])
+            try:
+                bot.send_invoice(
+                    target_uid, 
+                    title=f"Оплата штрафа ({amount}⭐️)", 
+                    description="Штраф за нарушение правил сети. После оплаты все ограничения будут сняты автоматически.", 
+                    invoice_payload=f"fine_payment_{amount}", 
+                    provider_token="", 
+                    currency="XTR", 
+                    prices=[telebot.types.LabeledPrice(label="Штраф", amount=amount)]
+                )
+                bot.answer_callback_query(call.id, f"✅ Счет на {amount}⭐️ отправлен!")
+                bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет выставил счет на штраф ({amount}⭐️)*", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+            except Exception as e:
+                bot.answer_callback_query(call.id, "❌ Ошибка! Возможно бот заблокирован.", show_alert=True)
+            return
+
+        # --- СТАНДАРТНЫЕ ТЕКСТОВЫЕ ШАБЛОНЫ ---
         template_text = TEMPLATES.get(call.data)
-        
         if template_text:
             try:
                 bot.send_message(target_uid, template_text, parse_mode="Markdown")
@@ -318,6 +364,27 @@ def handle_admin_templates(call):
                     bot.answer_callback_query(call.id, "❌ Ошибка: Пользователь заблокировал бота!", show_alert=True)
                     bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Невозможно отправить шаблон. Пользователь заблокировал бота!", message_thread_id=thread_id, parse_mode="Markdown")
 
+# ================= ОБРАБОТКА РУЧНОГО ВВОДА ШТРАФА =================
+def process_custom_fine(message, target_uid, thread_id, call_msg):
+    if not message.text or not message.text.isdigit():
+        bot.send_message(STAFF_GROUP_ID, "❌ **Ошибка:** Нужно было отправить только число (например: 350). Попробуйте нажать кнопку заново.", message_thread_id=thread_id, parse_mode="Markdown")
+        return
+        
+    amount = int(message.text)
+    if amount < 1 or amount > 10000:
+        bot.send_message(STAFF_GROUP_ID, "❌ **Ошибка:** По правилам Telegram сумма должна быть от 1 до 10000 звезд.", message_thread_id=thread_id, parse_mode="Markdown")
+        return
+        
+    try:
+        bot.send_invoice(
+            target_uid, title=f"Оплата штрафа ({amount}⭐️)", description="Штраф за нарушение правил. После оплаты все ограничения будут сняты автоматически.", 
+            invoice_payload=f"fine_payment_{amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="Штраф", amount=amount)]
+        )
+        bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет выставил счет на штраф ({amount}⭐️) по вашему поручению.*", message_thread_id=thread_id, parse_mode="Markdown")
+        try: bot.edit_message_reply_markup(chat_id=call_msg.chat.id, message_id=call_msg.message_id, reply_markup=None)
+        except: pass
+    except Exception:
+        bot.send_message(STAFF_GROUP_ID, f"⚠️ **ОШИБКА:** Не удалось выставить счет.", message_thread_id=thread_id, parse_mode="Markdown")
 
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
@@ -358,7 +425,7 @@ def handle_vid_check(call):
             )
             
             # 2. ОТПРАВЛЯЕМ РАДОСТНУЮ ВЕСТЬ И ССЫЛКУ НА ДОНАТ
-            text_success = f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\nЕсли Вам все понравилось, вы можете задонатить нам пару звездочек на канале: [Единый Платежный Центр](https://t.me/+9qx9PAJQjcdmY2Yy) абсолютно на любой пост, нам будет приятно😍, а также вы поддержите работу качественного сервиса💸💸\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`"
+            text_success = f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\nЕсли Вам все понравилось, вы можете задонатить нам пару звездочек на канале: [Единый Платежный Центр](https://t.me/+9qx9PAJQjcdmY2Yy) абсолютно на любой пост, нам будет приятно😍, а также вы поддержите работу качественного сервиса💸💸\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}"
             bot.send_message(target_uid, text_success, parse_mode="Markdown", disable_web_page_preview=True)
             
             # 3. ОТПРАВЛЯЕМ МЕНЮ ОЦЕНКИ
@@ -605,7 +672,7 @@ def handle_force_unban(call):
         db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
         
         # 2. ОТПРАВЛЯЕМ ТЕКСТ ЮЗЕРУ
-        text_success = f"🎉 **Ваши ограничения успешно сняты!** ❤️\n\nЕсли Вам все понравилось, вы можете задонатить нам пару звездочек на канале: [Единый Платежный Центр](https://t.me/+9qx9PAJQjcdmY2Yy) абсолютно на любой пост, нам будет приятно😍, а также вы поддержите работу качественного сервиса💸💸\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`"
+        text_success = f"🎉 **Ваши ограничения успешно сняты!** ❤️\n\nЕсли Вам все понравилось, вы можете задонатить нам пару звездочек на канале: [Единый Платежный Центр](https://t.me/+9qx9PAJQjcdmY2Yy) абсолютно на любой пост, нам будет приятно😍, а также вы поддержите работу качественного сервиса💸💸\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}"
         bot.send_message(target_uid, text_success, parse_mode="Markdown", disable_web_page_preview=True)
         
         # 3. ОТПРАВЛЯЕМ МЕНЮ ОЦЕНКИ
@@ -656,6 +723,9 @@ def handle_admin_replies(message):
 
     if thread_id in topic_to_user:
         target_uid = topic_to_user[thread_id]
+        
+        # 🔓 АВТО-ВОСКРЕШЕНИЕ: разрешаем юзеру ответить на сообщение админа
+        paid_collection.update_one({"uid": target_uid}, {"$set": {"topic_type": "manual"}})
         
         # 🛡 ЗАЩИТА ОТ БЛОКИРОВКИ БОТА
         try:
