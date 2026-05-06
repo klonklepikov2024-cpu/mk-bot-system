@@ -3,6 +3,7 @@ import pymongo
 import datetime
 import random
 import os
+import string
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 
@@ -54,18 +55,16 @@ TEMPLATES = {
     "tpl_minor": "⛔️ **БЛОКИРОВКА: Несовершеннолетние**\n\nВы заблокированы за то, что оставили реакцию на объявление несовершеннолетнего пользователя.\n\nℹ️ Мы строго следим за возрастным цензом. Это грубое нарушение правил безопасности.\n\n🔓 Разблокировка возможна только на платной основе (штраф)."
 }
 
-# ================= МЕНЮ ПОЛЬЗОВАТЕЛЯ =================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     try:
-        print(f"🚀 Получена команда /start от пользователя {message.from_user.id}")
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
             InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
             InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
+            InlineKeyboardButton("🚨 Пожаловаться на нарушителя", callback_data="btn_report") # <--- НОВАЯ КНОПКА
         )
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
-        print("✅ Приветствие успешно отправлено в Telegram!")
     except Exception as e:
         print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ОТПРАВКИ: {e}")
 
@@ -159,30 +158,6 @@ def handle_user_query(call):
         markup.add(InlineKeyboardButton("🚨 Это хитрец (Впаять страйк)", callback_data=f"trap_{uid}"))
         
         if thread_id:
-            try:
-                bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
-            except:
-                pass
-            bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
-            paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
-        else:
-            topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
-            thread_id = topic.message_thread_id
-            paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
-            bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
-        
-        topic_to_user[thread_id] = uid
-        user_to_topic[uid] = thread_id
-        return
-
-    # ================= ЛОГИКА КНОПКИ РЕКЛАМЫ =================
-    elif call.data == "btn_ads":
-        bot.send_message(call.message.chat.id, "Вы выбрали раздел 'Купить рекламу'. Пожалуйста, напишите ваше предложение ниже:")
-        
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🚨 Это хитрец (Впаять страйк)", callback_data=f"trap_{uid}"))
-        
-        if thread_id:
             # ВОСКРЕШАЕМ ТОПИК, ЕСЛИ ОН БЫЛ ЗАКРЫТ
             try: bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
             except: pass
@@ -199,7 +174,321 @@ def handle_user_query(call):
         user_to_topic[uid] = thread_id
         return
 
-# ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
+# ================= ЛОГИКА КНОПКИ СЛУЖБЫ БЕЗОПАСНОСТИ =================
+    elif call.data == "btn_report":
+        # Проверяем, не улетел ли юзер в жесткий минус
+        points = user_data.get("bounty_points", 0)
+        if points <= -50:
+            bot.send_message(call.message.chat.id, "⛔️ **Доступ закрыт.**\nСлужба безопасности отключила вам доступ к системе жалоб из-за большого количества ложных доносов.")
+            return
+
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🚨 Подать жалобу", callback_data="sec_submit_report"),
+            InlineKeyboardButton(f"🏆 Кабинет Агента ({points} очков)", callback_data="sec_agent_cabinet"),
+            InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main")
+        )
+        
+        text = (
+            "🛡 **Служба Безопасности МК**\n\n"
+            "Помогайте нам очищать чаты от спамеров, мошенников и нарушителей, и получайте за это баллы!\n\n"
+            "Накопленные баллы можно обменять на ценные скидки или VIP-статус."
+        )
+        # Отправляем новое сообщение, чтобы не ломать старую разметку
+        bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        return
+
+# ================= МЕНЮ СЛУЖБЫ БЕЗОПАСНОСТИ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('sec_'))
+def handle_security_menu(call):
+    uid = call.from_user.id
+    
+    if call.data == "sec_back_main":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        send_welcome(call.message)
+        
+    elif call.data == "sec_submit_report":
+        bot.send_message(
+            call.message.chat.id, 
+            "🕵️‍♂️ **Подача жалобы**\n\nПожалуйста, отправьте **@username** нарушителя, его **ID**, либо просто **перешлите его сообщение** сюда:"
+        )
+        bot.register_next_step_handler(call.message, process_report_target)
+        
+    elif call.data == "sec_agent_cabinet":
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        points = user_data.get("bounty_points", 0)
+        reports_count = user_data.get("successful_reports", 0)
+
+        markup = InlineKeyboardMarkup(row_width=2) # Делаем по 2 кнопки в ряд для красоты
+        markup.add(
+            InlineKeyboardButton("🎫 -25% Штраф (30)", callback_data="buy_reward_fine25_30"),
+            InlineKeyboardButton("🎫 -50% Штраф (60)", callback_data="buy_reward_fine50_60")
+        )
+        markup.add(
+            InlineKeyboardButton("💎 -50% VIP (100)", callback_data="buy_reward_vip50_100"),
+            InlineKeyboardButton("📢 -50% Реклама (150)", callback_data="buy_reward_ads50_150")
+        )
+        markup.add(
+            InlineKeyboardButton("👑 VIP-билет БЕСПЛАТНО (300)", callback_data="buy_reward_vip100_300")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_report"))
+
+        bot.edit_message_text(
+            f"🕵️‍♂️ **Ваш профиль Агента**\n\n"
+            f"💰 Баланс: **{points} очков**\n"
+            f"📊 Успешных жалоб: **{reports_count}**\n\n"
+            f"*Выберите награду для обмена:*",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        
+# Обработка клика по наградам (ПОКУПКА)
+@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_reward_'))
+def handle_reward_purchase(call):
+    # Разбираем дата-строку (например: buy_reward_fine25_30)
+    parts = call.data.split('_')
+    reward_type = parts[2]
+    price = int(parts[3])
+    uid = call.fromuser.id if hasattr(call, 'fromuser') else call.from_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    
+    # Проверка баланса
+    if points < price:
+        bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {price}, а у вас {points}.", show_alert=True)
+        return
+        
+    # 1. Списываем очки
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price}})
+    
+    # 2. Генерируем уникальный код
+    code_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    promo_code = f"AGENT-{code_suffix}"
+    
+    # 3. Настраиваем логику скидки в зависимости от того, что купили
+    target = "all"
+    discount = 50
+    
+    if reward_type == "fine25": target = "fine"; discount = 25
+    elif reward_type == "fine50": target = "fine"; discount = 50
+    elif reward_type == "vip50": target = "vip"; discount = 50
+    elif reward_type == "ads50": target = "ads"; discount = 50
+    elif reward_type == "vip100": target = "vip"; discount = 100
+    
+    # 4. Записываем свежий промокод в базу
+    db['promocodes'].insert_one({
+        "_id": promo_code,
+        "type": "percent",
+        "value": discount,
+        "target": target,      # На что действует скидка (штраф, реклама, вип)
+        "usage_limit": 1,      # Купленный агентом код всегда одноразовый!
+        "used_count": 0,
+        "owner_uid": uid,
+        "is_active": True
+    })
+    
+    # 5. Выдаем код счастливчику
+    bot.edit_message_text(
+        f"🎉 **Покупка успешна!**\n\n"
+        f"Вы обменяли {price} очков.\n"
+        f"Ваш личный уникальный промокод:\n\n"
+        f"`{promo_code}`\n\n"
+        f"*(Нажмите на код, чтобы скопировать)*\n\n"
+        f"ℹ️ Сохраните его! Бот спросит его у вас при следующей оплате услуг.",
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        parse_mode="Markdown"
+    )
+
+# ================= ВОРОНКА ЖАЛОБ =================
+def process_report_target(message):
+    if message.text and message.text == "/start":
+        send_welcome(message)
+        return
+        
+    # Пытаемся вытащить ID, если юзер переслал сообщение
+    target_info = ""
+    if message.forward_from:
+        target_info = f"ID: {message.forward_from.id}"
+    else:
+        target_info = message.text if message.text else "Нет текста"
+
+    bot.send_message(
+        message.chat.id,
+        f"✅ Принято. Обвиняемый: {target_info}\n\n"
+        "📸 Теперь отправьте **скриншот**, видео или аудиозапись, подтверждающую нарушение:"
+    )
+    bot.register_next_step_handler(message, process_report_evidence, target_info)
+
+def process_report_evidence(message, target_info):
+    if message.content_type not in ['photo', 'video', 'document', 'audio', 'voice']:
+        bot.send_message(message.chat.id, "❌ Это не похоже на доказательство. Пожалуйста, отправьте именно скриншот (фото) или видео нарушения.")
+        bot.register_next_step_handler(message, process_report_evidence, target_info)
+        return
+
+    # Сохраняем ID файла-доказательства
+    evidence_type = message.content_type
+    evidence_id = ""
+    if evidence_type == 'photo': evidence_id = message.photo[-1].file_id
+    elif evidence_type == 'video': evidence_id = message.video.file_id
+    elif evidence_type == 'document': evidence_id = message.document.file_id
+    else: evidence_id = "Медиафайл" # для голосовых и т.д.
+
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("💊 Наркотики", callback_data=f"rep_drugs_{message.from_user.id}"),
+        InlineKeyboardButton("👶 Несовершеннолетний", callback_data=f"rep_minor_{message.from_user.id}")
+    )
+    markup.add(
+        InlineKeyboardButton("💰 Мошенник / Спам", callback_data=f"rep_scam_{message.from_user.id}"),
+        InlineKeyboardButton("🤬 Неадекват / Оскорбления", callback_data=f"rep_toxic_{message.from_user.id}")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        "❗️ **Выберите причину жалобы из списка:**\n_За ложный донос выдается страйк._",
+        reply_markup=markup
+    )
+    
+    # Временно сохраняем данные в базу, чтобы не потерять при нажатии кнопки
+    db['temp_reports'].update_one(
+        {"uid": message.from_user.id},
+        {"$set": {"target": target_info, "ev_type": evidence_type, "ev_id": evidence_id}},
+        upsert=True
+    )
+
+# ================= ФИНАЛ ЖАЛОБЫ: ОТПРАВКА АДМИНАМ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('rep_'))
+def handle_report_submission(call):
+    # Извлекаем причину и ID заявителя
+    data_parts = call.data.split('_')
+    reason_code = data_parts[1]
+    reporter_uid = int(data_parts[2])
+    
+    # Если это нажал не сам заявитель (защита от багов)
+    if call.from_user.id != reporter_uid:
+        bot.answer_callback_query(call.id, "Это не ваша заявка!")
+        return
+        
+    # Расшифровываем причину
+    reasons_dict = {
+        "drugs": "💊 Наркотики",
+        "minor": "👶 Несовершеннолетний",
+        "scam": "💰 Мошенник / Спам",
+        "toxic": "🤬 Неадекват / Оскорбления"
+    }
+    reason_text = reasons_dict.get(reason_code, "Другое")
+    
+    # Достаем улики из временной базы
+    report_data = db['temp_reports'].find_one({"uid": reporter_uid})
+    if not report_data:
+        bot.answer_callback_query(call.id, "❌ Ошибка: данные устарели. Начните заново через /start", show_alert=True)
+        return
+        
+    target_info = report_data.get("target", "Неизвестно")
+    ev_type = report_data.get("ev_type")
+    ev_id = report_data.get("ev_id")
+    
+    # 1. Говорим юзеру спасибо и убираем меню
+    bot.edit_message_text("✅ **Ваша жалоба отправлена в Службу Безопасности.**\nЕсли информация подтвердится, вы можете получить награду!", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+    
+    # 2. Создаем топик в админке
+    reporter_name = call.from_user.first_name or f"ID {reporter_uid}"
+    topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🚨 ЖАЛОБА | {reporter_name}")
+    thread_id = topic.message_thread_id
+    
+    # 3. Отправляем улику
+    if ev_type == 'photo': bot.send_photo(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+    elif ev_type == 'video': bot.send_video(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+    elif ev_type == 'document': bot.send_document(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+    
+    # 4. Отправляем пульт управления админам
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✅ Забанить нарушителя", callback_data=f"adm_rep_ban_{reporter_uid}"),
+        InlineKeyboardButton("🎁 Наградить заявителя", callback_data=f"adm_rep_reward_{reporter_uid}"),
+        InlineKeyboardButton("❌ Отклонить (Мало улик)", callback_data=f"adm_rep_reject_{reporter_uid}"),
+        InlineKeyboardButton("🚨 Ложный донос (Страйк)", callback_data=f"adm_rep_strike_{reporter_uid}")
+    )
+    
+    bot.send_message(
+        STAFF_GROUP_ID,
+        f"🚨 **НОВАЯ ЖАЛОБА**\n\n"
+        f"👤 **Заявитель:** {reporter_name} (`{reporter_uid}`)\n"
+        f"🎯 **Обвиняемый:** {target_info}\n"
+        f"⚠️ **Причина:** {reason_text}\n\n"
+        f"Проверьте доказательства выше и вынесите вердикт:",
+        message_thread_id=thread_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    
+    # Очищаем временную базу, она больше не нужна
+    db['temp_reports'].delete_one({"uid": reporter_uid})
+
+# ================= РЕАКЦИЯ АДМИНА НА ЖАЛОБУ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_rep_'))
+def handle_admin_report_decision(call):
+    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    
+    action = call.data.split('_')[2]
+    reporter_uid = int(call.data.split('_')[3])
+    thread_id = call.message.message_thread_id
+    
+    # 1. ЗАБАНИТЬ
+    if action == "ban":
+        bot.send_message(STAFF_GROUP_ID, "🔨 Нарушителя пока нужно забанить вручную через бота Скайнет (используйте ID из текста выше).", message_thread_id=thread_id)
+        # Меняем текст под кнопками
+        bot.edit_message_text(f"{call.message.text}\n\n✅ *ВЕРДИКТ: Нарушитель признан виновным.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+    
+    # 2. НАГРАДИТЬ ЗАЯВИТЕЛЯ (+10 очков)
+    elif action == "reward":
+        paid_collection.update_one(
+            {"uid": reporter_uid}, 
+            {"$inc": {"bounty_points": 10, "successful_reports": 1}}, 
+            upsert=True
+        )
+        
+        text = "🎉 **Ваша жалоба подтвердилась!**\nНарушитель наказан. Вам начислено **+10 очков бдительности**! 💰\nПроверить баланс можно в Кабинете Агента."
+        try: bot.send_message(reporter_uid, text, parse_mode="Markdown")
+        except: pass
+        
+        bot.send_message(STAFF_GROUP_ID, "✅ Заявителю начислено +10 очков. Поблагодарили в ЛС.", message_thread_id=thread_id)
+        
+    # 3. ОТКЛОНИТЬ (Закрываем топик)
+    elif action == "reject":
+        text = "❌ Ваша жалоба отклонена. Предоставленных доказательств недостаточно для блокировки пользователя."
+        try: bot.send_message(reporter_uid, text)
+        except: pass
+        bot.send_message(STAFF_GROUP_ID, "❌ Жалоба отклонена.", message_thread_id=thread_id)
+        try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+        except: pass
+        
+    # 4. ЛОЖНЫЙ ДОНОС / СПАМ (-10 очков и страйк)
+    elif action == "strike":
+        user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0}
+        new_strikes = user_data.get("strikes", 0) + 1
+        paid_collection.update_one(
+            {"uid": reporter_uid}, 
+            {"$set": {"strikes": new_strikes}, "$inc": {"bounty_points": -10}, "$unset": {"topic_type": ""}}, 
+            upsert=True
+        )
+        
+        text = f"🚨 **Внимание! Ложный донос.**\nВы использовали систему не по назначению. Списано **-10 очков**. Выдан страйк ({new_strikes}/3)."
+        try: bot.send_message(reporter_uid, text, parse_mode="Markdown")
+        except: pass
+        
+        bot.send_message(STAFF_GROUP_ID, f"🚨 Заявитель оштрафован на -10 очков и получил страйк ({new_strikes}/3).", message_thread_id=thread_id)
+        try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+        except: pass
+    
+    # Убираем кнопки у админа, чтобы не нажал дважды
+    try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+    except: pass
+
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private', content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])
 def handle_user_messages(message):
@@ -358,17 +647,20 @@ def handle_admin_templates(call):
         if call.data.startswith('fine_'):
             amount = int(call.data.split('_')[1])
             try:
-                bot.send_invoice(
-                    target_uid, 
-                    title=f"Оплата штрафа ({amount}⭐️)", 
-                    description="Штраф за нарушение правил сети. После оплаты все ограничения будут сняты автоматически.", 
-                    invoice_payload=f"fine_payment_{amount}", 
-                    provider_token="", 
-                    currency="XTR", 
-                    prices=[telebot.types.LabeledPrice(label="Штраф", amount=amount)]
+                # ВМЕСТО ИНВОЙСА ШЛЕМ КАССУ С ВОПРОСОМ
+                markup = InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"),
+                    InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}")
                 )
-                bot.answer_callback_query(call.id, f"✅ Счет на {amount}⭐️ отправлен!")
-                bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет выставил счет на штраф ({amount}⭐️)*", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.send_message(
+                    target_uid, 
+                    f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.",
+                    reply_markup=markup,
+                    parse_mode="Markdown"
+                )
+                bot.answer_callback_query(call.id, f"✅ Чек-аут на {amount}⭐️ отправлен!")
+                bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️)*", message_thread_id=thread_id, parse_mode="Markdown")
                 bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
             except Exception as e:
                 bot.answer_callback_query(call.id, "❌ Ошибка! Возможно бот заблокирован.", show_alert=True)
@@ -399,15 +691,103 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         return
         
     try:
-        bot.send_invoice(
-            target_uid, title=f"Оплата штрафа ({amount}⭐️)", description="Штраф за нарушение правил. После оплаты все ограничения будут сняты автоматически.", 
-            invoice_payload=f"fine_payment_{amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="Штраф", amount=amount)]
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"),
+            InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}")
         )
-        bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет выставил счет на штраф ({amount}⭐️) по вашему поручению.*", message_thread_id=thread_id, parse_mode="Markdown")
+        bot.send_message(
+            target_uid, 
+            f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️) по вашему поручению.*", message_thread_id=thread_id, parse_mode="Markdown")
         try: bot.edit_message_reply_markup(chat_id=call_msg.chat.id, message_id=call_msg.message_id, reply_markup=None)
         except: pass
     except Exception:
         bot.send_message(STAFF_GROUP_ID, f"⚠️ **ОШИБКА:** Не удалось выставить счет.", message_thread_id=thread_id, parse_mode="Markdown")
+
+# ================= ЧЕК-АУТ И ОПЛАТА =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('checkout_'))
+def handle_checkout(call):
+    parts = call.data.split('_')
+    action = parts[1] # "promo" или "pay"
+    target_type = parts[2] # "fine", "ads", "vip"
+    original_amount = int(parts[3])
+    
+    # 1. Если юзер просто хочет оплатить
+    if action == "pay":
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        bot.send_invoice(
+            call.message.chat.id, 
+            title=f"Оплата ({original_amount}⭐️)", 
+            description="Оплата услуг бота. После оплаты ограничения будут сняты.", 
+            invoice_payload=f"{target_type}_payment_{original_amount}", 
+            provider_token="", 
+            currency="XTR", 
+            prices=[telebot.types.LabeledPrice(label="К оплате", amount=original_amount)]
+        )
+        
+    # 2. Если юзер нажал "Ввести промокод"
+    elif action == "promo":
+        msg = bot.send_message(call.message.chat.id, "👇 **Введите ваш промокод ответом на это сообщение:**", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_promo_code, target_type=target_type, original_amount=original_amount, call_msg=call.message)
+
+def process_promo_code(message, target_type, original_amount, call_msg):
+    # Убираем кнопки на старом сообщении кассы
+    try: bot.edit_message_reply_markup(call_msg.chat.id, call_msg.message_id, reply_markup=None)
+    except: pass
+    
+    promo_text = message.text.strip().upper()
+    
+    # Ищем код в базе
+    promo_data = db['promocodes'].find_one({"_id": promo_text})
+    
+    # ПРОВЕРКИ НА ОШИБКИ И ХИТРОСТЬ
+    if not promo_data or not promo_data.get("is_active"):
+        bot.send_message(message.chat.id, "❌ Промокод не найден или уже недействителен. Выставляем полный счет.")
+        bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="К оплате", amount=original_amount)])
+        return
+        
+    if promo_data["used_count"] >= promo_data["usage_limit"]:
+        bot.send_message(message.chat.id, "❌ Лимит активаций этого промокода исчерпан.")
+        bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="К оплате", amount=original_amount)])
+        return
+        
+    if promo_data["target"] != "all" and promo_data["target"] != target_type:
+        bot.send_message(message.chat.id, "❌ Этот промокод нельзя применить к данной услуге.")
+        bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="К оплате", amount=original_amount)])
+        return
+
+    # ПРИМЕНЯЕМ МАГИЮ СКИДКИ
+    discount = promo_data["value"]
+    new_amount = original_amount
+    
+    if promo_data["type"] == "percent":
+        new_amount = int(original_amount * (1 - discount / 100))
+    elif promo_data["type"] == "fixed":
+        new_amount = original_amount - discount
+        
+    # Telegram не разрешает счета меньше 1 звезды
+    if new_amount < 1:
+        new_amount = 1 
+        
+    # Записываем использование (погашаем код)
+    db['promocodes'].update_one({"_id": promo_text}, {"$inc": {"used_count": 1}})
+    
+    bot.send_message(message.chat.id, f"✅ **Промокод успешно применен!**\nСкидка составила {original_amount - new_amount}⭐️. Счет пересчитан.", parse_mode="Markdown")
+    
+    # Выставляем финальный инвойс со скидкой
+    bot.send_invoice(
+        message.chat.id, 
+        title=f"Оплата со скидкой ({new_amount}⭐️)", 
+        description="Оплата услуг бота с учетом промокода.", 
+        invoice_payload=f"{target_type}_payment_{new_amount}", 
+        provider_token="", 
+        currency="XTR", 
+        prices=[telebot.types.LabeledPrice(label="К оплате", amount=new_amount)]
+    )
 
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
@@ -746,7 +1126,8 @@ def handle_force_unban(call):
         paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
 # ================= РУЧНЫЕ ОТВЕТЫ ОТ АДМИНА -> ЮЗЕРУ =================
-@bot.message_handler(func=lambda message: str(message.chat.id) == STAFF_GROUP_ID and message.is_topic_message)
+# Разрешаем 'any' — бот будет копировать всё: опросы, контакты, локации, кружки, стикеры!
+@bot.message_handler(func=lambda message: str(message.chat.id) == STAFF_GROUP_ID and message.is_topic_message, content_types=['any'])
 def handle_admin_replies(message):
     thread_id = message.message_thread_id
     
@@ -765,7 +1146,8 @@ def handle_admin_replies(message):
         
         # 🛡 ЗАЩИТА ОТ БЛОКИРОВКИ БОТА
         try:
-            bot.send_message(target_uid, message.text)
+            # Магия здесь: бот просто копирует твое сообщение юзеру 1-в-1
+            bot.copy_message(target_uid, STAFF_GROUP_ID, message.message_id)
         except Exception as e:
             if "blocked" in str(e).lower():
                 bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Пользователь заблокировал бота! Ваше сообщение не доставлено.", message_thread_id=thread_id, parse_mode="Markdown")
