@@ -935,20 +935,31 @@ def handle_trap(call):
     target_uid = int(call.data.split('_')[1])
     thread_id = call.message.message_thread_id
     
+    # 1. Снимаем "залипание" кнопки мгновенно!
+    bot.answer_callback_query(call.id, "🚨 Страйк выдан!")
+    
     # Начисляем страйк в базу
     user_data = paid_collection.find_one({"uid": target_uid}) or {"uid": target_uid, "strikes": 0}
     new_strikes = user_data.get("strikes", 0) + 1
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": new_strikes}, "$unset": {"topic_type": ""}}, upsert=True)
     
-    # Бьем юзера током
-    bot.send_message(target_uid, f"⛔️ **Вы выбрали раздел 'Реклама' для обхода системы.**\nВам начислен штрафной страйк за спам ({new_strikes}/3)! Для разбана используйте платную поддержку.")
+    # 2. Бьем юзера током (С ЗАЩИТОЙ ОТ БЛОКИРОВКИ)
+    try:
+        bot.send_message(target_uid, f"⛔️ **Вы выбрали раздел 'Реклама' для обхода системы.**\nВам начислен штрафной страйк за спам ({new_strikes}/3)! Для разбана используйте платную поддержку.")
+    except Exception as e:
+        # Если хитрец уже заблокировал бота — просто тихо жалуемся в топик
+        bot.send_message(STAFF_GROUP_ID, "⚠️ **Внимание:** Хитрец уже заблокировал бота, поэтому сообщение о страйке ему не доставлено.", message_thread_id=thread_id)
     
-    # Сохраняем старый текст и дописываем статус
+    # 3. Сохраняем старый текст, дописываем статус и УБИРАЕМ КНОПКУ
     try:
         new_text = f"{call.message.html}\n\n🚨 <b>Хитрец пойман!</b> Ему начислен страйк ({new_strikes}/3). Топик закрыт."
-        bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    except: pass
+        bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=None)
+    except Exception as e:
+        # Резервный план: если HTML сломается, хотя бы просто убираем кнопку
+        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+        except: pass
     
+    # 4. Закрываем топик
     try:
         bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
     except Exception:
