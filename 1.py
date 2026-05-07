@@ -827,20 +827,27 @@ def handle_vid_check(call):
                 upsert=True
             )
             
-            # 2. ОТПРАВЛЯЕМ РАДОСТНУЮ ВЕСТЬ И ССЫЛКУ НА ДОНАТ
-            text_success = f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\nЕсли Вам все понравилось, вы можете задонатить нам пару звездочек на канале: [Единый Платежный Центр](https://t.me/+9qx9PAJQjcdmY2Yy) абсолютно на любой пост, нам будет приятно😍, а также вы поддержите работу качественного сервиса💸💸\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}"
-            bot.send_message(target_uid, text_success, parse_mode="Markdown", disable_web_page_preview=True)
-            
-            # 3. ОТПРАВЛЯЕМ МЕНЮ ОЦЕНКИ
-            markup = InlineKeyboardMarkup(row_width=5)
-            markup.add(
-                InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
-                InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-                InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
-                InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
-                InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
-            )
-            bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+            # 2. ОТПРАВЛЯЕМ РАДОСТНУЮ ВЕСТЬ
+            try:
+                # Убрали текст про канал, оставили только суть
+                text_success = f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}"
+                bot.send_message(target_uid, text_success, parse_mode="Markdown", disable_web_page_preview=True)
+                
+                # 3. ОТПРАВЛЯЕМ МЕНЮ ОЦЕНКИ + КНОПКУ ДОНАТА
+                markup = InlineKeyboardMarkup(row_width=5)
+                markup.add(
+                    InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
+                    InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                    InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
+                    InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                    InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
+                )
+                # НОВАЯ КНОПКА ДОНАТА
+                markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+                
+                bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+            except Exception as e:
+                bot.send_message(STAFF_GROUP_ID, "⚠️ **Внимание:** Пользователь заблокировал бота, поэтому не получил сообщение о разбане.", message_thread_id=thread_id)
             
             # 4. ЗАПИСЫВАЕМ УСПЕХ В АРХИВ (ДОСЬЕ)
             archive_collection.update_one(
@@ -1031,6 +1038,34 @@ def handle_close_ticket(call):
         except Exception:
             pass
         paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+
+# ================= ДОНАТЫ (ЧАЕВЫЕ) =================
+@bot.callback_query_handler(func=lambda call: call.data == "start_donate")
+def handle_start_donate(call):
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id, "💖 **Спасибо за желание поддержать нас!**\n\nПожалуйста, отправьте сообщением сумму, которую хотите задонатить (от 1 до 10000 ⭐️):")
+    bot.register_next_step_handler(msg, process_donate_amount)
+
+def process_donate_amount(message):
+    if not message.text or not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ Ошибка: нужно ввести только число (например: 100). Попробуйте нажать кнопку доната еще раз.")
+        return
+
+    amount = int(message.text)
+    if amount < 1 or amount > 10000:
+        bot.send_message(message.chat.id, "❌ Сумма должна быть от 1 до 10000.")
+        return
+
+    # Выставляем счет ровно на ту сумму, которую захотел юзер
+    bot.send_invoice(
+        message.chat.id,
+        title="Чаевые проекту 💖",
+        description="Добровольное пожертвование на развитие сервиса.",
+        invoice_payload=f"donation_{amount}",
+        provider_token="",
+        currency="XTR",
+        prices=[telebot.types.LabeledPrice(label="Донат", amount=amount)]
+    )
         
 # ================= ОБРАБОТКА ОЦЕНКИ И ПРЕМИЙ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rate_'))
@@ -1087,20 +1122,27 @@ def handle_force_unban(call):
         admin_username = call.from_user.username or call.from_user.first_name
         db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
         
-        # 2. ОТПРАВЛЯЕМ ТЕКСТ ЮЗЕРУ
-        text_success = f"🎉 **Ваши ограничения успешно сняты!** ❤️\n\nЕсли Вам все понравилось, вы можете задонатить нам пару звездочек на канале: [Единый Платежный Центр](https://t.me/+9qx9PAJQjcdmY2Yy) абсолютно на любой пост, нам будет приятно😍, а также вы поддержите работу качественного сервиса💸💸\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}"
-        bot.send_message(target_uid, text_success, parse_mode="Markdown", disable_web_page_preview=True)
-        
-        # 3. ОТПРАВЛЯЕМ МЕНЮ ОЦЕНКИ
-        markup = InlineKeyboardMarkup(row_width=5)
-        markup.add(
-            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
-            InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
-            InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
-            InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
-        )
-        bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+        # 2. ОТПРАВЛЯЕМ РАДОСТНУЮ ВЕСТЬ
+        try:
+            # Убрали текст про канал, оставили только суть
+            text_success = f"🎉 **Ваши ограничения успешно сняты!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}"
+            bot.send_message(target_uid, text_success, parse_mode="Markdown", disable_web_page_preview=True)
+            
+            # 3. ОТПРАВЛЯЕМ МЕНЮ ОЦЕНКИ + КНОПКУ ДОНАТА
+            markup = InlineKeyboardMarkup(row_width=5)
+            markup.add(
+                InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
+                InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
+                InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
+            )
+            # НОВАЯ КНОПКА ДОНАТА
+            markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+            
+            bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+        except Exception as e:
+            bot.send_message(STAFF_GROUP_ID, "⚠️ **Внимание:** Пользователь заблокировал бота, поэтому не получил сообщение о разбане.", message_thread_id=thread_id)
         
         # 4. ЗАПИСЫВАЕМ УСПЕХ В АРХИВ
         archive_collection.update_one(
@@ -1155,6 +1197,52 @@ def handle_admin_replies(message):
                 bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Чат с пользователем не найден (возможно, он удалил аккаунт).", message_thread_id=thread_id, parse_mode="Markdown")
             else:
                 pass # Игнорируем другие мелкие ошибки
+
+# ================= ОБРАБОТКА ВСЕХ ПЛАТЕЖЕЙ В 1.py =================
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def checkout_process(pre_checkout_query):
+    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+@bot.message_handler(content_types=['successful_payment'])
+def successful_payment(message):
+    payload = message.successful_payment.invoice_payload
+    amount = message.successful_payment.total_amount
+    uid = message.from_user.id
+
+    # 1. Если это ДОНАТ
+    if payload.startswith("donation_"):
+        bot.send_message(uid, f"💖 **Огромное спасибо за ваш донат ({amount}⭐️)!**\nЭти средства очень помогут нашему проекту развиваться.", parse_mode="Markdown")
+        bot.send_message(STAFF_GROUP_ID, f"💸 **ДОНАТ!** Пользователь `{uid}` только что отправил чаевые: **{amount}⭐️**! 🎉", parse_mode="Markdown")
+
+    # 2. Если это ШТРАФ (Авторазбан)
+    elif payload.startswith("fine_payment_"):
+        now = datetime.datetime.now()
+        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+
+        # Приказ на разбан для Скайнета
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+
+        # Досье
+        archive_collection.update_one(
+            {"target": str(uid)},
+            {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Штраф оплачен)", "reason": "Автоматическое снятие"}}},
+            upsert=True
+        )
+
+        # Закрываем тикет у админов
+        user_data = paid_collection.find_one({"uid": uid})
+        if user_data and "thread_id" in user_data:
+            thread_id = user_data["thread_id"]
+            try: bot.send_message(STAFF_GROUP_ID, f"🤑 **ЮЗЕР ОПЛАТИЛ ШТРАФ ({amount}⭐️)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
+            except: pass
+            try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+            except: pass
+
+        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+
+        # Пишем юзеру
+        success_msg = f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}"
+        bot.send_message(uid, success_msg, parse_mode="Markdown", disable_web_page_preview=True)
 
 # ================= WEBHOOK И ЗАПУСК СЕРВЕРА =================
 app = Flask(__name__)
