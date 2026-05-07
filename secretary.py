@@ -1244,7 +1244,10 @@ def successful_payment(message):
         success_msg = f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}"
         bot.send_message(uid, success_msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-# ==================== WEBHOOK ====================
+# ==================== WEBHOOK И СЕРВЕР ====================
+from flask import Flask, request # На всякий случай проверяем импорт
+app = Flask(__name__) # <--- ВОТ ЭТА СТРОЧКА ПОТЕРЯЛАСЬ! ОНА СОЗДАЕТ СЕРВЕР.
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     # Читаем данные из запроса Телеграма
