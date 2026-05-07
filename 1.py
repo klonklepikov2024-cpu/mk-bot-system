@@ -1244,22 +1244,28 @@ def successful_payment(message):
         success_msg = f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}"
         bot.send_message(uid, success_msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-# ================= WEBHOOK И ЗАПУСК СЕРВЕРА =================
-app = Flask(__name__)
-
-# Сюда Telegram будет присылать новые сообщения (обработчик вебхука)
-@app.route('/' + TOKEN, methods=['POST'])
-def getMessage():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
+# ==================== WEBHOOK ====================
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    # Читаем данные из запроса Телеграма
+    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
     bot.process_new_updates([update])
-    return "!", 200
+    return 'ok', 200
 
-# Этот блок срабатывает при запуске скрипта
-if __name__ == "__main__":
-    # Бот сам автоматически регистрирует вебхук в Telegram при старте
+# Линия жизни для UptimeRobot
+@app.route('/ping')
+def ping():
+    try:
+        db.command('ping') 
+        return "I am alive!", 200
+    except:
+        return "Database error", 500
+
+if __name__ == '__main__':
+    # При старте бот сам прописывает себе путь на серверах Телеграма
     bot.remove_webhook()
-    bot.set_webhook(url=APP_URL + '/' + TOKEN)
+    bot.set_webhook(url=f"{APP_URL}/webhook")
     
-    # Запуск Flask-сервера (Render сам подставит нужный PORT)
-    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))
+    print("Бот Секретарь запущен и готов к работе!")
+    # Render автоматически подставит порт, если он есть в переменных, или использует 5000
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
