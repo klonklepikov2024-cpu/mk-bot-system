@@ -1244,17 +1244,6 @@ def successful_payment(message):
         success_msg = f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}"
         bot.send_message(uid, success_msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-# ==================== WEBHOOK И СЕРВЕР ====================
-from flask import Flask, request # На всякий случай проверяем импорт
-app = Flask(__name__) # <--- ВОТ ЭТА СТРОЧКА ПОТЕРЯЛАСЬ! ОНА СОЗДАЕТ СЕРВЕР.
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    # Читаем данные из запроса Телеграма
-    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
-    bot.process_new_updates([update])
-    return 'ok', 200
-
 # Линия жизни для UptimeRobot
 @app.route('/ping')
 def ping():
@@ -1264,11 +1253,15 @@ def ping():
     except:
         return "Database error", 500
 
-if __name__ == '__main__':
-    # При старте бот сам прописывает себе путь на серверах Телеграма
+# === ВЫНОСИМ УСТАНОВКУ ВЕБХУКА СЮДА ===
+# Чтобы Gunicorn гарантированно выполнил этот код при запуске
+try:
     bot.remove_webhook()
     bot.set_webhook(url=f"{APP_URL}/webhook")
-    
-    print("Бот Секретарь запущен и готов к работе!")
+    print(f"Вебхук успешно установлен на: {APP_URL}/webhook")
+except Exception as e:
+    print(f"Ошибка установки вебхука: {e}")
+
+if __name__ == '__main__':
     # Render автоматически подставит порт, если он есть в переменных, или использует 5000
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
