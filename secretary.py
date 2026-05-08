@@ -201,6 +201,7 @@ def handle_user_query(call):
 # ================= МЕНЮ СЛУЖБЫ БЕЗОПАСНОСТИ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('sec_'))
 def handle_security_menu(call):
+    bot.answer_callback_query(call.id)
     uid = call.from_user.id
     
     if call.data == "sec_back_main":
@@ -247,6 +248,7 @@ def handle_security_menu(call):
 # Обработка клика по наградам (ПОКУПКА)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_reward_'))
 def handle_reward_purchase(call):
+    bot.answer_callback_query(call.id)
     # Разбираем дата-строку (например: buy_reward_fine25_30)
     parts = call.data.split('_')
     reward_type = parts[2]
@@ -363,6 +365,7 @@ def process_report_evidence(message, target_info):
 # ================= ФИНАЛ ЖАЛОБЫ: ОТПРАВКА АДМИНАМ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rep_'))
 def handle_report_submission(call):
+    bot.answer_callback_query(call.id)
     # Извлекаем причину и ID заявителя
     data_parts = call.data.split('_')
     reason_code = data_parts[1]
@@ -432,6 +435,7 @@ def handle_report_submission(call):
 # ================= РЕАКЦИЯ АДМИНА НА ЖАЛОБУ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_rep_'))
 def handle_admin_report_decision(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID: return
     
     action = call.data.split('_')[2]
@@ -595,6 +599,7 @@ def handle_user_messages(message):
 # ================= ПРОВЕРКА ДОКУМЕНТОВ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['doc_ok', 'doc_bad'])
 def handle_doc_check(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
@@ -622,6 +627,7 @@ def handle_doc_check(call):
 # ================= ОБРАБОТКА КНОПОК АДМИНА И ШТРАФОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('tpl_') or call.data.startswith('fine_'))
 def handle_admin_templates(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
@@ -711,6 +717,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
 # ================= ЧЕК-АУТ И ОПЛАТА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('checkout_'))
 def handle_checkout(call):
+    bot.answer_callback_query(call.id)
     parts = call.data.split('_')
     action = parts[1] # "promo" или "pay"
     target_type = parts[2] # "fine", "ads", "vip"
@@ -792,6 +799,7 @@ def process_promo_code(message, target_type, original_amount, call_msg):
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
 def handle_vid_check(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
@@ -888,6 +896,7 @@ def handle_vid_check(call):
 # ================= ОБРАБОТКА ПРИЧИН ОТКАЗА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rej_'))
 def handle_rejections(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
@@ -968,6 +977,7 @@ def handle_trap(call):
 # ================= БЫСТРАЯ БЛОКИРОВКА АДМИНОМ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ban_'))
 def handle_fast_ban(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID: return
     target_uid = int(call.data.split('_')[1])
     thread_id = call.message.message_thread_id
@@ -994,6 +1004,7 @@ def handle_fast_ban(call):
 # ================= ФИНАЛЬНОЕ ЗАКРЫТИЕ ТИКЕТА С ОЦЕНКОЙ =================
 @bot.callback_query_handler(func=lambda call: call.data == "close_ticket")
 def handle_close_ticket(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
@@ -1105,6 +1116,7 @@ def handle_rating(call):
 # ================= УНИВЕРСАЛЬНЫЙ РАЗБАН (ДЛЯ ЛЮБЫХ НАРУШЕНИЙ) =================
 @bot.callback_query_handler(func=lambda call: call.data == "force_unban")
 def handle_force_unban(call):
+    bot.answer_callback_query(call.id)
     if str(call.message.chat.id) != STAFF_GROUP_ID:
         return
         
