@@ -1103,9 +1103,20 @@ def handle_rating(call):
     _, rating, t_id = call.data.split('_')
     t_id = int(t_id)
     
-    # Благодарим юзера и убираем кнопки
+    # Благодарим юзера всплывающим окном
     bot.answer_callback_query(call.id, f"Спасибо за вашу оценку {rating}⭐!")
-    bot.edit_message_text(f"🙏 Спасибо за оценку {rating}⭐! Мы работаем для вас.", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    
+    # === ИСПРАВЛЕНИЕ: ОСТАВЛЯЕМ КНОПКУ ЧАЕВЫХ ===
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+    
+    # Меняем текст на "Спасибо", убираем звезды, но возвращаем кнопку доната!
+    bot.edit_message_text(
+        f"🙏 Спасибо за оценку {rating}⭐! Мы работаем для вас.", 
+        chat_id=call.message.chat.id, 
+        message_id=call.message.message_id,
+        reply_markup=markup
+    )
     
     # Идем в базу и ищем, кто был тем самым админом
     rating_data = db['ticket_ratings'].find_one({"thread_id": t_id})
