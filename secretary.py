@@ -311,108 +311,134 @@ def process_report_target(message):
         send_welcome(message)
         return
         
-    # Пытаемся вытащить ID, если юзер переслал сообщение
-    target_info = ""
-    if message.forward_from:
-        target_info = f"ID: {message.forward_from.id}"
-    else:
-        target_info = message.text if message.text else "Нет текста"
+    target_info = f"ID: {message.forward_from.id}" if message.forward_from else (message.text if message.text else "Нет текста")
 
-    bot.send_message(
-        message.chat.id,
-        f"✅ Принято. Обвиняемый: {target_info}\n\n"
-        "📸 Теперь отправьте **скриншот**, видео или аудиозапись, подтверждающую нарушение:"
-    )
-    bot.register_next_step_handler(message, process_report_evidence, target_info)
-
-def process_report_evidence(message, target_info):
-    if message.content_type not in ['photo', 'video', 'document', 'audio', 'voice']:
-        bot.send_message(message.chat.id, "❌ Это не похоже на доказательство. Пожалуйста, отправьте именно скриншот (фото) или видео нарушения.")
-        bot.register_next_step_handler(message, process_report_evidence, target_info)
-        return
-
-    # Сохраняем ID файла-доказательства
-    evidence_type = message.content_type
-    evidence_id = ""
-    if evidence_type == 'photo': evidence_id = message.photo[-1].file_id
-    elif evidence_type == 'video': evidence_id = message.video.file_id
-    elif evidence_type == 'document': evidence_id = message.document.file_id
-    else: evidence_id = "Медиафайл" # для голосовых и т.д.
-
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("💊 Наркотики", callback_data=f"rep_drugs_{message.from_user.id}"),
-        InlineKeyboardButton("👶 Несовершеннолетний", callback_data=f"rep_minor_{message.from_user.id}")
-    )
-    markup.add(
-        InlineKeyboardButton("💰 Мошенник / Спам", callback_data=f"rep_scam_{message.from_user.id}"),
-        InlineKeyboardButton("🤬 Неадекват / Оскорбления", callback_data=f"rep_toxic_{message.from_user.id}")
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        "❗️ **Выберите причину жалобы из списка:**\n_За ложный донос выдается страйк._",
-        reply_markup=markup
-    )
-    
-    # Временно сохраняем данные в базу, чтобы не потерять при нажатии кнопки
+    # Создаем базу с пустым массивом для улик
     db['temp_reports'].update_one(
         {"uid": message.from_user.id},
-        {"$set": {"target": target_info, "ev_type": evidence_type, "ev_id": evidence_id}},
+        {"$set": {"target": target_info, "media": []}},
         upsert=True
     )
+
+    msg = bot.send_message(
+        message.chat.id,
+        f"✅ Цель зафиксирована: {target_info}\n\n"
+        "✍️ **Теперь подробно опишите ситуацию.** Что именно произошло? (Это поможет админам быстрее разобраться)"
+    )
+    bot.register_next_step_handler(msg, process_report_description)
+
+def process_report_description(message):
+    description = message.text if message.text else "Описание отсутствует"
+    
+    # Сохраняем текстовое описание
+    db['temp_reports'].update_one({"uid": message.from_user.id}, {"$set": {"description": description}})
+
+    # Включаем обычную (нижнюю) клавиатуру с кнопкой "Готово"
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add("✅ Все доказательства отправлены")
+
+    msg = bot.send_message(
+        message.chat.id,
+        "📸 **Теперь отправляйте доказательства** (скриншоты, видео, аудио или пересланные сообщения).\n\n"
+        "Вы можете отправить сразу **несколько файлов** подряд. Как только загрузите всё необходимое — нажмите кнопку **«✅ Все доказательства отправлены»** внизу экрана 👇",
+        reply_markup=markup
+    )
+    bot.register_next_step_handler(msg, process_evidence_loop)
+
+def process_evidence_loop(message):
+    uid = message.from_user.id
+
+    # Если юзер нажал кнопку "Готово"
+    if message.text == "✅ Все доказательства отправлены":
+        # Убираем огромную нижнюю кнопку
+        remove_markup = telebot.types.ReplyKeyboardRemove()
+        bot.send_message(message.chat.id, "⏳ Формируем дело...", reply_markup=remove_markup)
+
+        # Выводим инлайн-кнопки с финальными причинами
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("💊 Наркотики", callback_data=f"rep_drugs_{uid}"),
+            InlineKeyboardButton("👶 Несовершеннолетний", callback_data=f"rep_minor_{uid}")
+        )
+        markup.add(
+            InlineKeyboardButton("💰 Мошенник / Спам", callback_data=f"rep_scam_{uid}"),
+            InlineKeyboardButton("🤬 Неадекват / Оскорбления", callback_data=f"rep_toxic_{uid}")
+        )
+        
+        bot.send_message(
+            message.chat.id,
+            "❗️ **Финальный шаг: Выберите причину жалобы из списка:**\n_За ложный донос выдается страйк._",
+            reply_markup=markup
+        )
+        return
+
+    # Если юзер прислал медиафайл — сохраняем его в массив
+    if message.content_type in ['photo', 'video', 'document', 'audio', 'voice', 'video_note']:
+        ev_id = ""
+        if message.content_type == 'photo': ev_id = message.photo[-1].file_id
+        elif message.content_type == 'video': ev_id = message.video.file_id
+        elif message.content_type == 'document': ev_id = message.document.file_id
+        elif message.content_type == 'voice': ev_id = message.voice.file_id
+        elif message.content_type == 'audio': ev_id = message.audio.file_id
+        elif message.content_type == 'video_note': ev_id = message.video_note.file_id
+
+        if ev_id:
+            db['temp_reports'].update_one(
+                {"uid": uid},
+                {"$push": {"media": {"type": message.content_type, "id": ev_id}}}
+            )
+
+    # Снова зацикливаем, ждем следующий файл или нажатие "Готово"
+    bot.register_next_step_handler(message, process_evidence_loop)
 
 # ================= ФИНАЛ ЖАЛОБЫ: ОТПРАВКА АДМИНАМ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rep_'))
 def handle_report_submission(call):
     bot.answer_callback_query(call.id)
-    # Извлекаем причину и ID заявителя
     data_parts = call.data.split('_')
     reason_code = data_parts[1]
     reporter_uid = int(data_parts[2])
     
-    # Если это нажал не сам заявитель (защита от багов)
-    if call.from_user.id != reporter_uid:
-        bot.answer_callback_query(call.id, "Это не ваша заявка!")
-        return
+    if call.from_user.id != reporter_uid: return
         
-    # Расшифровываем причину
-    reasons_dict = {
-        "drugs": "💊 Наркотики",
-        "minor": "👶 Несовершеннолетний",
-        "scam": "💰 Мошенник / Спам",
-        "toxic": "🤬 Неадекват / Оскорбления"
-    }
+    reasons_dict = {"drugs": "💊 Наркотики", "minor": "👶 Несовершеннолетний", "scam": "💰 Мошенник / Спам", "toxic": "🤬 Неадекват / Оскорбления"}
     reason_text = reasons_dict.get(reason_code, "Другое")
     
-    # Достаем улики из временной базы
     report_data = db['temp_reports'].find_one({"uid": reporter_uid})
     if not report_data:
         bot.answer_callback_query(call.id, "❌ Ошибка: данные устарели. Начните заново через /start", show_alert=True)
         return
         
     target_info = report_data.get("target", "Неизвестно")
-    ev_type = report_data.get("ev_type")
-    ev_id = report_data.get("ev_id")
+    description = report_data.get("description", "Нет описания")
+    media_list = report_data.get("media", [])
     
-    # 1. Говорим юзеру спасибо и убираем меню
-    bot.edit_message_text("✅ **Ваша жалоба отправлена в Службу Безопасности.**\nЕсли информация подтвердится, вы можете получить награду!", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text("✅ **Ваша жалоба отправлена в Службу Безопасности.**\nОжидайте проверки!", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
     
-    # 2. Создаем топик в админке
     reporter_name = call.from_user.first_name or f"ID {reporter_uid}"
     topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🚨 ЖАЛОБА | {reporter_name}")
     thread_id = topic.message_thread_id
     
-    # 3. Отправляем улику
-    if ev_type == 'photo': bot.send_photo(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
-    elif ev_type == 'video': bot.send_video(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
-    elif ev_type == 'document': bot.send_document(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+    # Отправляем ВСЕ сохраненные улики по очереди
+    if not media_list:
+        bot.send_message(STAFF_GROUP_ID, "⚠️ *Пользователь не прикрепил медиафайлы.*", message_thread_id=thread_id, parse_mode="Markdown")
+    else:
+        for item in media_list:
+            ev_type = item["type"]
+            ev_id = item["id"]
+            try:
+                if ev_type == 'photo': bot.send_photo(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+                elif ev_type == 'video': bot.send_video(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+                elif ev_type == 'document': bot.send_document(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+                elif ev_type == 'voice': bot.send_voice(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+                elif ev_type == 'audio': bot.send_audio(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+                elif ev_type == 'video_note': bot.send_video_note(STAFF_GROUP_ID, ev_id, message_thread_id=thread_id)
+            except: pass
     
-    # 4. Отправляем пульт управления админам
+    # ОБНОВЛЕННЫЙ УМНЫЙ ПУЛЬТ АДМИНА
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("✅ Забанить нарушителя", callback_data=f"adm_rep_ban_{reporter_uid}"),
-        InlineKeyboardButton("🎁 Наградить заявителя", callback_data=f"adm_rep_reward_{reporter_uid}"),
+        InlineKeyboardButton("✅ Подтвердить нарушение (+Награда заявителю)", callback_data=f"adm_rep_reward_{reporter_uid}"),
         InlineKeyboardButton("❌ Отклонить (Мало улик)", callback_data=f"adm_rep_reject_{reporter_uid}"),
         InlineKeyboardButton("🚨 Ложный донос (Страйк)", callback_data=f"adm_rep_strike_{reporter_uid}")
     )
@@ -422,14 +448,13 @@ def handle_report_submission(call):
         f"🚨 **НОВАЯ ЖАЛОБА**\n\n"
         f"👤 **Заявитель:** {reporter_name} (`{reporter_uid}`)\n"
         f"🎯 **Обвиняемый:** {target_info}\n"
-        f"⚠️ **Причина:** {reason_text}\n\n"
+        f"⚠️ **Причина:** {reason_text}\n"
+        f"💬 **Описание:** {description}\n\n"
         f"Проверьте доказательства выше и вынесите вердикт:",
         message_thread_id=thread_id,
         parse_mode="Markdown",
         reply_markup=markup
     )
-    
-    # Очищаем временную базу, она больше не нужна
     db['temp_reports'].delete_one({"uid": reporter_uid})
 
 # ================= РЕАКЦИЯ АДМИНА НА ЖАЛОБУ =================
@@ -442,56 +467,38 @@ def handle_admin_report_decision(call):
     reporter_uid = int(call.data.split('_')[3])
     thread_id = call.message.message_thread_id
     
-    # 1. ЗАБАНИТЬ
-    if action == "ban":
-        bot.send_message(STAFF_GROUP_ID, "🔨 Нарушителя пока нужно забанить вручную через бота Скайнет (используйте ID из текста выше).", message_thread_id=thread_id)
-        # Меняем текст под кнопками
-        bot.edit_message_text(f"{call.message.text}\n\n✅ *ВЕРДИКТ: Нарушитель признан виновным.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
-    
-    # 2. НАГРАДИТЬ ЗАЯВИТЕЛЯ (+10 очков)
-    elif action == "reward":
-        paid_collection.update_one(
-            {"uid": reporter_uid}, 
-            {"$inc": {"bounty_points": 10, "successful_reports": 1}}, 
-            upsert=True
-        )
-        
-        text = "🎉 **Ваша жалоба подтвердилась!**\nНарушитель наказан. Вам начислено **+10 очков бдительности**! 💰\nПроверить баланс можно в Кабинете Агента."
-        try: bot.send_message(reporter_uid, text, parse_mode="Markdown")
+    # 1. ПОДТВЕРДИТЬ И НАГРАДИТЬ (ОБЪЕДИНЕННАЯ КНОПКА)
+    if action == "reward":
+        paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"bounty_points": 10, "successful_reports": 1}}, upsert=True)
+        try: bot.send_message(reporter_uid, "🎉 **Ваша жалоба подтвердилась!**\nНарушитель наказан. Вам начислено **+10 очков бдительности**! 💰", parse_mode="Markdown")
         except: pass
         
-        bot.send_message(STAFF_GROUP_ID, "✅ Заявителю начислено +10 очков. Поблагодарили в ЛС.", message_thread_id=thread_id)
+        bot.send_message(STAFF_GROUP_ID, "✅ **Вердикт:** Нарушение подтверждено. Заявитель получил +10 очков.\n\n🔨 **Админы, забаньте нарушителя вручную через Скайнет!**", message_thread_id=thread_id, parse_mode="Markdown")
+        try: bot.edit_message_text(f"{call.message.text}\n\n✅ *ЗАКРЫТО: Нарушитель признан виновным.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+        except: pass
         
-    # 3. ОТКЛОНИТЬ (Закрываем топик)
+    # 2. ОТКЛОНИТЬ
     elif action == "reject":
-        text = "❌ Ваша жалоба отклонена. Предоставленных доказательств недостаточно для блокировки пользователя."
-        try: bot.send_message(reporter_uid, text)
+        try: bot.send_message(reporter_uid, "❌ Ваша жалоба отклонена. Предоставленных доказательств недостаточно.")
         except: pass
-        bot.send_message(STAFF_GROUP_ID, "❌ Жалоба отклонена.", message_thread_id=thread_id)
+        try: bot.edit_message_text(f"{call.message.text}\n\n❌ *ЗАКРЫТО: Отклонено (Мало улик).*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+        except: pass
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
         except: pass
         
-    # 4. ЛОЖНЫЙ ДОНОС / СПАМ (-10 очков и страйк)
+    # 3. ЛОЖНЫЙ ДОНОС
     elif action == "strike":
         user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0}
         new_strikes = user_data.get("strikes", 0) + 1
-        paid_collection.update_one(
-            {"uid": reporter_uid}, 
-            {"$set": {"strikes": new_strikes}, "$inc": {"bounty_points": -10}, "$unset": {"topic_type": ""}}, 
-            upsert=True
-        )
+        paid_collection.update_one({"uid": reporter_uid}, {"$set": {"strikes": new_strikes}, "$inc": {"bounty_points": -10}, "$unset": {"topic_type": ""}}, upsert=True)
         
-        text = f"🚨 **Внимание! Ложный донос.**\nВы использовали систему не по назначению. Списано **-10 очков**. Выдан страйк ({new_strikes}/3)."
-        try: bot.send_message(reporter_uid, text, parse_mode="Markdown")
+        try: bot.send_message(reporter_uid, f"🚨 **Внимание! Ложный донос.**\nВы использовали систему не по назначению. Списано **-10 очков**. Выдан страйк ({new_strikes}/3).", parse_mode="Markdown")
         except: pass
         
-        bot.send_message(STAFF_GROUP_ID, f"🚨 Заявитель оштрафован на -10 очков и получил страйк ({new_strikes}/3).", message_thread_id=thread_id)
+        try: bot.edit_message_text(f"{call.message.text}\n\n🚨 *ЗАКРЫТО: Выдан страйк за ложный донос.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+        except: pass
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
         except: pass
-    
-    # Убираем кнопки у админа, чтобы не нажал дважды
-    try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-    except: pass
 
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private', content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])
