@@ -1209,35 +1209,78 @@ def handle_force_unban(call):
         paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
 # ================= РУЧНЫЕ ОТВЕТЫ ОТ АДМИНА -> ЮЗЕРУ =================
-# Разрешаем 'any' — бот будет копировать всё: опросы, контакты, локации, кружки, стикеры!
-@bot.message_handler(func=lambda message: str(message.chat.id) == STAFF_GROUP_ID and message.is_topic_message, content_types=['any'])
+
+@bot.message_handler(
+    func=lambda message:
+        str(message.chat.id) == STAFF_GROUP_ID
+        and message.is_topic_message
+        and not message.from_user.is_bot,
+
+    content_types=[
+        'text',
+        'photo',
+        'video',
+        'document',
+        'voice',
+        'audio',
+        'sticker',
+        'video_note',
+        'animation'
+    ]
+)
 def handle_admin_replies(message):
+
     thread_id = message.message_thread_id
-    
+
     # 🩹 ЛЕКАРСТВО ОТ АМНЕЗИИ ДЛЯ АДМИНОВ
     if thread_id not in topic_to_user:
         user_data = paid_collection.find_one({"thread_id": thread_id})
+
         if user_data:
             topic_to_user[thread_id] = user_data["uid"]
             user_to_topic[user_data["uid"]] = thread_id
 
     if thread_id in topic_to_user:
+
         target_uid = topic_to_user[thread_id]
-        
-        # 🔓 АВТО-ВОСКРЕШЕНИЕ: разрешаем юзеру ответить на сообщение админа
-        paid_collection.update_one({"uid": target_uid}, {"$set": {"topic_type": "manual"}})
-        
-        # 🛡 ЗАЩИТА ОТ БЛОКИРОВКИ БОТА
+
+        # 🔓 Разрешаем юзеру отвечать
+        paid_collection.update_one(
+            {"uid": target_uid},
+            {"$set": {"topic_type": "manual"}}
+        )
+
         try:
-            # Магия здесь: бот просто копирует твое сообщение юзеру 1-в-1
-            bot.copy_message(target_uid, STAFF_GROUP_ID, message.message_id)
+
+            # пересылка сообщения админу -> юзеру
+            bot.copy_message(
+                target_uid,
+                STAFF_GROUP_ID,
+                message.message_id
+            )
+
         except Exception as e:
-            if "blocked" in str(e).lower():
-                bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Пользователь заблокировал бота! Ваше сообщение не доставлено.", message_thread_id=thread_id, parse_mode="Markdown")
-            elif "not found" in str(e).lower():
-                bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Чат с пользователем не найден (возможно, он удалил аккаунт).", message_thread_id=thread_id, parse_mode="Markdown")
+
+            error_text = str(e).lower()
+
+            if "blocked" in error_text:
+
+                bot.send_message(
+                    STAFF_GROUP_ID,
+                    "⚠️ Пользователь заблокировал бота.",
+                    message_thread_id=thread_id
+                )
+
+            elif "not found" in error_text:
+
+                bot.send_message(
+                    STAFF_GROUP_ID,
+                    "⚠️ Чат с пользователем не найден.",
+                    message_thread_id=thread_id
+                )
+
             else:
-                pass # Игнорируем другие мелкие ошибки
+                print(f"[ADMIN_REPLY_ERROR] {e}")
 
 # ================= ОБРАБОТКА ВСЕХ ПЛАТЕЖЕЙ В 1.py =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
