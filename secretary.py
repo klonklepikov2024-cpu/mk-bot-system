@@ -1041,7 +1041,11 @@ def handle_close_ticket(call):
     try:
         new_text = f"{call.message.html}\n\n🏁 <b>Тикет закрыт.</b> Пользователю отправлен запрос оценки."
         bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    except: pass
+    except: 
+        # РЕЗЕРВНЫЙ ПЛАН: Если админ нажал закрыть на ФОТОГРАФИИ, текст поменять нельзя. 
+        # Мы просто УДАЛЯЕМ саму кнопку, чтобы она не висела!
+        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+        except: pass
     
     try:
         bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
@@ -1174,7 +1178,10 @@ def handle_force_unban(call):
     try:
         new_text = f"{call.message.html}\n\n🔓 <b>Пользователь разбанен!</b> Приказ передан Скайнету. Тикет закрыт: {ticket_num}"
         bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    except: pass
+    except: 
+        # РЕЗЕРВНЫЙ ПЛАН: просто убираем кнопку!
+        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+        except: pass
     
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
     except Exception: pass
@@ -1252,6 +1259,9 @@ def successful_payment(message):
     elif payload.startswith("fine_payment_"):
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+
+        # 👇 НАША НОВАЯ СТРОЧКА: Записываем деньги в кассу 👇
+        db['fine_payments'].insert_one({"uid": uid, "amount": amount, "timestamp": time.time(), "date": now.strftime("%d.%m.%Y")})
 
         # Приказ на разбан для Скайнета
         db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
