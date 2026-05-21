@@ -3,6 +3,7 @@ import pymongo
 import datetime
 import random
 import os
+import time
 import string
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
@@ -1252,11 +1253,17 @@ def successful_payment(message):
 
     # 1. Если это ДОНАТ
     if payload.startswith("donation_"):
+        # 👇 НОВАЯ СТРОЧКА 👇
+        db['daily_revenue'].insert_one({"type": "donation", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
         bot.send_message(uid, f"💖 **Огромное спасибо за ваш донат ({amount}⭐️)!**\nЭти средства очень помогут нашему проекту развиваться.", parse_mode="Markdown")
         bot.send_message(STAFF_GROUP_ID, f"💸 **ДОНАТ!** Пользователь `{uid}` только что отправил чаевые: **{amount}⭐️**! 🎉", parse_mode="Markdown")
 
     # 2. Если это ШТРАФ (Авторазбан)
     elif payload.startswith("fine_payment_"):
+        # 👇 НОВАЯ СТРОЧКА 👇
+        db['daily_revenue'].insert_one({"type": "fine", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
 
