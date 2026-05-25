@@ -530,11 +530,17 @@ def handle_user_messages(message):
         # 💬 ТЕКСТ
         if message.content_type == 'text':
             if message.text.lower() in ["готов", "готова", "готовы", "готов(а)"]:
-                # ЗАПИСЫВАЕМ ТАЙМЕР В БАЗУ
-                paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now()}})
-                text_phrase = "⏳ **Таймер запущен! У вас ровно 10 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК из [ВАШ ГОРОД], сейчас на часах [СКОЛЬКО ВРЕМЕНИ]»*."
+                
+                # Генерируем уникальный код
+                code_words = ["ЯБЛОКО", "ТИГР", "СОЛНЦЕ", "МОРЕ", "СОКОЛ", "РАКЕТА", "ВЕТЕР", "МАЯК"]
+                secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
+                
+                # ЗАПИСЫВАЕМ ТАЙМЕР И КОД В БАЗУ
+                paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
+                
+                text_phrase = f"⏳ **Таймер запущен! У вас ровно 10 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК, мой код: {secret_code}»*."
                 bot.send_message(uid, text_phrase, parse_mode="Markdown")
-                bot.send_message(STAFF_GROUP_ID, "⏳ *Пользователь написал «Готов». Бот выдал фразу и запустил таймер 10 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.send_message(STAFF_GROUP_ID, f"⏳ *Пользователь написал «Готов». Бот выдал код: {secret_code} и запустил таймер 10 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
                 return 
 
             cleanup_old_buttons()
@@ -578,6 +584,8 @@ def handle_user_messages(message):
         # 🎥 КРУЖКИ
         elif message.content_type == 'video_note':
             verif_timer = user_data.get("verif_timer")
+            expected_code = user_data.get("secret_code", "Неизвестно (Старая заявка)") # 👈 Достаем код
+            
             if verif_timer:
                 time_diff = (datetime.datetime.now() - verif_timer).total_seconds()
                 if time_diff > 600:
@@ -588,7 +596,7 @@ def handle_user_messages(message):
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(InlineKeyboardButton("✅ Кружок принят (РАЗБАН)", callback_data="vid_ok"), InlineKeyboardButton("❌ Плохое видео (Перезапросить)", callback_data="vid_bad"))
             sent_msg = bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
-            bot.send_message(STAFF_GROUP_ID, "🎥 **Пользователь прислал кружок!**\nПроверьте лицо и фразу:", message_thread_id=thread_id, parse_mode="Markdown")
+            bot.send_message(STAFF_GROUP_ID, f"🎥 **Пользователь прислал кружок!**\n\n🗣 **ОН ДОЛЖЕН СКАЗАТЬ:**\n_{expected_code}_", message_thread_id=thread_id, parse_mode="Markdown")
 
         # 🎙 ПРОЧЕЕ (Голосовые, стикеры, видео)
         elif message.content_type in ['voice', 'video', 'sticker', 'audio']:
@@ -613,11 +621,16 @@ def handle_doc_check(call):
     target_uid = user_data["uid"]
         
     if call.data == 'doc_ok':
-        # ЗАПУСКАЕМ ТАЙМЕР ЧЕРЕЗ БАЗУ!
-        paid_collection.update_one({"uid": target_uid}, {"$set": {"verif_timer": datetime.datetime.now()}})
-        text_to_user = "✅ **Документ принят! Отлично.**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК из [ВАШ ГОРОД], сейчас на часах [СКОЛЬКО ВРЕМЕНИ]»*.\n\nУ вас есть 10 минут на отправку видео."
+        # Генерируем уникальный код
+        code_words = ["ЯБЛОКО", "ТИГР", "СОЛНЦЕ", "МОРЕ", "СОКОЛ", "РАКЕТА", "ВЕТЕР", "МАЯК"]
+        secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
+        
+        # ЗАПУСКАЕМ ТАЙМЕР ЧЕРЕЗ БАЗУ И ПИШЕМ КОД!
+        paid_collection.update_one({"uid": target_uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
+        
+        text_to_user = f"✅ **Документ принят! Отлично.**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, мой код: {secret_code}»*.\n\nУ вас есть 10 минут на отправку видео."
         bot.send_message(target_uid, text_to_user, parse_mode="Markdown")
-        bot.edit_message_caption("✅ *Документ одобрен. Запрошен видео-кружок.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+        bot.edit_message_caption(f"✅ *Документ одобрен. Запрошен видео-кружок с кодом: {secret_code}.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
         
     elif call.data == 'doc_bad':
         # Выдаем админу подменю с причинами
@@ -903,7 +916,7 @@ def handle_rejections(call):
         "rej_doc_hidden": "❌ **Документ не принят.**\nСкрыты необходимые данные. Повторите отправку, оставив открытыми **дату рождения и лицо**.",
         "rej_doc_wrong": "❌ **Документ не принят.**\nПредоставленный документ не входит в официальный перечень. Пришлите паспорт, ВУ, ВНЖ или военный билет.",
         "rej_vid_face": "❌ **Видео-кружок не принят.**\nНа видео плохо видно ваше лицо (темно или обрезано). Запишите кружок при хорошем освещении.",
-        "rej_vid_phrase": "❌ **Видео-кружок не принят.**\nВы произнесли не ту фразу или забыли назвать точное время. Перечитайте инструкцию и запишите снова.",
+        "rej_vid_phrase": "❌ **Видео-кружок не принят.**\nВы произнесли не ту фразу. Пожалуйста, посмотрите вашу секретную фразу выше и запишите кружок снова.",
         "rej_vid_sound": "❌ **Видео-кружок не принят.**\nНа видео отсутствует звук. Проверьте микрофон устройства и отправьте кружок повторно."
     }
     
