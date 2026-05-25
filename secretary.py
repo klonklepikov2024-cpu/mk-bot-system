@@ -628,7 +628,7 @@ def handle_doc_check(call):
         # ЗАПУСКАЕМ ТАЙМЕР ЧЕРЕЗ БАЗУ И ПИШЕМ КОД!
         paid_collection.update_one({"uid": target_uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
         
-        text_to_user = f"✅ **Документ принят! Отлично.**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, мой код: {secret_code}»*.\n\nУ вас есть 10 минут на отправку видео."
+        text_to_user = f"✅ **Документ принят! Отлично.**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*.\n\nУ вас есть 10 минут на отправку видео."
         bot.send_message(target_uid, text_to_user, parse_mode="Markdown")
         bot.edit_message_caption(f"✅ *Документ одобрен. Запрошен видео-кружок с кодом: {secret_code}.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
         
