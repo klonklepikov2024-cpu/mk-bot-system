@@ -538,7 +538,7 @@ def handle_user_messages(message):
                 # ЗАПИСЫВАЕМ ТАЙМЕР И КОД В БАЗУ
                 paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
                 
-                text_phrase = f"⏳ **Таймер запущен! У вас ровно 10 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК, мой код: {secret_code}»*."
+                text_phrase = f"⏳ **Таймер запущен! У вас ровно 10 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*."
                 bot.send_message(uid, text_phrase, parse_mode="Markdown")
                 bot.send_message(STAFF_GROUP_ID, f"⏳ *Пользователь написал «Готов». Бот выдал код: {secret_code} и запустил таймер 10 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
                 return 
