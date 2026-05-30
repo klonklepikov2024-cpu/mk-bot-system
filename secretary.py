@@ -1283,8 +1283,13 @@ def successful_payment(message):
         # 👇 НАША НОВАЯ СТРОЧКА: Записываем деньги в кассу 👇
         db['fine_payments'].insert_one({"uid": uid, "amount": amount, "timestamp": time.time(), "date": now.strftime("%d.%m.%Y")})
 
-        # Приказ на разбан для Скайнета
-        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+        # 🔥 ИСПРАВЛЕНИЕ: Передаем приказ fine_unban и точную сумму!
+        db['skynet_tasks'].insert_one({
+            "uid": uid, 
+            "action": "fine_unban", 
+            "amount": amount, 
+            "timestamp": now
+        })
 
         # Досье
         archive_collection.update_one(
