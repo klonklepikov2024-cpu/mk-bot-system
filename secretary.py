@@ -1173,6 +1173,19 @@ def process_donate_amount(message):
         bot.send_message(message.chat.id, "❌ Сумма должна быть от 1 до 10000.")
         return
 
+    # 👇 Генерируем раздельные крипто-ссылки для доната 👇
+    url_usdt = get_crypto_pay_url(f"donation_{message.from_user.id}", amount, f"Чаевые проекту ({amount}⭐️)", asset="USDT")
+    url_ton = get_crypto_pay_url(f"donation_{message.from_user.id}", amount, f"Чаевые проекту ({amount}⭐️)", asset="TON")
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton(text=f"⭐️ Отправить {amount} Звезд", pay=True)) # <- Кнопка Телеграма
+    
+    # Раздельные красивые кнопки
+    if url_usdt:
+        markup.add(InlineKeyboardButton("🟢 Донат через USDT (CryptoBot)", url=url_usdt))
+    if url_ton:
+        markup.add(InlineKeyboardButton("💎 Донат через TON (CryptoBot)", url=url_ton))
+
     # Выставляем счет ровно на ту сумму, которую захотел юзер
     bot.send_invoice(
         message.chat.id,
@@ -1181,7 +1194,8 @@ def process_donate_amount(message):
         invoice_payload=f"donation_{amount}",
         provider_token="",
         currency="XTR",
-        prices=[telebot.types.LabeledPrice(label="Донат", amount=amount)]
+        prices=[telebot.types.LabeledPrice(label="Донат", amount=amount)],
+        reply_markup=markup # <--- ДОБАВИЛИ НАШИ КНОПКИ В СЧЕТ
     )
         
 # ================= ОБРАБОТКА ОЦЕНКИ И ПРЕМИЙ =================
