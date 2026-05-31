@@ -3,3 +3,5 @@ pymongo
 Flask==2.3.2
 gunicorn
 setuptools
+requests>=2.31.0
+urllib3>=2.0.0

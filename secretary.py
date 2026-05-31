@@ -7,6 +7,48 @@ import time
 import string
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
+import requests # <--- Добавить в зону импортов
+
+# 👇 УНИВЕРСАЛЬНЫЙ КАССИР CRYPTOBOT (ДЛЯ РЕКЛАМЫ И ШТРАФОВ) 👇
+def get_crypto_pay_url(custom_payload, amount_stars, description, asset=None):
+    import os
+    import requests
+    
+    amount_rub = int(amount_stars * 1.8)
+    API_TOKEN = os.getenv("CRYPTO_TOKEN")
+    
+    if not API_TOKEN:
+        print("❌ ОШИБКА: Токен CRYPTO_TOKEN не найден!", flush=True)
+        return None
+
+    url = "https://pay.crypt.bot/api/createInvoice"
+    
+    headers = {
+        "Crypto-Pay-API-Token": API_TOKEN,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    payload = {
+        "currency_type": "fiat",
+        "fiat": "RUB",
+        "amount": str(amount_rub), 
+        "payload": custom_payload,
+        "description": description
+    }
+    
+    if asset:
+        payload["asset"] = asset
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        res = response.json()
+        
+        if res.get("ok"): 
+            return res["result"]["mini_app_invoice_url"] # 💥 Запускаем красивое Mini-App окно!
+    except Exception as e: 
+        print(f"❌ Ошибка связи с CryptoBot: {e}", flush=True)
+        
+    return None
 
 NETWORK_LINKS = (
     "📍 **Ссылки для возврата в чаты:**\n"
@@ -678,11 +720,22 @@ def handle_admin_templates(call):
     if call.data.startswith('fine_'):
         amount = int(call.data.split('_')[1])
         try:
+            # 👇 Генерируем раздельные крипто-ссылки 👇
+            url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+            url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+            
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(
                 InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"),
                 InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}")
             )
+            
+            # Раздельные красивые кнопки
+            if url_usdt:
+                markup.add(InlineKeyboardButton("🟢 Оплатить через USDT (CryptoBot)", url=url_usdt))
+            if url_ton:
+                markup.add(InlineKeyboardButton("💎 Оплатить через TON (CryptoBot)", url=url_ton))
+                
             bot.send_message(
                 target_uid, 
                 f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.",
@@ -721,11 +774,22 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         return
         
     try:
+        # 👇 Генерируем раздельные крипто-ссылки 👇
+        url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+        url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+        
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
             InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"),
             InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}")
         )
+        
+        # Раздельные красивые кнопки
+        if url_usdt:
+            markup.add(InlineKeyboardButton("🟢 Оплатить через USDT (CryptoBot)", url=url_usdt))
+        if url_ton:
+            markup.add(InlineKeyboardButton("💎 Оплатить через TON (CryptoBot)", url=url_ton))
+            
         bot.send_message(
             target_uid, 
             f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.",
