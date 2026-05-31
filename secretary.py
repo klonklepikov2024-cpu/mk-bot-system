@@ -321,6 +321,12 @@ def process_report_target(message):
     bot.register_next_step_handler(msg, process_report_description)
 
 def process_report_description(message):
+    # 👇 АНТИ-КАПКАН 👇
+    if message.text == '/start':
+        send_welcome(message)
+        return
+    # 👆 ============ 👆
+
     description = message.text if message.text else "Описание отсутствует"
     
     # Сохраняем текстовое описание
@@ -340,6 +346,13 @@ def process_report_description(message):
 
 def process_evidence_loop(message):
     uid = message.from_user.id
+
+    # 👇 АНТИ-КАПКАН 👇
+    if message.text == '/start':
+        bot.send_message(message.chat.id, "Отмена действия...", reply_markup=telebot.types.ReplyKeyboardRemove())
+        send_welcome(message)
+        return
+    # 👆 ============ 👆
 
     # Если юзер нажал кнопку "Готово"
     if message.text == "✅ Все доказательства отправлены":
@@ -753,6 +766,12 @@ def handle_checkout(call):
         bot.register_next_step_handler(msg, process_promo_code, target_type=target_type, original_amount=original_amount, call_msg=call.message)
 
 def process_promo_code(message, target_type, original_amount, call_msg):
+    # 👇 АНТИ-КАПКАН 👇
+    if message.text == '/start':
+        send_welcome(message)
+        return
+    # 👆 ============ 👆
+
     # Убираем кнопки на старом сообщении кассы
     try: bot.edit_message_reply_markup(call_msg.chat.id, call_msg.message_id, reply_markup=None)
     except: pass
@@ -1075,6 +1094,12 @@ def handle_start_donate(call):
     bot.register_next_step_handler(msg, process_donate_amount)
 
 def process_donate_amount(message):
+    # 👇 АНТИ-КАПКАН 👇
+    if message.text == '/start':
+        send_welcome(message)
+        return
+    # 👆 ============ 👆
+
     if not message.text or not message.text.isdigit():
         bot.send_message(message.chat.id, "❌ Ошибка: нужно ввести только число (например: 100). Попробуйте нажать кнопку доната еще раз.")
         return
