@@ -255,9 +255,15 @@ def handle_security_menu(call):
         user_data = paid_collection.find_one({"uid": uid}) or {}
         points = user_data.get("bounty_points", 0)
         reports_count = user_data.get("successful_reports", 0)
-        shards = user_data.get("jackpot_shards", 0) # 👈 ДОСТАЕМ ОСКОЛКИ
+        shards = user_data.get("jackpot_shards", 0)
+        cb_balance = user_data.get("cashback_balance", 0) # 👈 ДОСТАЕМ РУБЛИ
 
         markup = InlineKeyboardMarkup(row_width=2) 
+        
+        # 👈 НОВАЯ КНОПКА ВЫВОДА (показываем, если есть баланс)
+        if cb_balance > 0:
+            markup.add(InlineKeyboardButton(f"💸 Вывести / Потратить ({cb_balance}₽)", callback_data="request_cashback_payout"))
+
         markup.add(
             InlineKeyboardButton("🎫 -25% Штраф (30)", callback_data="buy_reward_fine25_30"),
             InlineKeyboardButton("🎫 -50% Штраф (60)", callback_data="buy_reward_fine50_60")
@@ -282,6 +288,7 @@ def handle_security_menu(call):
         bot.edit_message_text(
             f"🕵️‍♂️ **Ваш профиль Агента**\n\n"
             f"💰 Баланс: **{points} очков**\n"
+            f"💵 Рублевый счет: **{cb_balance} руб.**\n"
             f"📊 Успешных жалоб: **{reports_count}**\n"
             f"🧩 Осколки рулетки: **{shards} шт.**\n\n"
             f"*Выберите награду для обмена:*",
@@ -350,6 +357,62 @@ def handle_reward_purchase(call):
         message_id=call.message.message_id,
         parse_mode="Markdown"
     )
+
+# ================= ВЫВОД КЭШБЭКА =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('request_cashback_payout'))
+def handle_cashback_request(call):
+    bot.answer_callback_query(call.id)
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    cb_balance = user_data.get("cashback_balance", 0)
+    
+    if cb_balance < 500: # 👈 Лимит на вывод (можно поставить 3500)
+        bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — 500 рублей! У вас: {cb_balance}₽.", show_alert=True)
+        return
+        
+    # Списываем баланс, чтобы не нажали дважды
+    paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": 0}})
+    
+    username = f"@{call.from_user.username}" if call.from_user.username else f"ID {uid}"
+    
+    # Кнопки для админа
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✅ Выплачено (На карту/Телефон)", callback_data=f"payout_done_{uid}_{cb_balance}"),
+        InlineKeyboardButton("❌ Отклонить (Вернуть баланс)", callback_data=f"payout_cancel_{uid}_{cb_balance}")
+    )
+    
+    bot.send_message(
+        STAFF_GROUP_ID,
+        f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n"
+        f"👤 От: {username} (`{uid}`)\n"
+        f"💵 Сумма к выдаче: **{cb_balance} руб.**\n\n"
+        f"Свяжитесь с пользователем, уточните реквизиты (карта от 3500₽ или баланс телефона) и подтвердите выплату:",
+        reply_markup=markup
+    )
+    
+    bot.send_message(call.message.chat.id, "⏳ **Заявка на выплату создана!**\nСумма списана с баланса. Ожидайте, скоро с вами свяжется администратор для уточнения реквизитов (перевод на карту или баланс телефона).")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('payout_'))
+def handle_payout_decision(call):
+    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    bot.answer_callback_query(call.id)
+    
+    parts = call.data.split('_')
+    action = parts[1] # done или cancel
+    target_uid = int(parts[2])
+    amount = int(parts[3])
+    
+    if action == "done":
+        bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫПЛАЧЕНО УСПЕШНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        try: bot.send_message(target_uid, f"💸 **Ваша заявка на выплату ({amount} руб.) успешно обработана!** Деньги отправлены.")
+        except: pass
+    elif action == "cancel":
+        # Возвращаем деньги на баланс
+        paid_collection.update_one({"uid": target_uid}, {"$inc": {"cashback_balance": amount}})
+        bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Деньги возвращены)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        try: bot.send_message(target_uid, f"❌ **Заявка на выплату отклонена.**\nСредства ({amount} руб.) возвращены на ваш внутренний баланс.")
+        except: pass
 
 # ================= ОБМЕННИК ОСКОЛКОВ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'exchange_shards')
@@ -930,21 +993,30 @@ def handle_admin_templates(call):
     if call.data.startswith('fine_'):
         amount = int(call.data.split('_')[1])
         try:
-            # 👇 Генерируем раздельные крипто-ссылки 👇
+            # 👇 Достаем рублевый баланс юзера
+            user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
+            cb_balance = user_data_pay.get("cashback_balance", 0)
+            cost_in_rub = amount * 2 # Курс 1 звезда = 2 рубля
+            
+            # Генерируем раздельные крипто-ссылки
             url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
             url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
             
             markup = InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"),
-                InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}")
-            )
+            markup.add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+            
+            # 👇 ЛОГИКА СМЕШАННОЙ ОПЛАТЫ 👇
+            if cb_balance >= cost_in_rub:
+                markup.add(InlineKeyboardButton(f"💰 Оплатить полностью с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+            elif cb_balance > 0:
+                remaining_stars = amount - (cb_balance // 2)
+                markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+            else:
+                markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
             
             # Раздельные красивые кнопки
-            if url_usdt:
-                markup.add(InlineKeyboardButton("🟢 Оплатить через USDT (CryptoBot)", url=url_usdt))
-            if url_ton:
-                markup.add(InlineKeyboardButton("💎 Оплатить через TON (CryptoBot)", url=url_ton))
+            if url_usdt: markup.add(InlineKeyboardButton("🟢 Оплатить через USDT (CryptoBot)", url=url_usdt))
+            if url_ton: markup.add(InlineKeyboardButton("💎 Оплатить через TON (CryptoBot)", url=url_ton))
                 
             bot.send_message(
                 target_uid, 
@@ -984,21 +1056,30 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         return
         
     try:
-        # 👇 Генерируем раздельные крипто-ссылки 👇
+        # 👇 Достаем баланс юзера
+        user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
+        cb_balance = user_data_pay.get("cashback_balance", 0)
+        cost_in_rub = amount * 2
+        
+        # Генерируем раздельные крипто-ссылки
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
         
         markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"),
-            InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}")
-        )
+        markup.add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+        
+        # 👇 ЛОГИКА СМЕШАННОЙ ОПЛАТЫ 👇
+        if cb_balance >= cost_in_rub:
+            markup.add(InlineKeyboardButton(f"💰 Оплатить полностью с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+        elif cb_balance > 0:
+            remaining_stars = amount - (cb_balance // 2)
+            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+        else:
+            markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
         
         # Раздельные красивые кнопки
-        if url_usdt:
-            markup.add(InlineKeyboardButton("🟢 Оплатить через USDT (CryptoBot)", url=url_usdt))
-        if url_ton:
-            markup.add(InlineKeyboardButton("💎 Оплатить через TON (CryptoBot)", url=url_ton))
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 Оплатить через USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 Оплатить через TON (CryptoBot)", url=url_ton))
             
         bot.send_message(
             target_uid, 
@@ -1099,6 +1180,59 @@ def process_promo_code(message, target_type, original_amount, call_msg):
         currency="XTR", 
         prices=[telebot.types.LabeledPrice(label="К оплате", amount=new_amount)]
     )
+
+    # 3. Смешанная оплата (Часть рублями, остаток Звездами)
+    elif action == "partial":
+        used_rubles = int(parts[4])
+        
+        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        if user_data.get("cashback_balance", 0) < used_rubles:
+            bot.answer_callback_query(call.id, "❌ Ошибка: ваш рублевый баланс изменился!", show_alert=True)
+            return
+            
+        remaining_stars = original_amount - (used_rubles // 2)
+        if remaining_stars < 1: remaining_stars = 1
+        
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        
+        bot.send_invoice(
+            call.message.chat.id, 
+            title="Оплата штрафа (Смешанная)", 
+            description=f"Штраф: {original_amount}⭐️\nСписано: {used_rubles}₽\nК доплате: {remaining_stars}⭐️", 
+            invoice_payload=f"finepartial_{original_amount}_{used_rubles}", # 👈 Прячем рубли сюда!
+            provider_token="", 
+            currency="XTR", 
+            prices=[telebot.types.LabeledPrice(label="К оплате", amount=remaining_stars)]
+        )
+
+    # 4. Оплата полностью с внутреннего баланса
+    elif action == "balance":
+        cost_rub = original_amount * 2
+        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        current_balance = user_data.get("cashback_balance", 0)
+        
+        if current_balance < cost_rub:
+            bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽, а у вас {current_balance}₽.", show_alert=True)
+            return
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        
+        now = datetime.datetime.now()
+        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+        db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        
+        archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
+        
+        user_data_full = paid_collection.find_one({"uid": call.from_user.id})
+        if user_data_full and "thread_id" in user_data_full:
+            try: bot.send_message(STAFF_GROUP_ID, f"🟢 **ЮЗЕР ОПЛАТИЛ ШТРАФ С БАЛАНСА ({cost_rub}₽)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
+            except: pass
+            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
+            except: pass
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
 
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
@@ -1657,13 +1791,29 @@ def process_spin_result(message, sent_dice, val, uid):
     pm_msg = None
     pm_markup = None
 
+    # 👇 ДОСТАЕМ КАССУ КАЗИНО 👇
+    bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+    premium_cost_stars = 1500 # Цена 3-х месяцев премиума в звездах (укажите вашу)
+
     # 1. 🏆 СУПЕР-ПРИЗ: TELEGRAM PREMIUM (Шанс 1 из 64 — val: 63)
     if val == 63:
-        msg = f"🏆 **ГЛАВНЫЙ СУПЕР-ПРИЗ!!!** 🏆\n\nНевероятно! Барабан остановился на счастливой звезде!\n🎁 **Приз:** Telegram Premium на 1 месяц!\n\n_🎁 Инструкция отправлена в ЛС!_"
-        pm_msg = f"💎 **ВЫ ВЫИГРАЛИ TELEGRAM PREMIUM!** 💎\n\nПерешлите это сообщение в нашу Службу Поддержки (/start -> Разблокировка), чтобы администратор вручную подарил вам подписку!"
-        
-        # Сирена админам!
-        bot.send_message(STAFF_GROUP_ID, f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ!** 🚨\n\nПользователь `{uid}` (@{message.from_user.username}) только что выбил **TELEGRAM PREMIUM** в рулетке! Ждите от него сообщения в поддержку.")
+        # Проверяем, накопило ли казино на Премиум?
+        if bank_data.get("balance", 0) >= premium_cost_stars:
+            # Касса полная! Списываем стоимость и выдаем приз
+            db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
+            
+            msg = f"🏆 **ГЛАВНЫЙ СУПЕР-ПРИЗ!!!** 🏆\n\nНевероятно! Барабан остановился на счастливой звезде!\n🎁 **Приз:** Telegram Premium на 3 месяца!\n\n_🎁 Инструкция отправлена в ЛС!_"
+            pm_msg = f"💎 **ВЫ ВЫИГРАЛИ TELEGRAM PREMIUM (3 мес.)!** 💎\n\nПерешлите это сообщение в нашу Службу Поддержки (/start -> Разблокировка), чтобы администратор вручную подарил вам подписку!"
+            bot.send_message(STAFF_GROUP_ID, f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ!** 🚨\n\nПользователь `{uid}` (@{message.from_user.username}) выбил **TELEGRAM PREMIUM**! Фонд казино списан.")
+        else:
+            # Касса пуста! Заменяем на резервный КУШ
+            val = 999 
+
+    # 1.5 РЕЗЕРВНЫЙ СУПЕР-ПРИЗ (Если выпал Премиум, но в кассе пусто)
+    if val == 999:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 500, "cashback_balance": 500}})
+        msg = f"🎰 **МИНИ-ДЖЕКПОТ!** 🎰\n\nВы были в миллиметре от Премиума, но срываете отличный куш!\n🎁 **Приз:** +500 Очков Бдительности и 500 Рублей кэшбэка!"
+        pm_msg = f"💎 **Ваш выигрыш:** +500 Очков и 500 Руб. Главный приз (Premium) пока копится в фонде казино, попробуйте позже!"
 
     # 2. 🎰 ЛЕГЕНДАРНЫЙ ДЖЕКПОТ (7️⃣7️⃣7️⃣ — val: 64)
     elif val == 64:
@@ -1736,6 +1886,18 @@ def process_spin_result(message, sent_dice, val, uid):
         pm_msg = f"✨ **Ваш выигрыш из рулетки!**\n\n🎫 {drop['name']}\nВаш код: `{code}`"
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("♻️ Обменять на 2 Осколка", callback_data=f"trade_promo_{code}_shards_2"))
 
+    # 9.5 🌟 ЗАМАСКИРОВАННЫЙ КЭШБЭК (Реальные рубли на баланс — val: 11, 33)
+    elif val in [11, 33]:
+        win_rub = random.choice([100, 250, 500]) # Сумма выигрыша в рублях
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
+        
+        msg = f"✨ **РЕДКИЙ ДРОП: ДЕНЕЖНЫЙ КУПОН!** ✨\n\nВы выиграли **{win_rub} руб.** на внутренний счет!\n\n_🎁 Баланс обновлен, подробности в ЛС._"
+        pm_msg = (
+            f"🎁 **Вы выбили денежный купон на {win_rub} руб.!**\n\n"
+            f"Средства зачислены на ваш баланс. Вы можете копить их для вывода на карту/телефон или оплачивать ими внутренние штрафы и рекламу!"
+        )
+        pm_markup = None
+
     # 10. 🥉 УТЕШИТЕЛЬНЫЙ ДРОП (Все остальные числа — Осколки)
     else:
         shards_won = random.choice([1, 1, 1, 2])
@@ -1784,6 +1946,9 @@ def successful_payment(message):
     payload = message.successful_payment.invoice_payload
     amount = message.successful_payment.total_amount
     uid = message.from_user.id
+
+    # 👇 ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА (Отчисляем 20% от любого платежа в Фонд) 👇
+    db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": amount * 0.20}}, upsert=True)
 
     # 1. Если это ДОНАТ
     if payload.startswith("donation_"):
@@ -1834,6 +1999,39 @@ def successful_payment(message):
         success_msg = f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}"
         bot.send_message(uid, success_msg, parse_mode="Markdown", disable_web_page_preview=True)
 
+    # 2.5 СМЕШАННАЯ ОПЛАТА ШТРАФА (Звезды + Рубли)
+    elif payload.startswith("finepartial_"):
+        parts = payload.split('_')
+        original_amount = int(parts[1])
+        used_rubles = int(parts[2])
+        
+        # 1. Списываем рубли ТОЛЬКО СЕЙЧАС, когда звезды успешно оплачены!
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -used_rubles}})
+        
+        # 2. Пополняем кассу Премиума (20% от реально оплаченных звезд)
+        db['daily_revenue'].insert_one({"type": "fine_partial", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        db['fine_payments'].insert_one({"uid": uid, "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
+        now = datetime.datetime.now()
+        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+        
+        # Передаем оригинальную сумму Скайнету
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        
+        # Обновляем досье
+        archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Смешанная оплата)", "reason": "Звезды + Кэшбек"}}}, upsert=True)
+        
+        # Закрываем тикет админам
+        user_data = paid_collection.find_one({"uid": uid})
+        if user_data and "thread_id" in user_data:
+            try: bot.send_message(STAFF_GROUP_ID, f"🤑 **СМЕШАННАЯ ОПЛАТА!**\nЮзер доплатил {amount}⭐️ и списал {used_rubles}₽. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data["thread_id"], parse_mode="Markdown")
+            except: pass
+            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data["thread_id"])
+            except: pass
+            
+        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        bot.send_message(uid, f"✅ **Оплата успешно получена!**\n\nСписано: {used_rubles}₽ + {amount}⭐️\nВаши ограничения сняты. Номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+
     # 3. Если это ПОКУПКА ОЧКОВ (МАГАЗИН)
     elif payload.startswith("buy_points_"):
         points_to_add = int(payload.split('_')[2])
@@ -1857,6 +2055,29 @@ def successful_payment(message):
         
         bot.send_message(uid, success_msg, parse_mode="Markdown")
         bot.send_message(STAFF_GROUP_ID, f"🤑 **МАГАЗИН:** Пользователь `{uid}` купил {points_to_add} очков за {amount}⭐️!", parse_mode="Markdown")
+
+# ================= АУДИТ КАЗИНО =================
+@bot.message_handler(commands=['bank'])
+def handle_bank_check(message):
+    # Команда работает только в админской группе
+    if str(message.chat.id) != STAFF_GROUP_ID:
+        return
+        
+    # Считаем фонд Премиума
+    bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+    current_fund = int(bank_data.get("balance", 0))
+    
+    # Считаем, сколько всего кэшбека (рублей) на руках у пользователей
+    users_with_cb = list(paid_collection.find({"cashback_balance": {"$gt": 0}}))
+    total_cb_held = sum(u.get("cashback_balance", 0) for u in users_with_cb)
+    
+    text = (
+        f"🏦 **СВОДКА КАССЫ КАЗИНО**\n\n"
+        f"💎 Фонд Premium: **{current_fund} / 1500 ⭐️**\n"
+        f"💸 На руках у юзеров (Кэшбек): **{total_cb_held} ₽**\n\n"
+        f"_Фонд пополняется на 20% от всех покупок в боте._"
+    )
+    bot.reply_to(message, text, parse_mode="Markdown")
 
 # ================= СИСТЕМА КАСТОМНЫХ ТЕГОВ =================
 
