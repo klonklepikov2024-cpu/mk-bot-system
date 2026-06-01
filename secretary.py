@@ -5,9 +5,10 @@ import random
 import os
 import time
 import string
+import threading # 👇 ДОБАВИТЬ ЭТУ СТРОКУ 👇
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
-import requests # <--- Добавить в зону импортов
+import requests
 
 # 👇 УНИВЕРСАЛЬНЫЙ КАССИР CRYPTOBOT (ДЛЯ РЕКЛАМЫ И ШТРАФОВ) 👇
 def get_crypto_pay_url(custom_payload, amount_stars, description, asset=None):
