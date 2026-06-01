@@ -297,6 +297,9 @@ def handle_security_menu(call):
         else:
             markup.add(InlineKeyboardButton(f"🧩 Копите осколки ({shards}/50)", callback_data="dummy_shards"))
             
+        # 👇 НОВАЯ КНОПКА ДЛЯ АИРДРОПОВ 👇
+        markup.add(InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_gift_code"))
+        
         markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_report"))
 
         bot.edit_message_text(
@@ -611,6 +614,51 @@ def handle_trade_in(call):
             message_id=call.message.message_id,
             parse_mode="Markdown"
         )
+
+# ================= АКТИВАЦИЯ ПОДАРОЧНЫХ КОДОВ (АИРДРОП) =================
+@bot.callback_query_handler(func=lambda call: call.data == 'enter_gift_code')
+def handle_enter_gift_code(call):
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id, "🎁 **Активация подарочного кода**\n\nПришлите промокод ответным сообщением:")
+    bot.register_next_step_handler(msg, process_gift_code)
+
+def process_gift_code(message):
+    if message.text == '/start':
+        send_welcome(message)
+        return
+        
+    code_text = message.text.strip().upper()
+    uid = message.from_user.id
+    
+    # Ищем код в базе
+    promo = db['promocodes'].find_one({"_id": code_text, "is_active": True})
+    
+    if not promo:
+        bot.send_message(message.chat.id, "❌ Промокод не найден или уже недействителен.")
+        return
+        
+    if promo.get("used_count", 0) >= promo.get("usage_limit", 1):
+        bot.send_message(message.chat.id, "❌ Лимит активаций исчерпан. Вы не успели!")
+        return
+        
+    # Проверяем, что это именно код на бесплатные очки (аирдроп)
+    if promo.get("type") == "airdrop":
+        # Проверяем, не вводил ли он его уже (чтобы один юзер не активировал код 10 раз)
+        if uid in promo.get("activated_by", []):
+            bot.send_message(message.chat.id, "❌ Вы уже активировали этот промокод!")
+            return
+            
+        points = promo.get("value", 0)
+        
+        # Начисляем очки
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": points}}, upsert=True)
+        
+        # Обновляем промокод (добавляем юзера в список активировавших и увеличиваем счетчик)
+        db['promocodes'].update_one({"_id": code_text}, {"$inc": {"used_count": 1}, "$push": {"activated_by": uid}})
+        
+        bot.send_message(message.chat.id, f"✅ **Промокод успешно активирован!**\nВам начислено: **+{points} очков** 💰\n_Можете использовать их для игры в рулетку!_")
+    else:
+        bot.send_message(message.chat.id, "❌ Этот промокод дает скидку, а не бесплатные очки. Введите его при оплате услуг (штраф, реклама).")
 
 # ================= МАГАЗИН ОЧКОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('shop_points_'))
@@ -1834,13 +1882,6 @@ def handle_give_cmd(message):
             
     except ValueError:
         bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
-
-# Функция для тихого самоуничтожения сообщений
-def auto_delete_message(chat_id, message_id):
-    try:
-        bot.delete_message(chat_id, message_id)
-    except:
-        pass
 
 # ================= АНТИ-СПАМ СМАЙЛИКАМИ В ЧАТАХ =================
 @bot.message_handler(content_types=['dice'], func=lambda message: message.chat.type in ['group', 'supergroup'])
