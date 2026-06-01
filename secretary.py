@@ -1769,6 +1769,33 @@ def handle_give_cmd(message):
     except ValueError:
         bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
 
+# Функция для тихого самоуничтожения сообщений
+def auto_delete_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+# ================= АНТИ-СПАМ СМАЙЛИКАМИ В ЧАТАХ =================
+@bot.message_handler(content_types=['dice'], func=lambda message: message.chat.type in ['group', 'supergroup'])
+def handle_manual_dice(message):
+    try:
+        # 1. Молча удаляем брошенный вручную смайлик
+        bot.delete_message(message.chat.id, message.message_id)
+        
+        # 2. Выдаем предупреждение
+        warning = bot.send_message(
+            message.chat.id, 
+            f"⚠️ @{message.from_user.username}, рулетка с реальными призами работает **только через команду** `/казино` (или `/spin`)!\nПростые смайлики здесь бессильны 😅",
+            parse_mode="Markdown"
+        )
+        
+        # 3. Самоуничтожение предупреждения через 15 секунд, чтобы не мусорить в чате
+        threading.Timer(15.0, auto_delete_message, args=(message.chat.id, warning.message_id)).start()
+    except Exception:
+        # Если у бота нет прав удалять сообщения, он просто промолчит
+        pass
+
 # ================= КАЗИНО (РУЛЕТКА) =================
 # Функция для тихого самоуничтожения сообщений
 def auto_delete_message(chat_id, message_id):
