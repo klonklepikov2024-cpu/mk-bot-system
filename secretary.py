@@ -254,8 +254,9 @@ def handle_security_menu(call):
         user_data = paid_collection.find_one({"uid": uid}) or {}
         points = user_data.get("bounty_points", 0)
         reports_count = user_data.get("successful_reports", 0)
+        shards = user_data.get("jackpot_shards", 0) # 👈 ДОСТАЕМ ОСКОЛКИ
 
-        markup = InlineKeyboardMarkup(row_width=2) # Делаем по 2 кнопки в ряд для красоты
+        markup = InlineKeyboardMarkup(row_width=2) 
         markup.add(
             InlineKeyboardButton("🎫 -25% Штраф (30)", callback_data="buy_reward_fine25_30"),
             InlineKeyboardButton("🎫 -50% Штраф (60)", callback_data="buy_reward_fine50_60")
@@ -267,12 +268,21 @@ def handle_security_menu(call):
         markup.add(
             InlineKeyboardButton("👑 VIP-билет БЕСПЛАТНО (300)", callback_data="buy_reward_vip100_300")
         )
+        markup.add(InlineKeyboardButton("🎰 МАГАЗИН ОЧКОВ (Для Рулетки) 🎰", callback_data="shop_points_menu"))
+        
+        # 👇 УМНАЯ КНОПКА ДЛЯ ОСКОЛКОВ 👇
+        if shards >= 50:
+            markup.add(InlineKeyboardButton("🧩 СОБРАТЬ ДЖЕКПОТ (50 осколков)", callback_data="exchange_shards"))
+        else:
+            markup.add(InlineKeyboardButton(f"🧩 Копите осколки ({shards}/50)", callback_data="dummy_shards"))
+            
         markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_report"))
 
         bot.edit_message_text(
             f"🕵️‍♂️ **Ваш профиль Агента**\n\n"
             f"💰 Баланс: **{points} очков**\n"
-            f"📊 Успешных жалоб: **{reports_count}**\n\n"
+            f"📊 Успешных жалоб: **{reports_count}**\n"
+            f"🧩 Осколки рулетки: **{shards} шт.**\n\n"
             f"*Выберите награду для обмена:*",
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -339,6 +349,108 @@ def handle_reward_purchase(call):
         message_id=call.message.message_id,
         parse_mode="Markdown"
     )
+
+# ================= ОБМЕННИК ОСКОЛКОВ =================
+@bot.callback_query_handler(func=lambda call: call.data == 'exchange_shards')
+def handle_shards_exchange(call):
+    bot.answer_callback_query(call.id)
+    uid = call.from_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    shards = user_data.get("jackpot_shards", 0)
+    
+    if shards < 50:
+        bot.answer_callback_query(call.id, "❌ Недостаточно осколков! Нужно 50 шт.", show_alert=True)
+        return
+        
+    # 1. Списываем 50 осколков
+    paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
+    
+    # 2. Определяем супер-приз (50% шанс на Щит, 50% на VIP Билет)
+    import random
+    is_vip = random.choice([True, False])
+    
+    if is_vip:
+        code = f"JACKPOT-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({
+            "_id": code, "type": "percent", "value": 100, "target": "vip",
+            "usage_limit": 1, "used_count": 0, "is_active": True
+        })
+        msg = f"🎉 **ПОЗДРАВЛЯЕМ!** 🎉\n\nВы собрали из осколков **Золотой Билет (VIP-доступ)**!\nВаш промокод: `{code}`\n\n_Сохраните его и введите при оплате._"
+    else:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+        msg = f"🛡 **ПОЗДРАВЛЯЕМ!** 🛡\n\nВы собрали из осколков **Щит Иммунитета**!\nВаш аккаунт теперь защищен от одного случайного нарушения или страйка."
+        
+    bot.edit_message_text(
+        msg, 
+        chat_id=call.message.chat.id, 
+        message_id=call.message.message_id, 
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet"))
+    )
+    
+@bot.callback_query_handler(func=lambda call: call.data == 'dummy_shards')
+def handle_dummy_shards(call):
+    # Кнопка-пустышка, которая просто показывает подсказку
+    bot.answer_callback_query(call.id, "🧩 Соберите 50 осколков из неудачных прокруток рулетки, чтобы гарантированно получить Супер-Приз!", show_alert=True)
+
+# ================= МАГАЗИН ОЧКОВ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('shop_points_'))
+def handle_points_shop(call):
+    bot.answer_callback_query(call.id)
+    uid = call.from_user.id
+    
+    # 1. ОТКРЫВАЕМ ВИТРИНУ
+    if call.data == "shop_points_menu":
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("📦 50 очков (1 прокрут) — 50⭐️", callback_data="shop_points_buy_50_50"),
+            InlineKeyboardButton("🔥 300 очков (6 прокрутов) — 200⭐️", callback_data="shop_points_buy_300_200"),
+            InlineKeyboardButton("💎 1000 очк. + 🛡 Щит — 500⭐️", callback_data="shop_points_buy_1000_500"),
+            InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet")
+        )
+        bot.edit_message_text(
+            "🎰 **Магазин Очков Бдительности**\n\nОчки можно тратить на скидки в кабинете или использовать для игры в Гача-Рулетку (`/spin`).\n\nВыберите нужный пакет:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        return
+
+    # 2. ЕСЛИ НАЖАЛИ КУПИТЬ ПАКЕТ
+    parts = call.data.split('_')
+    if len(parts) == 5 and parts[2] == "buy":
+        points_amount = int(parts[3])
+        price_stars = int(parts[4])
+        
+        # 👇 Генерируем раздельные крипто-ссылки 👇
+        url_usdt = get_crypto_pay_url(f"buy_points_{points_amount}_{uid}", price_stars, f"Покупка {points_amount} очков", asset="USDT")
+        url_ton = get_crypto_pay_url(f"buy_points_{points_amount}_{uid}", price_stars, f"Покупка {points_amount} очков", asset="TON")
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(InlineKeyboardButton(text=f"⭐️ Оплатить {price_stars} Звезд", pay=True))
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 Оплатить USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 Оплатить TON (CryptoBot)", url=url_ton))
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="shop_points_menu"))
+
+        description = f"Пакет: {points_amount} Очков Бдительности."
+        if points_amount == 1000:
+            description += "\n🎁 Бонус: 1 Щит Иммунитета!"
+
+        bot.send_invoice(
+            call.message.chat.id,
+            title=f"Покупка Очков ({points_amount})",
+            description=description,
+            invoice_payload=f"buy_points_{points_amount}",
+            provider_token="",
+            currency="XTR",
+            prices=[telebot.types.LabeledPrice(label="Пакет Очков", amount=price_stars)],
+            reply_markup=markup
+        )
+        # Убираем старое сообщение с меню, чтобы не засорять чат
+        try: bot.delete_message(call.message.chat.id, call.message.message_id)
+        except: pass
 
 # ================= ВОРОНКА ЖАЛОБ =================
 def process_report_target(message):
@@ -536,7 +648,25 @@ def handle_admin_report_decision(call):
         
     # 3. ЛОЖНЫЙ ДОНОС
     elif action == "strike":
-        user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0}
+        user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0, "immunity": 0}
+        
+        # 👇 ПРОВЕРКА НА ЩИТ ИММУНИТЕТА 👇
+        if user_data.get("immunity", 0) > 0:
+            # Очки за ложный донос все равно списываем, а вот страйк поглощается Щитом!
+            paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"immunity": -1, "bounty_points": -10}, "$unset": {"topic_type": ""}})
+            
+            try: bot.send_message(reporter_uid, "⛔️ **Ложный донос!**\nВы использовали систему не по назначению. Списано **-10 очков**.\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен._", parse_mode="Markdown")
+            except: pass
+            
+            try: bot.edit_message_text(f"{call.message.text}\n\n🛡 *ЗАКРЫТО: Юзер спасен Иммунитетом! Страйк поглощен щитом (очки списаны).* ", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+            except: pass
+            
+            try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+            except: pass
+            return
+        # 👆 ============================ 👆
+
+        # Если щита нет - выдаем классический страйк
         new_strikes = user_data.get("strikes", 0) + 1
         paid_collection.update_one({"uid": reporter_uid}, {"$set": {"strikes": new_strikes}, "$inc": {"bounty_points": -10}, "$unset": {"topic_type": ""}}, upsert=True)
         
@@ -1029,10 +1159,31 @@ def handle_trap(call):
     thread_id = call.message.message_thread_id
     
     # 1. Снимаем "залипание" кнопки мгновенно!
-    bot.answer_callback_query(call.id, "🚨 Страйк выдан!")
+    bot.answer_callback_query(call.id, "Обработка...")
     
-    # Начисляем страйк в базу
-    user_data = paid_collection.find_one({"uid": target_uid}) or {"uid": target_uid, "strikes": 0}
+    # Достаем юзера и проверяем его защиту
+    user_data = paid_collection.find_one({"uid": target_uid}) or {"uid": target_uid, "strikes": 0, "immunity": 0}
+    
+    # 👇 МАГИЯ ЩИТА ИММУНИТЕТА 👇
+    if user_data.get("immunity", 0) > 0:
+        # Списываем один щит, страйк НЕ выдаем!
+        paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}})
+        
+        try:
+            bot.send_message(target_uid, "⛔️ **Вы нарушили правила!**\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен. Будьте осторожны в следующий раз._", parse_mode="Markdown")
+        except: pass
+        
+        try:
+            new_text = f"{call.message.html}\n\n🛡 <b>Юзер спасен Иммунитетом!</b> Страйк поглощен щитом. Топик закрыт."
+            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=None)
+        except: pass
+        
+        try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+        except: pass
+        return
+    # 👆 ======================= 👆
+
+    # Обычная логика, если щита нет:
     new_strikes = user_data.get("strikes", 0) + 1
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": new_strikes}, "$unset": {"topic_type": ""}}, upsert=True)
     
@@ -1040,17 +1191,16 @@ def handle_trap(call):
     try:
         bot.send_message(target_uid, f"⛔️ **Вы выбрали раздел 'Реклама' для обхода системы.**\nВам начислен штрафной страйк за спам ({new_strikes}/3)! Для разбана используйте платную поддержку.")
     except Exception as e:
-        # Если хитрец уже заблокировал бота — просто тихо жалуемся в топик
         bot.send_message(STAFF_GROUP_ID, "⚠️ **Внимание:** Хитрец уже заблокировал бота, поэтому сообщение о страйке ему не доставлено.", message_thread_id=thread_id)
     
     # 3. Сохраняем старый текст, дописываем статус и УБИРАЕМ КНОПКУ
     try:
         new_text = f"{call.message.html}\n\n🚨 <b>Хитрец пойман!</b> Ему начислен страйк ({new_strikes}/3). Топик закрыт."
         bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=None)
-    except Exception as e:
-        # Резервный план: если HTML сломается, хотя бы просто убираем кнопку
-        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-        except: pass
+    except: pass
+    
+    try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+    except: pass
     
     # 4. Закрываем топик
     try:
@@ -1356,6 +1506,121 @@ def handle_admin_replies(message):
         else:
             print(f"[ADMIN_REPLY_ERROR] {e}")
 
+@bot.message_handler(commands=['give'])
+def handle_give_cmd(message):
+    # Защита: команду могут использовать только админы
+    if message.chat.id not in ADMIN_CHAT_IDS and str(message.chat.id) != STAFF_GROUP_ID:
+        # Если у вас есть переменная OWNER_ID, можно добавить и проверку на нее
+        return
+        
+    # Ожидаемый формат: /give 123456789 points 50
+    # Или: /give 123456789 shards 5
+    args = message.text.split()
+    if len(args) != 4:
+        bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
+        return
+        
+    try:
+        target_uid = int(args[1])
+        currency = args[2].lower()
+        amount = int(args[3])
+        
+        paid_collection = db['paid_users']
+        
+        if currency in ['points', 'очки']:
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+            bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
+            except: pass
+            
+        elif currency in ['shards', 'осколки']:
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
+            bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
+            except: pass
+            
+        else:
+            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
+            
+    except ValueError:
+        bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
+
+# ================= КАЗИНО (РУЛЕТКА) =================
+@bot.message_handler(commands=['spin', 'казино', 'рулетка'])
+def handle_casino_spin(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+
+    SPIN_PRICE = 50 # Стоимость одной прокрутки
+
+    if points < SPIN_PRICE:
+        bot.reply_to(message, f"❌ **Недостаточно Очков Бдительности!**\n\nСтоимость прокрутки: `{SPIN_PRICE}` очков.\nВаш баланс: `{points}` очков.\n\n_Помогайте ловить спамеров или пополните баланс в Кабинете Агента._", parse_mode="Markdown")
+        return
+
+    # 1. Списываем очки за прокрут
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -SPIN_PRICE}}, upsert=True)
+
+    # 2. Кидаем анимированные слоты в чат
+    sent_dice = bot.send_dice(message.chat.id, emoji='🎰')
+    val = sent_dice.dice.value # Телеграм сам генерирует честный рандом (1-64)
+
+    # 3. Запускаем обработку в фоновом потоке, чтобы бот не завис на время анимации
+    threading.Thread(target=process_spin_result, args=(message, sent_dice, val, uid), daemon=True).start()
+
+def process_spin_result(message, sent_dice, val, uid):
+    import time
+    import random
+    time.sleep(2.2) # Ждем, пока крутятся барабаны
+
+    # 4. Выдаем призы в зависимости от выпавшей комбинации
+    if val == 64:
+        # ЛЕГЕНДАРНЫЙ ДЖЕКПОТ (7️⃣7️⃣7️⃣)
+        code = f"JACKPOT-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({
+            "_id": code, "type": "percent", "value": 100, "target": "vip",
+            "usage_limit": 1, "used_count": 0, "is_active": True
+        })
+        msg = f"🚨 **ДЖЕКПОТ!!! 7️⃣7️⃣7️⃣** 🚨\n\nНевероятно! Вы срываете банк!\n🎟 **Ваш приз:** Золотой Билет (VIP-доступ бесплатно!)\n\n_🎁 Промокод отправлен вам в ЛС!_"
+        pm_msg = f"🎉 **Ваш выигрыш из рулетки!**\n\n🎫 Золотой Билет на 100% скидку для VIP.\nВаш промокод: `{code}`"
+
+    elif val in [1, 22, 43]:
+        # ЭПИЧЕСКИЙ (Три одинаковые картинки: 🍋🍋🍋, 🍇🍇🍇, и т.д.)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+        msg = f"🔥 **ЭПИЧЕСКИЙ ВЫИГРЫШ!** 🔥\n\n🛡 **Ваш приз:** Щит Иммунитета.\n_Он автоматически поглотит ваш следующий штраф или страйк. Вы под защитой!_"
+        pm_msg = "🛡 **Ваш выигрыш из рулетки!**\nВы получили 1 Щит Иммунитета. Он защитит вас от следующего штрафа."
+
+    elif val % 7 == 0:
+        # РЕДКИЙ - Хорошая скидка
+        code = f"SILVER-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({
+            "_id": code, "type": "percent", "value": 30, "target": "all",
+            "usage_limit": 1, "used_count": 0, "is_active": True
+        })
+        msg = f"✨ **Редкий дроп!**\n\n🎁 **Ваш приз:** Серебряный промокод на скидку 30%!\n\n_🎁 Промокод отправлен вам в ЛС!_"
+        pm_msg = f"✨ **Ваш выигрыш из рулетки!**\n\n🎫 Скидка 30% на любые услуги.\nВаш промокод: `{code}`"
+
+    else:
+        # ОБЫЧНЫЙ - Осколок + Утешительный код
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": 1}})
+        code = f"BRONZE-{random.randint(100, 999)}"
+        db['promocodes'].insert_one({
+            "_id": code, "type": "percent", "value": 10, "target": "all",
+            "usage_limit": 1, "used_count": 0, "is_active": True
+        })
+        msg = f"🥉 *Утешительный приз:*\n\n🎫 Скидка 10%\n🧩 **+1 Осколок Джекпота** _(Копите их для обмена)_\n\n_🎁 Детали отправлены в ЛС!_"
+        pm_msg = f"🥉 **Ваш выигрыш из рулетки!**\n\n🎫 Скидка 10% (Промокод: `{code}`)\n🧩 +1 Осколок Джекпота."
+
+    # Отвечаем в чате, где крутили рулетку
+    bot.reply_to(sent_dice, msg, parse_mode="Markdown")
+    
+    # Отправляем секретные коды в ЛС, чтобы их не украли в общей группе
+    if val == 64 or val % 7 == 0 or val not in [1, 22, 43]:
+        try:
+            bot.send_message(uid, pm_msg, parse_mode="Markdown")
+        except:
+            bot.send_message(message.chat.id, f"⚠️ @{message.from_user.username}, я не смог отправить вам промокод в ЛС. Пожалуйста, напишите мне в личные сообщения /start, чтобы забрать приз!", parse_mode="Markdown")
+
 # ================= ОБРАБОТКА ВСЕХ ПЛАТЕЖЕЙ В 1.py =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def checkout_process(pre_checkout_query):
@@ -1415,6 +1680,30 @@ def successful_payment(message):
         # Пишем юзеру
         success_msg = f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}"
         bot.send_message(uid, success_msg, parse_mode="Markdown", disable_web_page_preview=True)
+
+    # 3. Если это ПОКУПКА ОЧКОВ (МАГАЗИН)
+    elif payload.startswith("buy_points_"):
+        points_to_add = int(payload.split('_')[2])
+        
+        # Пишем деньги в кассу (для админской аналитики)
+        db['daily_revenue'].insert_one({"type": "points_shop", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
+        # Формируем пакет начисления
+        update_data = {"$inc": {"bounty_points": points_to_add}}
+        if points_to_add == 1000:
+            update_data["$inc"]["immunity"] = 1 # Выдаем бонусный щит за покупку VIP-пакета!
+            
+        # Начисляем юзеру в базу
+        paid_collection.update_one({"uid": uid}, update_data, upsert=True)
+        
+        # Радуем юзера
+        success_msg = f"🎰 **Оплата успешно получена!**\nВам начислено: **+{points_to_add} очков**."
+        if points_to_add == 1000:
+            success_msg += "\n🛡 **Бонус:** +1 Щит Иммунитета!"
+        success_msg += "\n\n_Крутите рулетку прямо сейчас командой /spin!_"
+        
+        bot.send_message(uid, success_msg, parse_mode="Markdown")
+        bot.send_message(STAFF_GROUP_ID, f"🤑 **МАГАЗИН:** Пользователь `{uid}` купил {points_to_add} очков за {amount}⭐️!", parse_mode="Markdown")
 
 # ==================== WEBHOOK И СЕРВЕР ====================
 from flask import Flask, request
