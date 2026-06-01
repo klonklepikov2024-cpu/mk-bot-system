@@ -409,13 +409,25 @@ def handle_points_shop(call):
             InlineKeyboardButton("💎 1000 очк. + 🛡 Щит — 500⭐️", callback_data="shop_points_buy_1000_500"),
             InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet")
         )
-        bot.edit_message_text(
-            "🎰 **Магазин Очков Бдительности**\n\nОчки можно тратить на скидки в кабинете или использовать для игры в Гача-Рулетку (`/spin`).\n\nВыберите нужный пакет:",
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
+        
+        shop_text = "🎰 **Магазин Очков Бдительности**\n\nОчки можно тратить на скидки в кабинете или использовать для игры в Гача-Рулетку (`/spin`).\n\nВыберите нужный пакет:"
+        
+        try:
+            # Пытаемся отредактировать сообщение (сработает, если перешли из обычного меню)
+            bot.edit_message_text(
+                shop_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            # Если Телеграм ругается (значит мы пытаемся отредактировать инвойс)
+            if "can't be edited" in str(e).lower() or "not modified" in str(e).lower():
+                # Просто удаляем инвойс и шлем меню новым сообщением
+                try: bot.delete_message(call.message.chat.id, call.message.message_id)
+                except: pass
+                bot.send_message(call.message.chat.id, shop_text, reply_markup=markup, parse_mode="Markdown")
         return
 
     # 2. ЕСЛИ НАЖАЛИ КУПИТЬ ПАКЕТ
