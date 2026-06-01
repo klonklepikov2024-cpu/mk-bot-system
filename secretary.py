@@ -375,31 +375,66 @@ def handle_reward_purchase(call):
     )
 
 # ================= ВЫВОД КЭШБЭКА =================
-# ================= ВЫВОД КЭШБЭКА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('request_cashback_payout'))
 def handle_cashback_request(call):
     uid = call.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data.get("cashback_balance", 0)
     
-    if cb_balance < 500: # 👈 Лимит на вывод
+    if cb_balance < 500: # 👈 Глобальный лимит
         bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — 500 рублей! У вас: {cb_balance}₽.", show_alert=True)
         return
         
     bot.answer_callback_query(call.id)
     
-    msg = bot.send_message(
-        call.message.chat.id, 
-        f"💸 **Оформление выплаты ({cb_balance} руб.)**\n\n"
-        f"Пожалуйста, напишите прямо сюда ваши реквизиты для перевода:\n\n"
-        f"💳 **На карту:** Номер карты и название банка (например: `4276123456789012 Сбербанк`)\n"
-        f"📱 **На баланс:** Номер телефона и оператор (например: `+79001234567 МТС`)\n"
-        f"💎 **В крипте:** Ваш USDT (TRC20) адрес\n\n"
-        f"_Отправьте реквизиты одним сообщением:_"
+    # Рисуем подменю с выбором способа
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("💳 На банковскую карту (от 3500₽)", callback_data=f"paymeth_card_{cb_balance}"),
+        InlineKeyboardButton("📱 На баланс телефона (от 500₽)", callback_data=f"paymeth_phone_{cb_balance}"),
+        InlineKeyboardButton("💎 В крипте USDT (от 500₽)", callback_data=f"paymeth_crypto_{cb_balance}"),
+        InlineKeyboardButton("🔙 Отмена", callback_data="sec_agent_cabinet")
     )
-    bot.register_next_step_handler(msg, process_payout_details, cb_balance=cb_balance)
+    
+    bot.edit_message_text(
+        f"💸 **Оформление выплаты ({cb_balance} руб.)**\n\n"
+        f"Выберите удобный способ получения средств:\n"
+        f"⚠️ _Обратите внимание на минимальные лимиты для каждого способа!_",
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
 
-def process_payout_details(message, cb_balance):
+# Обработка выбора способа
+@bot.callback_query_handler(func=lambda call: call.data.startswith('paymeth_'))
+def handle_payout_method(call):
+    parts = call.data.split('_')
+    method = parts[1]
+    cb_balance = int(parts[2])
+    
+    # 👇 ЖЕСТКИЙ ЗАПРЕТ ВЫВОДА НА КАРТУ < 3500 👇
+    if method == "card" and cb_balance < 3500:
+        bot.answer_callback_query(call.id, f"❌ Для вывода на карту нужно минимум 3500₽!\nУ вас: {cb_balance}₽. Выберите телефон или крипту.", show_alert=True)
+        return
+
+    bot.answer_callback_query(call.id)
+
+    # Индивидуальный текст в зависимости от выбора
+    prompts = {
+        "card": "💳 **Вывод на карту**\n\nНапишите номер карты и название банка (например: `4276123456789012 Сбербанк`):",
+        "phone": "📱 **Вывод на телефон**\n\nНапишите номер телефона и оператора (например: `+79001234567 МТС`):",
+        "crypto": "💎 **Вывод в крипте**\n\nНапишите ваш адрес USDT (сеть TRC20):"
+    }
+
+    # Убираем старое меню
+    try: bot.delete_message(call.message.chat.id, call.message.message_id)
+    except: pass
+    
+    msg = bot.send_message(call.message.chat.id, prompts[method], parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_payout_details, cb_balance=cb_balance, method=method)
+
+def process_payout_details(message, cb_balance, method):
     # АНТИ-КАПКАН
     if message.text == '/start':
         send_welcome(message)
@@ -416,10 +451,11 @@ def process_payout_details(message, cb_balance):
         bot.send_message(message.chat.id, "❌ Ошибка: ваш баланс изменился. Попробуйте снова.")
         return
 
-    # Списываем баланс!
+    # Списываем баланс ТОЛЬКО СЕЙЧАС, когда введены реквизиты!
     paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
     
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
+    method_names = {"card": "💳 На карту", "phone": "📱 На телефон", "crypto": "💎 USDT (TRC20)"}
     
     # Кнопки для админа
     markup = InlineKeyboardMarkup(row_width=1)
@@ -433,6 +469,7 @@ def process_payout_details(message, cb_balance):
         f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n"
         f"👤 От: {username} (`{uid}`)\n"
         f"💵 Сумма к выдаче: **{cb_balance} руб.**\n"
+        f"🏦 Способ: **{method_names[method]}**\n"
         f"📝 Реквизиты юзера:\n`{details}`\n\n"
         f"Сделайте перевод и нажмите кнопку подтверждения:",
         reply_markup=markup,
