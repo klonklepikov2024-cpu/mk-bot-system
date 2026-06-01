@@ -1098,7 +1098,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
 def handle_checkout(call):
     bot.answer_callback_query(call.id)
     parts = call.data.split('_')
-    action = parts[1] # "promo" или "pay"
+    action = parts[1] # "promo", "pay", "partial", "balance"
     target_type = parts[2] # "fine", "ads", "vip"
     original_amount = int(parts[3])
     
@@ -1120,23 +1120,70 @@ def handle_checkout(call):
         msg = bot.send_message(call.message.chat.id, "👇 **Введите ваш промокод ответом на это сообщение:**", parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_promo_code, target_type=target_type, original_amount=original_amount, call_msg=call.message)
 
+    # 3. Смешанная оплата (Часть рублями, остаток Звездами)
+    elif action == "partial":
+        used_rubles = int(parts[4])
+        
+        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        if user_data.get("cashback_balance", 0) < used_rubles:
+            bot.answer_callback_query(call.id, "❌ Ошибка: ваш рублевый баланс изменился!", show_alert=True)
+            return
+            
+        remaining_stars = original_amount - (used_rubles // 2)
+        if remaining_stars < 1: remaining_stars = 1
+        
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        
+        bot.send_invoice(
+            call.message.chat.id, 
+            title="Оплата штрафа (Смешанная)", 
+            description=f"Штраф: {original_amount}⭐️\nСписано: {used_rubles}₽\nК доплате: {remaining_stars}⭐️", 
+            invoice_payload=f"finepartial_{original_amount}_{used_rubles}", 
+            provider_token="", 
+            currency="XTR", 
+            prices=[telebot.types.LabeledPrice(label="К оплате", amount=remaining_stars)]
+        )
+
+    # 4. Оплата полностью с внутреннего баланса
+    elif action == "balance":
+        cost_rub = original_amount * 2
+        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        current_balance = user_data.get("cashback_balance", 0)
+        
+        if current_balance < cost_rub:
+            bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽, а у вас {current_balance}₽.", show_alert=True)
+            return
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        
+        now = datetime.datetime.now()
+        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+        db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        
+        archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
+        
+        user_data_full = paid_collection.find_one({"uid": call.from_user.id})
+        if user_data_full and "thread_id" in user_data_full:
+            try: bot.send_message(STAFF_GROUP_ID, f"🟢 **ЮЗЕР ОПЛАТИЛ ШТРАФ С БАЛАНСА ({cost_rub}₽)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
+            except: pass
+            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
+            except: pass
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+
 def process_promo_code(message, target_type, original_amount, call_msg):
-    # 👇 АНТИ-КАПКАН 👇
     if message.text == '/start':
         send_welcome(message)
         return
-    # 👆 ============ 👆
 
-    # Убираем кнопки на старом сообщении кассы
     try: bot.edit_message_reply_markup(call_msg.chat.id, call_msg.message_id, reply_markup=None)
     except: pass
     
     promo_text = message.text.strip().upper()
-    
-    # Ищем код в базе
     promo_data = db['promocodes'].find_one({"_id": promo_text})
     
-    # ПРОВЕРКИ НА ОШИБКИ И ХИТРОСТЬ
     if not promo_data or not promo_data.get("is_active"):
         bot.send_message(message.chat.id, "❌ Промокод не найден или уже недействителен. Выставляем полный счет.")
         bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="К оплате", amount=original_amount)])
@@ -1152,7 +1199,6 @@ def process_promo_code(message, target_type, original_amount, call_msg):
         bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[telebot.types.LabeledPrice(label="К оплате", amount=original_amount)])
         return
 
-    # ПРИМЕНЯЕМ МАГИЮ СКИДКИ
     discount = promo_data["value"]
     new_amount = original_amount
     
@@ -1161,16 +1207,13 @@ def process_promo_code(message, target_type, original_amount, call_msg):
     elif promo_data["type"] == "fixed":
         new_amount = original_amount - discount
         
-    # Telegram не разрешает счета меньше 1 звезды
     if new_amount < 1:
         new_amount = 1 
         
-    # Записываем использование (погашаем код)
     db['promocodes'].update_one({"_id": promo_text}, {"$inc": {"used_count": 1}})
     
     bot.send_message(message.chat.id, f"✅ **Промокод успешно применен!**\nСкидка составила {original_amount - new_amount}⭐️. Счет пересчитан.", parse_mode="Markdown")
     
-    # Выставляем финальный инвойс со скидкой
     bot.send_invoice(
         message.chat.id, 
         title=f"Оплата со скидкой ({new_amount}⭐️)", 
