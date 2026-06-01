@@ -1508,9 +1508,8 @@ def handle_admin_replies(message):
 
 @bot.message_handler(commands=['give'])
 def handle_give_cmd(message):
-    # Защита: команду могут использовать только админы
-    if message.chat.id not in ADMIN_CHAT_IDS and str(message.chat.id) != STAFF_GROUP_ID:
-        # Если у вас есть переменная OWNER_ID, можно добавить и проверку на нее
+    # Команда работает только в админской группе
+    if str(message.chat.id) != STAFF_GROUP_ID:
         return
         
     # Ожидаемый формат: /give 123456789 points 50
