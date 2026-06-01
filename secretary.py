@@ -99,11 +99,25 @@ TEMPLATES = {
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     try:
+        # 👇 НОВАЯ МАГИЯ: Обработка диплинк-ссылки на магазин 👇
+        if len(message.text.split()) > 1 and message.text.split()[1] == "shop":
+            markup = InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                InlineKeyboardButton("📦 50 очков (1 прокрут) — 50⭐️", callback_data="shop_points_buy_50_50"),
+                InlineKeyboardButton("🔥 300 очков (6 прокрутов) — 200⭐️", callback_data="shop_points_buy_300_200"),
+                InlineKeyboardButton("💎 1000 очк. + 🛡 Щит — 500⭐️", callback_data="shop_points_buy_1000_500"),
+                InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main")
+            )
+            shop_text = "🎰 **Магазин Очков Бдительности**\n\nОчки можно тратить на скидки в кабинете или использовать для игры в Гача-Рулетку (`/spin`).\n\n🏆 _Посмотреть список призов: /prizes_\n\nВыберите нужный пакет:"
+            bot.send_message(message.chat.id, shop_text, reply_markup=markup, parse_mode="Markdown")
+            return
+        # 👆 ============================================== 👆
+
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
             InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
             InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
-            InlineKeyboardButton("🚨 Пожаловаться на нарушителя", callback_data="btn_report") # <--- НОВАЯ КНОПКА
+            InlineKeyboardButton("🚨 Пожаловаться на нарушителя", callback_data="btn_report")
         )
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
     except Exception as e:
@@ -275,7 +289,7 @@ def handle_security_menu(call):
         markup.add(
             InlineKeyboardButton("👑 VIP-билет БЕСПЛАТНО (300)", callback_data="buy_reward_vip100_300")
         )
-        markup.add(InlineKeyboardButton("🎰 МАГАЗИН ОЧКОВ (Для Рулетки) 🎰", callback_data="shop_points_menu"))
+        markup.add(InlineKeyboardButton("💳 ПОПОЛНИТЬ БАЛАНС (Купить очки)", callback_data="shop_points_menu"))
         
         # 👇 УМНАЯ КНОПКА ДЛЯ ОСКОЛКОВ 👇
         if shards >= 50:
@@ -291,7 +305,8 @@ def handle_security_menu(call):
             f"💵 Рублевый счет: **{cb_balance} руб.**\n"
             f"📊 Успешных жалоб: **{reports_count}**\n"
             f"🧩 Осколки рулетки: **{shards} шт.**\n\n"
-            f"*Выберите награду для обмена:*",
+            f"💡 _Очки можно зарабатывать бесплатными жалобами на спамеров, либо просто купить, нажав кнопку **«ПОПОЛНИТЬ БАЛАНС»**._\n\n"
+            f"*Выберите действие:*",
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             reply_markup=markup,
@@ -360,28 +375,56 @@ def handle_reward_purchase(call):
     )
 
 # ================= ВЫВОД КЭШБЭКА =================
+# ================= ВЫВОД КЭШБЭКА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('request_cashback_payout'))
 def handle_cashback_request(call):
-    # ❌ УДАЛИЛИ bot.answer_callback_query(call.id) отсюда
     uid = call.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data.get("cashback_balance", 0)
     
-    if cb_balance < 500: # 👈 Лимит на вывод (можно поставить 3500)
+    if cb_balance < 500: # 👈 Лимит на вывод
         bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — 500 рублей! У вас: {cb_balance}₽.", show_alert=True)
         return
         
-    bot.answer_callback_query(call.id, "Отправка заявки...") # 👈 ДОБАВИЛИ СЮДА
+    bot.answer_callback_query(call.id)
     
-    # Списываем баланс, чтобы не нажали дважды
-    paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": 0}})
+    msg = bot.send_message(
+        call.message.chat.id, 
+        f"💸 **Оформление выплаты ({cb_balance} руб.)**\n\n"
+        f"Пожалуйста, напишите прямо сюда ваши реквизиты для перевода:\n\n"
+        f"💳 **На карту:** Номер карты и название банка (например: `4276123456789012 Сбербанк`)\n"
+        f"📱 **На баланс:** Номер телефона и оператор (например: `+79001234567 МТС`)\n"
+        f"💎 **В крипте:** Ваш USDT (TRC20) адрес\n\n"
+        f"_Отправьте реквизиты одним сообщением:_"
+    )
+    bot.register_next_step_handler(msg, process_payout_details, cb_balance=cb_balance)
+
+def process_payout_details(message, cb_balance):
+    # АНТИ-КАПКАН
+    if message.text == '/start':
+        send_welcome(message)
+        return
+        
+    uid = message.from_user.id
+    details = message.text
     
-    username = f"@{call.from_user.username}" if call.from_user.username else f"ID {uid}"
+    # Еще раз проверяем баланс для защиты от хитрецов
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    current_balance = user_data.get("cashback_balance", 0)
+    
+    if current_balance < cb_balance:
+        bot.send_message(message.chat.id, "❌ Ошибка: ваш баланс изменился. Попробуйте снова.")
+        return
+
+    # Списываем баланс!
+    paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
+    
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     
     # Кнопки для админа
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("✅ Выплачено (На карту/Телефон)", callback_data=f"payout_done_{uid}_{cb_balance}"),
+        InlineKeyboardButton("✅ Выплачено", callback_data=f"payout_done_{uid}_{cb_balance}"),
         InlineKeyboardButton("❌ Отклонить (Вернуть баланс)", callback_data=f"payout_cancel_{uid}_{cb_balance}")
     )
     
@@ -389,12 +432,14 @@ def handle_cashback_request(call):
         STAFF_GROUP_ID,
         f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n"
         f"👤 От: {username} (`{uid}`)\n"
-        f"💵 Сумма к выдаче: **{cb_balance} руб.**\n\n"
-        f"Свяжитесь с пользователем, уточните реквизиты (карта от 3500₽ или баланс телефона) и подтвердите выплату:",
-        reply_markup=markup
+        f"💵 Сумма к выдаче: **{cb_balance} руб.**\n"
+        f"📝 Реквизиты юзера:\n`{details}`\n\n"
+        f"Сделайте перевод и нажмите кнопку подтверждения:",
+        reply_markup=markup,
+        parse_mode="Markdown"
     )
     
-    bot.send_message(call.message.chat.id, "⏳ **Заявка на выплату создана!**\nСумма списана с баланса. Ожидайте, скоро с вами свяжется администратор для уточнения реквизитов (перевод на карту или баланс телефона).")
+    bot.send_message(message.chat.id, "✅ **Заявка на выплату успешно создана!**\nСумма списана с баланса. Ожидайте поступления средств на указанные реквизиты.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('payout_'))
 def handle_payout_decision(call):
@@ -1149,35 +1194,6 @@ def handle_checkout(call):
             prices=[telebot.types.LabeledPrice(label="К оплате", amount=remaining_stars)]
         )
 
-    # 4. Оплата полностью с внутреннего баланса
-    elif action == "balance":
-        cost_rub = original_amount * 2
-        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
-        current_balance = user_data.get("cashback_balance", 0)
-        
-        if current_balance < cost_rub:
-            bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽, а у вас {current_balance}₽.", show_alert=True)
-            return
-            
-        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        
-        now = datetime.datetime.now()
-        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
-        db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
-        
-        archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
-        
-        user_data_full = paid_collection.find_one({"uid": call.from_user.id})
-        if user_data_full and "thread_id" in user_data_full:
-            try: bot.send_message(STAFF_GROUP_ID, f"🟢 **ЮЗЕР ОПЛАТИЛ ШТРАФ С БАЛАНСА ({cost_rub}₽)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
-            except: pass
-            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
-            except: pass
-            
-        paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-        bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-
 def process_promo_code(message, target_type, original_amount, call_msg):
     if message.text == '/start':
         send_welcome(message)
@@ -1754,6 +1770,13 @@ def handle_give_cmd(message):
         bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
 
 # ================= КАЗИНО (РУЛЕТКА) =================
+# Функция для тихого самоуничтожения сообщений
+def auto_delete_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
 @bot.message_handler(commands=['spin', 'казино', 'рулетка'])
 def handle_casino_spin(message):
     uid = message.from_user.id
@@ -1763,7 +1786,27 @@ def handle_casino_spin(message):
     SPIN_PRICE = 50 # Стоимость одной прокрутки
 
     if points < SPIN_PRICE:
-        bot.reply_to(message, f"❌ **Недостаточно Очков Бдительности!**\n\nСтоимость прокрутки: `{SPIN_PRICE}` очков.\nВаш баланс: `{points}` очков.\n\n_Помогайте ловить спамеров или пополните баланс в Кабинете Агента._", parse_mode="Markdown")
+        # Динамически получаем юзернейм вашего бота для формирования ссылки
+        bot_info = bot.get_me()
+        bot_username = bot_info.username
+        
+        # Кнопка, ведущая в ЛС бота сразу в магазин
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("💳 Купить очки (В ЛС бота)", url=f"https://t.me/{bot_username}?start=shop"))
+        
+        msg = bot.reply_to(
+            message, 
+            f"❌ **Недостаточно Очков Бдительности!**\n\n"
+            f"Стоимость прокрутки: `{SPIN_PRICE}` очков.\n"
+            f"Ваш баланс: `{points}` очков.\n\n"
+            f"💡 _Нажмите кнопку ниже, чтобы мгновенно перейти в магазин._", 
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Запускаем таймеры на удаление сообщения бота и команды юзера через 180 секунд (3 минуты)
+        threading.Timer(180.0, auto_delete_message, args=(message.chat.id, msg.message_id)).start()
+        threading.Timer(180.0, auto_delete_message, args=(message.chat.id, message.message_id)).start()
         return
 
     # 1. Списываем очки за прокрут
@@ -1845,7 +1888,17 @@ def process_spin_result(message, sent_dice, val, uid):
         code = f"ARREST-{random.randint(100, 999)}"
         db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True})
         msg = f"🚓 **СОЦИАЛЬНЫЙ АРТЕФАКТ!**\n\nВы нашли **Ордер на Арест**! Теперь у вас есть власть над другими.\n_🎁 Инструкция в ЛС!_"
-        pm_msg = f"🚓 **Ваш артефакт: Ордер на Арест**\n\nКод: `{code}`\n\n_Как использовать:_ Откройте тикет в поддержке и отправьте этот код вместе с ID/юзернеймом человека, которого хотите отправить в мут на 1 час (в рамках правил!)."
+        pm_msg = (
+            f"🚓 **Ваш артефакт: Ордер на Арест**\n\n"
+            f"Код: `{code}`\n\n"
+            f"📜 **Что это дает:**\n"
+            f"Вы можете легально отправить ЛЮБОГО пользователя нашей сети чатов в мут (лишить права писать) на 1 час!\n\n"
+            f"⚙️ **Как использовать:**\n"
+            f"1. Скопируйте ID или @username вашей жертвы в чате.\n"
+            f"2. Зайдите в меню `/start` -> `🆘 Разблокировка`.\n"
+            f"3. Напишите в чат с поддержкой: *«Применяю Ордер {code} на пользователя @username»*.\n\n"
+            f"⚠️ *Ограничения: Запрещено применять на администраторов. Ордер сгорает после одного использования.*"
+        )
 
     # 7. 🕊 АМНИСТИЯ ИЛИ ДОНАТ (val: 13, 26, 39, 52)
     elif val in [13, 26, 39, 52]:
