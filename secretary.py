@@ -301,12 +301,11 @@ def handle_security_menu(call):
 # Обработка клика по наградам (ПОКУПКА)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_reward_'))
 def handle_reward_purchase(call):
-    bot.answer_callback_query(call.id)
-    # Разбираем дата-строку (например: buy_reward_fine25_30)
+    # ❌ УДАЛИЛИ bot.answer_callback_query(call.id) отсюда
     parts = call.data.split('_')
     reward_type = parts[2]
     price = int(parts[3])
-    uid = call.fromuser.id if hasattr(call, 'fromuser') else call.from_user.id
+    uid = call.from_user.id # 👈 Чуть поправил для надежности
     
     user_data = paid_collection.find_one({"uid": uid}) or {}
     points = user_data.get("bounty_points", 0)
@@ -316,6 +315,8 @@ def handle_reward_purchase(call):
         bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {price}, а у вас {points}.", show_alert=True)
         return
         
+    bot.answer_callback_query(call.id, "Покупка...") # 👈 ДОБАВИЛИ СЮДА
+    
     # 1. Списываем очки
     paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price}})
     
@@ -361,7 +362,7 @@ def handle_reward_purchase(call):
 # ================= ВЫВОД КЭШБЭКА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('request_cashback_payout'))
 def handle_cashback_request(call):
-    bot.answer_callback_query(call.id)
+    # ❌ УДАЛИЛИ bot.answer_callback_query(call.id) отсюда
     uid = call.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data.get("cashback_balance", 0)
@@ -370,6 +371,8 @@ def handle_cashback_request(call):
         bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — 500 рублей! У вас: {cb_balance}₽.", show_alert=True)
         return
         
+    bot.answer_callback_query(call.id, "Отправка заявки...") # 👈 ДОБАВИЛИ СЮДА
+    
     # Списываем баланс, чтобы не нажали дважды
     paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": 0}})
     
@@ -417,7 +420,7 @@ def handle_payout_decision(call):
 # ================= ОБМЕННИК ОСКОЛКОВ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'exchange_shards')
 def handle_shards_exchange(call):
-    bot.answer_callback_query(call.id)
+    # ❌ УДАЛИЛИ bot.answer_callback_query(call.id) отсюда
     uid = call.from_user.id
     
     user_data = paid_collection.find_one({"uid": uid}) or {}
@@ -427,6 +430,8 @@ def handle_shards_exchange(call):
         bot.answer_callback_query(call.id, "❌ Недостаточно осколков! Нужно 50 шт.", show_alert=True)
         return
         
+    bot.answer_callback_query(call.id, "Сборка джекпота...") # 👈 ДОБАВИЛИ СЮДА
+    
     # 1. Списываем 50 осколков
     paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
     
