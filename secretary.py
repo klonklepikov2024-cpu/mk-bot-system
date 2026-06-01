@@ -1224,59 +1224,6 @@ def process_promo_code(message, target_type, original_amount, call_msg):
         prices=[telebot.types.LabeledPrice(label="К оплате", amount=new_amount)]
     )
 
-    # 3. Смешанная оплата (Часть рублями, остаток Звездами)
-    elif action == "partial":
-        used_rubles = int(parts[4])
-        
-        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
-        if user_data.get("cashback_balance", 0) < used_rubles:
-            bot.answer_callback_query(call.id, "❌ Ошибка: ваш рублевый баланс изменился!", show_alert=True)
-            return
-            
-        remaining_stars = original_amount - (used_rubles // 2)
-        if remaining_stars < 1: remaining_stars = 1
-        
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        
-        bot.send_invoice(
-            call.message.chat.id, 
-            title="Оплата штрафа (Смешанная)", 
-            description=f"Штраф: {original_amount}⭐️\nСписано: {used_rubles}₽\nК доплате: {remaining_stars}⭐️", 
-            invoice_payload=f"finepartial_{original_amount}_{used_rubles}", # 👈 Прячем рубли сюда!
-            provider_token="", 
-            currency="XTR", 
-            prices=[telebot.types.LabeledPrice(label="К оплате", amount=remaining_stars)]
-        )
-
-    # 4. Оплата полностью с внутреннего баланса
-    elif action == "balance":
-        cost_rub = original_amount * 2
-        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
-        current_balance = user_data.get("cashback_balance", 0)
-        
-        if current_balance < cost_rub:
-            bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽, а у вас {current_balance}₽.", show_alert=True)
-            return
-            
-        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        
-        now = datetime.datetime.now()
-        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
-        db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
-        
-        archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
-        
-        user_data_full = paid_collection.find_one({"uid": call.from_user.id})
-        if user_data_full and "thread_id" in user_data_full:
-            try: bot.send_message(STAFF_GROUP_ID, f"🟢 **ЮЗЕР ОПЛАТИЛ ШТРАФ С БАЛАНСА ({cost_rub}₽)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
-            except: pass
-            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
-            except: pass
-            
-        paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-        bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-
 # ================= ПРОВЕРКА КРУЖКА И ФИНАЛ (КНОПКИ АДМИНА) =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
 def handle_vid_check(call):
