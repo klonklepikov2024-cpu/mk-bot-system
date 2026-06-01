@@ -117,7 +117,7 @@ def send_welcome(message):
         markup.add(
             InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
             InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
-            InlineKeyboardButton("🚨 Пожаловаться на нарушителя", callback_data="btn_report")
+            InlineKeyboardButton("🛡 Кабинет Агента / Жалобы", callback_data="btn_report") # <--- ИЗМЕНИЛИ НАЗВАНИЕ
         )
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
     except Exception as e:
@@ -1231,6 +1231,35 @@ def handle_checkout(call):
             prices=[telebot.types.LabeledPrice(label="К оплате", amount=remaining_stars)]
         )
 
+    # 4. Оплата полностью с внутреннего баланса
+    elif action == "balance":
+        cost_rub = original_amount * 2
+        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        current_balance = user_data.get("cashback_balance", 0)
+        
+        if current_balance < cost_rub:
+            bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽, а у вас {current_balance}₽.", show_alert=True)
+            return
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        
+        now = datetime.datetime.now()
+        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+        db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        
+        archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
+        
+        user_data_full = paid_collection.find_one({"uid": call.from_user.id})
+        if user_data_full and "thread_id" in user_data_full:
+            try: bot.send_message(STAFF_GROUP_ID, f"🟢 **ЮЗЕР ОПЛАТИЛ ШТРАФ С БАЛАНСА ({cost_rub}₽)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
+            except: pass
+            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
+            except: pass
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+
 def process_promo_code(message, target_type, original_amount, call_msg):
     if message.text == '/start':
         send_welcome(message)
@@ -1905,7 +1934,11 @@ def process_spin_result(message, sent_dice, val, uid):
             db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
             
             msg = f"🏆 **ГЛАВНЫЙ СУПЕР-ПРИЗ!!!** 🏆\n\nНевероятно! Барабан остановился на счастливой звезде!\n🎁 **Приз:** Telegram Premium на 3 месяца!\n\n_🎁 Инструкция отправлена в ЛС!_"
-            pm_msg = f"💎 **ВЫ ВЫИГРАЛИ TELEGRAM PREMIUM (3 мес.)!** 💎\n\nПерешлите это сообщение в нашу Службу Поддержки (/start -> Разблокировка), чтобы администратор вручную подарил вам подписку!"
+            
+            # 👇 ПРЯМАЯ КНОПКА ЗАБОРА ПРИЗА 👇
+            pm_msg = f"💎 **ВЫ ВЫИГРАЛИ TELEGRAM PREMIUM (3 мес.)!** 💎\n\nНажмите кнопку ниже, чтобы забрать ваш приз напрямую у администрации!"
+            pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎁 Забрать Premium", callback_data="claim_premium"))
+            
             bot.send_message(STAFF_GROUP_ID, f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ!** 🚨\n\nПользователь `{uid}` (@{message.from_user.username}) выбил **TELEGRAM PREMIUM**! Фонд казино списан.")
         else:
             # Касса пуста! Заменяем на резервный КУШ
@@ -1952,17 +1985,16 @@ def process_spin_result(message, sent_dice, val, uid):
         code = f"ARREST-{random.randint(100, 999)}"
         db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True})
         msg = f"🚓 **СОЦИАЛЬНЫЙ АРТЕФАКТ!**\n\nВы нашли **Ордер на Арест**! Теперь у вас есть власть над другими.\n_🎁 Инструкция в ЛС!_"
+        
+        # 👇 ПРЯМАЯ КНОПКА ИСПОЛЬЗОВАНИЯ АРТЕФАКТА 👇
         pm_msg = (
             f"🚓 **Ваш артефакт: Ордер на Арест**\n\n"
             f"Код: `{code}`\n\n"
             f"📜 **Что это дает:**\n"
             f"Вы можете легально отправить ЛЮБОГО пользователя нашей сети чатов в мут (лишить права писать) на 1 час!\n\n"
-            f"⚙️ **Как использовать:**\n"
-            f"1. Скопируйте ID или @username вашей жертвы в чате.\n"
-            f"2. Зайдите в меню `/start` -> `🆘 Разблокировка`.\n"
-            f"3. Напишите в чат с поддержкой: *«Применяю Ордер {code} на пользователя @username»*.\n\n"
             f"⚠️ *Ограничения: Запрещено применять на администраторов. Ордер сгорает после одного использования.*"
         )
+        pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🚓 Использовать Ордер", callback_data=f"use_arrest_{code}"))
 
     # 7. 🕊 АМНИСТИЯ ИЛИ ДОНАТ (val: 13, 26, 39, 52)
     elif val in [13, 26, 39, 52]:
@@ -2285,6 +2317,109 @@ def handle_admin_tag_decision(call):
         
     # Очищаем временную базу
     db['temp_tags'].delete_one({"uid": target_uid})
+
+# ================= ПОЛУЧЕНИЕ ПРЕМИУМА =================
+@bot.callback_query_handler(func=lambda call: call.data == 'claim_premium')
+def handle_claim_premium(call):
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id, "🎁 **Получение Telegram Premium**\n\nПожалуйста, напишите ваш @username или номер телефона (привязанный к Telegram), чтобы администратор смог отправить вам подарок:")
+    bot.register_next_step_handler(msg, process_premium_claim)
+
+def process_premium_claim(message):
+    if message.text == '/start':
+        send_welcome(message)
+        return
+    
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Выдано", callback_data=f"prem_done_{uid}"))
+    
+    bot.send_message(
+        STAFF_GROUP_ID,
+        f"🏆 **СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)** 🏆\n\n"
+        f"👤 Победитель: {name} ({username})\n"
+        f"📝 Реквизиты для подарка:\n`{message.text}`\n\n"
+        f"Админы, подарите подписку и закройте тикет!",
+        reply_markup=markup
+    )
+    bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена администрации! С вами скоро свяжутся.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('prem_done_'))
+def handle_prem_done(call):
+    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    bot.answer_callback_query(call.id)
+    target_uid = int(call.data.split('_')[2])
+    bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫДАНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    try: bot.send_message(target_uid, "🎉 Администрация подтвердила выдачу Telegram Premium! Наслаждайтесь!")
+    except: pass
+
+# ================= ИСПОЛЬЗОВАНИЕ ОРДЕРА НА АРЕСТ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('use_arrest_'))
+def handle_use_arrest(call):
+    bot.answer_callback_query(call.id)
+    code = call.data.split('_')[2]
+    
+    # Проверяем, жив ли код
+    promo = db['promocodes'].find_one({"_id": code, "is_active": True, "used_count": 0})
+    if not promo:
+        bot.send_message(call.message.chat.id, "❌ Этот ордер уже был использован или не существует.")
+        return
+        
+    msg = bot.send_message(call.message.chat.id, f"🚓 **Использование Ордера: {code}**\n\nНапишите @username или ID пользователя, которого нужно отправить в мут на 1 час (и укажите причину):")
+    bot.register_next_step_handler(msg, process_arrest_claim, code=code)
+
+def process_arrest_claim(message, code):
+    if message.text == '/start':
+        send_welcome(message)
+        return
+        
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
+    
+    # Сжигаем код, чтобы его не ввели дважды
+    db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), 
+        InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}")
+    )
+    
+    bot.send_message(
+        STAFF_GROUP_ID,
+        f"🚓 **ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)** 🚓\n\n"
+        f"👤 Исполнитель: {name} ({username})\n"
+        f"🔑 Код: `{code}`\n"
+        f"🎯 Цель и причина:\n`{message.text}`\n\n"
+        f"Админы, проверьте цель и выдайте мут на 1 час!",
+        reply_markup=markup
+    )
+    bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('arrest_'))
+def handle_arrest_decision(call):
+    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    bot.answer_callback_query(call.id)
+    parts = call.data.split('_')
+    action = parts[1]
+    
+    if action == "done":
+        target_uid = int(parts[2])
+        bot.edit_message_text(f"{call.message.text}\n\n✅ **ИСПОЛНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        try: bot.send_message(target_uid, "⚖️ Ваш ордер на арест успешно исполнен. Нарушитель наказан!")
+        except: pass
+    elif action == "rej":
+        code = parts[2]
+        target_uid = int(parts[3])
+        # Восстанавливаем код, так как админ отклонил арест
+        db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": -1}})
+        bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Код возвращен юзеру)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        try: bot.send_message(target_uid, f"❌ Администрация отклонила применение ордера (возможно, вы попытались замутить админа). Ваш ордер `{code}` снова активен!")
+        except: pass
 
 # ==================== WEBHOOK И СЕРВЕР ====================
 from flask import Flask, request
