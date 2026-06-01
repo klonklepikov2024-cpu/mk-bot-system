@@ -2270,6 +2270,12 @@ def handle_bank_check(message):
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
     bot.answer_callback_query(call.id)
+    
+    # 👇 УБИРАЕМ КНОПКУ 👇
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except: pass
+
     msg = bot.send_message(
         call.message.chat.id, 
         "✍️ **Создание личного тега**\n\nПридумайте и напишите ваш новый статус (максимум 15 символов).\n_Внимание: Тег будет проверен модератором! Запрещено использовать слова 'Админ', 'Модератор' и нецензурную лексику._"
@@ -2363,6 +2369,12 @@ def handle_admin_tag_decision(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_premium')
 def handle_claim_premium(call):
     bot.answer_callback_query(call.id)
+    
+    # 👇 УБИРАЕМ КНОПКУ 👇
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except: pass
+
     msg = bot.send_message(call.message.chat.id, "🎁 **Получение Telegram Premium**\n\nПожалуйста, напишите ваш @username или номер телефона (привязанный к Telegram), чтобы администратор смог отправить вам подарок:")
     bot.register_next_step_handler(msg, process_premium_claim)
 
@@ -2401,6 +2413,12 @@ def handle_prem_done(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('use_arrest_'))
 def handle_use_arrest(call):
     bot.answer_callback_query(call.id)
+    
+    # 👇 УБИРАЕМ КНОПКУ 👇
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except: pass
+
     code = call.data.split('_')[2]
     
     # Проверяем, жив ли код
