@@ -354,12 +354,29 @@ def handle_reward_purchase(call):
     # 3. Настраиваем логику скидки в зависимости от того, что купили
     target = "all"
     discount = 50
+    item_name = ""
+    instruction = ""
     
-    if reward_type == "fine25": target = "fine"; discount = 25
-    elif reward_type == "fine50": target = "fine"; discount = 50
-    elif reward_type == "vip50": target = "vip"; discount = 50
-    elif reward_type == "ads50": target = "ads"; discount = 50
-    elif reward_type == "vip100": target = "vip"; discount = 100
+    if reward_type == "fine25": 
+        target = "fine"; discount = 25
+        item_name = "Скидку 25% на Штраф"
+        instruction = "📖 **Как применить:** При обращении в Службу Поддержки за разбаном, когда администратор выставит счет, нажмите **«🎫 У меня есть промокод»**."
+    elif reward_type == "fine50": 
+        target = "fine"; discount = 50
+        item_name = "Скидку 50% на Штраф"
+        instruction = "📖 **Как применить:** При обращении в Службу Поддержки за разбаном, когда администратор выставит счет, нажмите **«🎫 У меня есть промокод»**."
+    elif reward_type == "vip50": 
+        target = "vip"; discount = 50
+        item_name = "Скидку 50% на VIP"
+        instruction = "📖 **Как применить:** Перейдите в @Elitepost_bot -> «Вступить в VIP чат». После одобрения кружка, при выставлении счета нажмите **«🎫 У меня есть промокод»**."
+    elif reward_type == "ads50": 
+        target = "ads"; discount = 50
+        item_name = "Скидку 50% на Рекламу"
+        instruction = "📖 **Как применить:** В боте рекламы @PostGoldBot_bot начните создавать объявление. В меню выбора тарифов нажмите **«🎫 У меня есть промокод»**."
+    elif reward_type == "vip100": 
+        target = "vip"; discount = 100
+        item_name = "Бесплатный VIP-доступ (100%)"
+        instruction = "📖 **Как применить:** Перейдите в @Elitepost_bot -> «Вступить в VIP чат». При выставлении счета нажмите **«🎫 У меня есть промокод»**.\n_(Счет будет пересчитан до 1⭐️ по правилам Telegram)_"
     
     # 4. Записываем свежий промокод в базу
     db['promocodes'].insert_one({
@@ -373,14 +390,14 @@ def handle_reward_purchase(call):
         "is_active": True
     })
     
-    # 5. Выдаем код счастливчику
+    # 5. Выдаем код счастливчику с умной инструкцией
     bot.edit_message_text(
         f"🎉 **Покупка успешна!**\n\n"
-        f"Вы обменяли {price} очков.\n"
-        f"Ваш личный уникальный промокод:\n\n"
+        f"Вы обменяли {price} очков на **{item_name}**.\n\n"
+        f"Ваш личный уникальный промокод:\n"
         f"`{promo_code}`\n\n"
         f"*(Нажмите на код, чтобы скопировать)*\n\n"
-        f"ℹ️ Сохраните его! Бот спросит его у вас при следующей оплате услуг.",
+        f"{instruction}",
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         parse_mode="Markdown"
