@@ -1997,7 +1997,18 @@ def process_spin_result(message, sent_dice, val, uid):
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True})
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
         msg = f"🚨 **ДЖЕКПОТ!!! 7️⃣7️⃣7️⃣** 🚨\n\n🎟 **Приз:** Золотой Билет (VIP) + 💰 300 очков!\n_🎁 Промокод отправлен в ЛС!_"
-        pm_msg = f"🎉 **ВАШ ДЖЕКПОТ!**\n🎫 VIP-доступ: `{code}`\n💰 Начислено: 300 очков.\n_Если у вас уже есть VIP, вы можете подарить или продать этот код другому участнику!_"
+        
+        pm_msg = (
+            f"🎉 **ВАШ ДЖЕКПОТ!**\n"
+            f"🎫 VIP-доступ (100% скидка): `{code}`\n"
+            f"💰 Начислено: 300 очков.\n\n"
+            f"📖 **Как активировать VIP:**\n"
+            f"1. Перейдите в @Elitepost_bot\n"
+            f"2. Раздел: «Вступить в VIP чат» -> «Готов пройти верификацию»\n"
+            f"3. Отправьте видео-кружок и дождитесь одобрения.\n"
+            f"4. При выставлении счета нажмите **«🎫 У меня есть промокод»** и введите этот код!\n\n"
+            f"_(Счет будет пересчитан до 1⭐️ по правилам Telegram). Если VIP уже есть, код можно подарить!_"
+        )
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("♻️ Сдать билет (+150 Очков)", callback_data=f"trade_promo_{code}_points_150"))
 
     # 3. 🌟 ЛИЧНЫЙ СТАТУС (Кастомный тег — val: 7, 21, 35)
@@ -2067,8 +2078,18 @@ def process_spin_result(message, sent_dice, val, uid):
         code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True})
         
+        # 👇 Умная генерация инструкции в зависимости от типа скидки 👇
+        if drop['target'] == 'vip':
+            instruction = "📖 **Как применить:** Перейдите в @Elitepost_bot -> «Вступить в VIP чат». После одобрения кружка, при выставлении счета нажмите **«🎫 У меня есть промокод»**."
+        elif drop['target'] == 'ads':
+            instruction = "📖 **Как применить:** В боте публикации рекламы начните создавать объявление. Выберите сеть, город и отправьте текст. Бот выдаст меню тарифов — нажмите в нём **«🎫 У меня есть промокод»**."
+        elif drop['target'] == 'fine':
+            instruction = "📖 **Как применить:** При обращении в Службу Поддержки за разбаном, администратор выставит вам счет на оплату штрафа. Нажмите кнопку **«🎫 У меня есть промокод»** под счетом."
+        else:
+            instruction = "📖 **Как применить:** Это универсальный код! Нажмите **«🎫 У меня есть промокод»** при оплате любого штрафа, рекламы или VIP-статуса."
+
         msg = f"✨ **РЕДКИЙ ДРОП!**\n\n🎁 **Ваш приз:** Скидка {drop['name']}!\n_🎁 Промокод отправлен вам в ЛС!_"
-        pm_msg = f"✨ **Ваш выигрыш из рулетки!**\n\n🎫 {drop['name']}\nВаш код: `{code}`"
+        pm_msg = f"✨ **Ваш выигрыш из рулетки!**\n\n🎫 {drop['name']}\nВаш код: `{code}`\n\n{instruction}"
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("♻️ Обменять на 2 Осколка", callback_data=f"trade_promo_{code}_shards_2"))
 
     # 9.5 🌟 ЗАМАСКИРОВАННЫЙ КЭШБЭК (Реальные рубли на баланс — val: 11, 33)
