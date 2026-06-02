@@ -152,6 +152,14 @@ def handle_user_query(call):
             bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.")
             return 
 
+        # 👇 НОВАЯ ЛОГИКА: ПРОВЕРКА ЩИТА ИММУНИТЕТА 👇
+        if user_data.get("status") != 1 and user_data.get("immunity", 0) > 0:
+            # Сжигаем щит, выдаем статус "оплачено"
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}, "$set": {"status": 1}}) 
+            user_data["status"] = 1 # Обновляем переменную для кода ниже
+            bot.send_message(call.message.chat.id, "🛡 **Сработал Щит Иммунитета!**\nОдно бесплатное обращение в поддержку активировано. Щит разрушен.", parse_mode="Markdown")
+        # 👆 ===================================== 👆
+
         if user_data.get("status") == 1:
             paid_collection.update_one({"uid": uid}, {"$set": {"strikes": 0}}) 
             
@@ -171,7 +179,8 @@ def handle_user_query(call):
             if skynet_ban:
                 history_text += f"\n🚨 **АКТИВНЫЙ БАН СКАЙНЕТА:**\nПричина: {skynet_ban.get('reason', 'Не указана')}"
             
-            bot.send_message(call.message.chat.id, "✅ Ваша оплата подтверждена. Напишите вашу проблему ниже, и мы начнем процесс верификации.")
+            # 👇 Изменили текст, чтобы он подходил и для Звезд, и для Щита 👇
+            bot.send_message(call.message.chat.id, "✅ **Доступ открыт.** Напишите вашу проблему ниже, и мы начнем процесс верификации.")
 
             markup_ban = InlineKeyboardMarkup()
             markup_ban.add(InlineKeyboardButton("🚷 Заблокировать (Спам)", callback_data=f"ban_{uid}"))
@@ -181,14 +190,14 @@ def handle_user_query(call):
                     bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
                 except:
                     pass
-                caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
+                caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
             else:
                 topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
                 thread_id = topic.message_thread_id
                 paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}}, upsert=True)
-                caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
+                caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                  
         else:
@@ -1161,7 +1170,9 @@ def handle_admin_templates(call):
             )
             bot.answer_callback_query(call.id, f"✅ Чек-аут на {amount}⭐️ отправлен!")
             bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️)*", message_thread_id=thread_id, parse_mode="Markdown")
-            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+            
+            # 👇 ОТКЛЮЧИЛИ УДАЛЕНИЕ КНОПОК 👇
+            # bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
         except Exception as e:
             bot.answer_callback_query(call.id, "❌ Ошибка! Возможно бот заблокирован.", show_alert=True)
         return
@@ -1173,7 +1184,9 @@ def handle_admin_templates(call):
             bot.send_message(target_uid, template_text, parse_mode="Markdown")
             bot.answer_callback_query(call.id, "✅ Шаблон успешно отправлен!")
             bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил шаблон:*\n_{template_text.splitlines()[0]}_", message_thread_id=thread_id, parse_mode="Markdown")
-            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+            
+            # 👇 ОТКЛЮЧИЛИ УДАЛЕНИЕ КНОПОК 👇
+            # bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
         except Exception as e:
             if "blocked" in str(e).lower():
                 bot.answer_callback_query(call.id, "❌ Ошибка: Пользователь заблокировал бота!", show_alert=True)
@@ -1223,8 +1236,10 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
             parse_mode="Markdown"
         )
         bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️) по вашему поручению.*", message_thread_id=thread_id, parse_mode="Markdown")
-        try: bot.edit_message_reply_markup(chat_id=call_msg.chat.id, message_id=call_msg.message_id, reply_markup=None)
-        except: pass
+        
+        # 👇 ОТКЛЮЧИЛИ УДАЛЕНИЕ КНОПОК 👇
+        # try: bot.edit_message_reply_markup(chat_id=call_msg.chat.id, message_id=call_msg.message_id, reply_markup=None)
+        # except: pass
     except Exception:
         bot.send_message(STAFF_GROUP_ID, f"⚠️ **ОШИБКА:** Не удалось выставить счет.", message_thread_id=thread_id, parse_mode="Markdown")
 
@@ -2014,14 +2029,30 @@ def process_spin_result(message, sent_dice, val, uid):
     # 3. 🌟 ЛИЧНЫЙ СТАТУС (Кастомный тег — val: 7, 21, 35)
     elif val in [7, 21, 35]:
         msg = f"🌟 **СУПЕР-РЕДКИЙ ДРОП!** 🌟\n\nВы выиграли право установить **Личный Кастомный Тег** рядом с вашим ником во всех чатах!\n\n_🎁 Заберите приз в ЛС!_"
-        pm_msg = f"👑 **Ваш выигрыш из рулетки!**\n\nВы получили купон на создание личного тега. Выберите, как вас будут видеть другие участники!"
+        
+        # 👇 НОВОЕ КРАСИВОЕ ОПИСАНИЕ В ЛС 👇
+        pm_msg = (
+            f"👑 **Ваш выигрыш из рулетки!**\n\n"
+            f"Вы получили купон на создание **Личного Статуса (Тега)**!\n\n"
+            f"📖 **Что это дает:**\n"
+            f"1️⃣ Рядом с вашим именем во всех чатах будет красоваться ваш личный статус (например: `БРАТВА`, `Красавчик`, `БОСС`).\n"
+            f"2️⃣ **Скрытый бонус:** Система признает вас элитным участником. Вы получаете иммунитет от авто-мутов за неправильные анкеты (правила карантина / 1 Мая)!\n\n"
+            f"Нажмите кнопку ниже, чтобы заказать свой статус!"
+        )
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Заказать свой тег", callback_data="claim_custom_tag"))
 
     # 4. 🔥 ЭПИЧЕСКИЙ (Щит Иммунитета — val: 1, 22, 43)
     elif val in [1, 22, 43]:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
-        msg = f"🔥 **ЭПИЧЕСКИЙ ВЫИГРЫШ!** 🔥\n\n🛡 **Ваш приз:** Щит Иммунитета.\n_Он поглотит ваш следующий штраф или страйк!_"
-        pm_msg = "🛡 **Ваш выигрыш!** Вы получили 1 Щит Иммунитета."
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1, "bounty_points": 50}})
+        msg = f"🔥 **ЭПИЧЕСКИЙ ВЫИГРЫШ!** 🔥\n\n🛡 **Ваш приз:** Щит Иммунитета + 💰 50 очков!\n_Он дает право на бесплатное обращение в поддержку!_"
+        
+        pm_msg = (
+            f"🛡 **Ваш выигрыш! Вы получили 1 Щит Иммунитета и 50 очков!**\n\n"
+            f"📖 **Как это работает:**\n"
+            f"1️⃣ **Бесплатный билет в поддержку:** Если вас забанили или нужна верификация, просто нажмите кнопку «🆘 Разблокировка», и Щит оплатит обращение вместо 50⭐️!\n"
+            f"2️⃣ **Защита от страйков:** Если вы случайно нарушите правила в боте (например, ложный донос или капкан), Щит поглотит наказание.\n\n"
+            f"Щит активируется автоматически, когда это необходимо! 😎"
+        )
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("♻️ Разобрать щит (+5 Осколков)", callback_data="trade_shield_shards_5"))
 
     # 5. 💀 НАЛОГОВАЯ / СКАМ (Сектор Риска — val: 10, 20, 40, 50)
@@ -2082,11 +2113,11 @@ def process_spin_result(message, sent_dice, val, uid):
         if drop['target'] == 'vip':
             instruction = "📖 **Как применить:** Перейдите в @Elitepost_bot -> «Вступить в VIP чат». После одобрения кружка, при выставлении счета нажмите **«🎫 У меня есть промокод»**."
         elif drop['target'] == 'ads':
-            instruction = "📖 **Как применить:** В боте публикации рекламы начните создавать объявление. Выберите сеть, город и отправьте текст. Бот выдаст меню тарифов — нажмите в нём **«🎫 У меня есть промокод»**."
+            instruction = "📖 **Как применить:** В боте публикации рекламы @PostGoldBot_bot начните создавать объявление. Выберите сеть, город и отправьте текст. Бот выдаст меню тарифов — нажмите в нём **«🎫 У меня есть промокод»**."
         elif drop['target'] == 'fine':
             instruction = "📖 **Как применить:** При обращении в Службу Поддержки за разбаном, администратор выставит вам счет на оплату штрафа. Нажмите кнопку **«🎫 У меня есть промокод»** под счетом."
         else:
-            instruction = "📖 **Как применить:** Это универсальный код! Нажмите **«🎫 У меня есть промокод»** при оплате любого штрафа, рекламы или VIP-статуса."
+            instruction = "📖 **Как применить:** Это универсальный код! Нажмите **«🎫 У меня есть промокод»** при оплате любого штрафа через администратора в боте @FAQMKBOT, рекламы @PostGoldBot_bot или VIP-статуса @Elitepost_bot ."
 
         msg = f"✨ **РЕДКИЙ ДРОП!**\n\n🎁 **Ваш приз:** Скидка {drop['name']}!\n_🎁 Промокод отправлен вам в ЛС!_"
         pm_msg = f"✨ **Ваш выигрыш из рулетки!**\n\n🎫 {drop['name']}\nВаш код: `{code}`\n\n{instruction}"
