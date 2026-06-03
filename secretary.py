@@ -2,6 +2,7 @@ import telebot
 import pymongo
 import datetime
 import random
+from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 import os
 import time
 import string
@@ -561,14 +562,13 @@ def handle_cpa_network(call):
     # 3. Выбор Города
     elif call.data.startswith("cpa_net_"):
         network = call.data.split("_")[2]
-        # Импортируем словари прямо тут, чтобы не было конфликтов (или убедись, что они есть в начале файла)
-        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
         
+        # 👇 УДАЛИЛИ ИМПОРТ ОТСЮДА, ОН ТЕПЕРЬ В САМОМ ВЕРХУ ФАЙЛА 👇
         net_dicts = {"mk": chat_ids_mk, "parni": chat_ids_parni, "ns": chat_ids_ns, "gayznak": chat_ids_gayznak}
         target_dict = net_dicts.get(network, {})
         
         markup = InlineKeyboardMarkup(row_width=2)
-        # Выводим первые 20 городов (чтобы кнопка не взорвалась от лимитов Телеграма)
+        # Выводим первые 20 городов
         for city, chat_id in list(target_dict.items())[:20]:
             markup.add(InlineKeyboardButton(city, callback_data=f"cpa_getlink_{chat_id}"))
         markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_generate"))
