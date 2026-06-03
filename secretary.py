@@ -308,7 +308,7 @@ def handle_security_menu(call):
             
         # 👇 НОВАЯ КНОПКА ДЛЯ АИРДРОПОВ 👇
         markup.add(InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_gift_code"))
-        
+        markup.add(InlineKeyboardButton("🔗 CPA: Заработать на рекламе", callback_data="cpa_menu"))
         markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_report"))
 
         bot.edit_message_text(
@@ -506,6 +506,94 @@ def process_payout_details(message, cb_balance, method):
     )
     
     bot.send_message(message.chat.id, "✅ **Заявка на выплату успешно создана!**\nСумма списана с баланса. Ожидайте поступления средств на указанные реквизиты.")
+
+# ================= CPA-СЕТЬ: ВЫДАЧА ССЫЛОК =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cpa_'))
+def handle_cpa_network(call):
+    bot.answer_callback_query(call.id)
+    uid = call.from_user.id
+    
+    # 1. Главное меню CPA
+    if call.data == "cpa_menu":
+        # Считаем воронку прямиком из базы Скайнета!
+        hold_count = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "hold"})
+        approved_count = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "approved"})
+        fraud_count = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
+        
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        duplicates = user_data.get("cpa_duplicates", 0)
+        
+        total_clicks = hold_count + approved_count + fraud_count + duplicates
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🔗 Сгенерировать ссылку", callback_data="cpa_generate"),
+            InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet")
+        )
+        text = (
+            f"💼 **Партнерская CPA-Сеть**\n\n"
+            f"Приглашайте людей в наши чаты и зарабатывайте Очки Бдительности абсолютно бесплатно!\n\n"
+            f"💰 **Тарифы:**\n"
+            f"• 1 выживший участник = **15 Очков**\n"
+            f"• Бонус за каждые 10 человек = **+50 Очков**\n\n"
+            f"📊 **ВАША ВОРОНКА ТРАФИКА:**\n"
+            f"👁 Всего заявок по вашим ссылкам: **{total_clicks}**\n"
+            f"🔄 Уже были в сети (не засчитаны): **{duplicates}**\n"
+            f"⏳ На проверке Скайнета (48ч): **{hold_count}**\n"
+            f"🚫 Забраковано (боты/спамеры): **{fraud_count}**\n"
+            f"✅ **Одобрено (оплачено):** **{approved_count}**\n\n"
+            f"⚠️ _Очки начисляются автоматически, как только статус переходит в «Одобрено»._"
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    # 2. Выбор Сети
+    elif call.data == "cpa_generate":
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("МК (Мужской Клуб)", callback_data="cpa_net_mk"),
+            InlineKeyboardButton("ПАРНИ 18+", callback_data="cpa_net_parni"),
+            InlineKeyboardButton("НС (Exotics)", callback_data="cpa_net_ns"),
+            InlineKeyboardButton("ГЕЙ ЧАТЫ", callback_data="cpa_net_gayznak")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_menu"))
+        bot.edit_message_text("📍 Выберите сеть, которую хотите рекламировать:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    # 3. Выбор Города
+    elif call.data.startswith("cpa_net_"):
+        network = call.data.split("_")[2]
+        # Импортируем словари прямо тут, чтобы не было конфликтов (или убедись, что они есть в начале файла)
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
+        
+        net_dicts = {"mk": chat_ids_mk, "parni": chat_ids_parni, "ns": chat_ids_ns, "gayznak": chat_ids_gayznak}
+        target_dict = net_dicts.get(network, {})
+        
+        markup = InlineKeyboardMarkup(row_width=2)
+        # Выводим первые 20 городов (чтобы кнопка не взорвалась от лимитов Телеграма)
+        for city, chat_id in list(target_dict.items())[:20]:
+            markup.add(InlineKeyboardButton(city, callback_data=f"cpa_getlink_{chat_id}"))
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_generate"))
+        bot.edit_message_text("🏙 Выберите город для создания ссылки:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    # 4. Генерация ссылки!
+    elif call.data.startswith("cpa_getlink_"):
+        chat_id = int(call.data.split("_")[2])
+        
+        bot.edit_message_text("⏳ Генерирую персональную ссылку...", call.message.chat.id, call.message.message_id)
+        
+        try:
+            # 🔥 МАГИЯ ТУТ: Создаем вечную ссылку с запросом на вступление
+            # name=f"cpa_{uid}" - именно этот хвост ловит Скайнет в Шаге 1!
+            invite = bot.create_chat_invite_link(chat_id, creates_join_request=True, name=f"cpa_{uid}")
+            
+            text = (
+                f"✅ **Ваша персональная ссылка готова!**\n\n"
+                f"`{invite.invite_link}`\n\n"
+                f"Копируйте её и размещайте в ВК, комментариях или других чатах. "
+                f"Все пользователи, перешедшие по ней, будут автоматически закреплены за вами!"
+            )
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except Exception as e:
+            bot.edit_message_text(f"❌ Ошибка генерации ссылки. Возможно, бот не является админом в этом чате.\n`{e}`", call.message.chat.id, call.message.message_id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('payout_'))
 def handle_payout_decision(call):
