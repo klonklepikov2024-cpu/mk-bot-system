@@ -2230,8 +2230,8 @@ def process_spin_result(message, sent_dice, val, uid):
 
     # 9.5 🌟 ЗАМАСКИРОВАННЫЙ КЭШБЭК (Реальные рубли на баланс — val: 11, 33)
     elif val in [11, 33]:
-        win_rub = random.choice([100, 250, 500]) # Сумма выигрыша в рублях
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
+        # weights = [Шанс на 100, Шанс на 250, Шанс на 500]
+        win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
         
         msg = f"✨ **РЕДКИЙ ДРОП: ДЕНЕЖНЫЙ КУПОН!** ✨\n\nВы выиграли **{win_rub} руб.** на внутренний счет!\n\n_🎁 Баланс обновлен, подробности в ЛС._"
         pm_msg = (
