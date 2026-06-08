@@ -113,17 +113,18 @@ def handle_user_messages(message):
                 paid_collection.update_one({"uid": uid}, {"$unset": {"verif_timer": ""}})
             
             # Получаем код для вывода админам
-            # Получаем код для вывода админам
-            secret_code = user_data.get("secret_code", "Неизвестен") 
+            secret_code = user_data.get("secret_code", "Неизвестен")
             
             markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("✅ Кружок принят (РАЗБАН)", callback_data="vid_ok"), InlineKeyboardButton("❌ Плохое видео (Перезапросить)", callback_data="vid_bad"))
-            bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
+            
+            # 🔥 ИЗМЕНЕНИЕ 1: Сохраняем отправленное видео в переменную sent_video
+            sent_video = bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
             bot.send_message(STAFF_GROUP_ID, f"🎥 **Пользователь прислал кружок!**\n\n🗣 **ОН ДОЛЖЕН СКАЗАТЬ:**\n_{secret_code}_", message_thread_id=thread_id, parse_mode="Markdown")
 
-            # 🔥 ЗАПУСКАЕМ НЕЙРОСЕТЬ В ФОНЕ 🔥
+            # 🔥 ИЗМЕНЕНИЕ 2: Передаем uid и ID сообщения с видео в функцию
             threading.Thread(
                 target=analyze_video_speech, 
-                args=(message.video_note.file_id, secret_code, thread_id)
+                args=(message.video_note.file_id, secret_code, thread_id, uid, sent_video.message_id)
             ).start()
 
         # ПРОЧЕЕ
@@ -691,26 +692,22 @@ def handle_arrest_decision(call):
         try: bot.send_message(target_uid, f"❌ Администрация отклонила применение ордера (возможно, вы попытались замутить админа). Ваш ордер `{code}` снова активен!")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
-def analyze_video_speech(file_id, secret_code, thread_id):
+def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id):
     """Фоновая задача для распознавания речи из кружка через Groq API"""
     if not GROQ_API_KEY or secret_code == "Неизвестен":
         return
 
     temp_video_path = None
     try:
-        # Уведомляем админов, что процесс пошел
         bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет слушает кружок...*", message_thread_id=thread_id, parse_mode="Markdown")
 
-        # 1. Скачиваем кружок из Telegram
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # 2. Сохраняем во временный файл
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
             temp_video.write(downloaded_file)
             temp_video_path = temp_video.name
 
-        # 3. Отправляем в Groq Whisper
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
         
@@ -723,16 +720,13 @@ def analyze_video_speech(file_id, secret_code, thread_id):
             }
             response = requests.post(url, headers=headers, files=files, data=data)
 
-        # 4. Анализируем ответ
         if response.status_code == 200:
             text = response.json().get("text", "").lower()
             
-            # Разбиваем секретный код (например "ЯБЛОКО-45" -> "яблоко" и "45")
             parts = secret_code.lower().split('-')
             word = parts[0]
             num = parts[1] if len(parts) > 1 else ""
 
-            # Ищем ключевые слова
             has_city = "город" in text
             has_word = word in text
             has_num = num in text
@@ -742,14 +736,52 @@ def analyze_video_speech(file_id, secret_code, thread_id):
             if has_word: score += 40
             if has_num: score += 40
 
-            # Формируем вердикт
+            # === ЛОГИКА АВТОМАТИЧЕСКОГО ЗАКРЫТИЯ ===
             if score >= 80:
-                verdict = f"✅ **Код подтвержден ({score}%)!**"
+                verdict = f"✅ **Код подтвержден ({score}%)! Автоматическое одобрение.**"
+                msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                
+                now = datetime.datetime.now()
+                ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+                
+                # 1. Приказ Скайнету и запись в базу
+                db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+                db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
+                db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
+                
+                # 2. Уведомление пользователя
+                try:
+                    bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+                    markup = InlineKeyboardMarkup(row_width=5).add(
+                        InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                        InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                        InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
+                    )
+                    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+                    bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+                except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
+                
+                archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
+                
+                # 3. Убираем кнопки (✅ / ❌) с видео-сообщения в админке
+                if video_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
+                    except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
+                
+                # 4. Закрываем топик и оповещаем админов
+                try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
+                
+                paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+                
             else:
-                verdict = f"⚠️ **Совпадение низкое ({score}%). Проверьте вручную.**"
-
-            msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
-            bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                # Если совпадение меньше 80%, оставляем кнопки и ждем ручной проверки админа
+                verdict = f"⚠️ **Совпадение низкое ({score}%). Требуется ручная проверка.**"
+                msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
         else:
             logger.error(f"Ошибка Groq API: {response.text}")
             bot.send_message(STAFF_GROUP_ID, "⚠️ *Ошибка нейросети.* Проверьте кружок вручную.", message_thread_id=thread_id, parse_mode="Markdown")
@@ -757,8 +789,6 @@ def analyze_video_speech(file_id, secret_code, thread_id):
     except Exception as e:
         logger.error(f"Ошибка при работе STT: {e}")
     finally:
-        # 5. Надежно удаляем временный файл с диска сервера
         if temp_video_path and os.path.exists(temp_video_path):
-            try:
-                os.remove(temp_video_path)
+            try: os.remove(temp_video_path)
             except: pass
