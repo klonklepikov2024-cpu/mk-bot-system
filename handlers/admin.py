@@ -112,7 +112,7 @@ def handle_user_messages(message):
 # ================= ПРОВЕРКА ДОКУМЕНТОВ =================
 @bot.callback_query_handler(func=lambda call: call.data in ['doc_ok', 'doc_bad'])
 def handle_doc_check(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
         
@@ -144,7 +144,7 @@ def handle_doc_check(call):
 # ================= КНОПКИ АДМИНА И ШТРАФЫ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('tpl_') or call.data.startswith('fine_'))
 def handle_admin_templates(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
         
@@ -238,7 +238,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
 # ================= ПРОВЕРКА КРУЖКА =================
 @bot.callback_query_handler(func=lambda call: call.data in ['vid_ok', 'vid_bad'])
 def handle_vid_check(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
         
@@ -291,7 +291,7 @@ def handle_vid_check(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rej_'))
 def handle_rejections(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
         
@@ -326,7 +326,7 @@ def handle_rejections(call):
 # ================= КАПКАНЫ И БАНЫ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('trap_'))
 def handle_trap(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id, "Обработка...")
     except: pass
     
@@ -356,7 +356,7 @@ def handle_trap(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ban_'))
 def handle_fast_ban(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
     
@@ -374,7 +374,7 @@ def handle_fast_ban(call):
 # ================= РАЗНОЕ (ОЦЕНКА, ЗАКРЫТИЕ, АРТЕФАКТЫ, ПРЕМИУМ) =================
 @bot.callback_query_handler(func=lambda call: call.data == "close_ticket")
 def handle_close_ticket(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
         
@@ -426,7 +426,7 @@ def handle_rating(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "force_unban")
 def handle_force_unban(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
         
@@ -464,7 +464,7 @@ def handle_force_unban(call):
     except: pass
     paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
-@bot.message_handler(func=lambda message: str(message.chat.id) == STAFF_GROUP_ID and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
+@bot.message_handler(func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
 def handle_admin_replies(message):
     thread_id = message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -477,7 +477,7 @@ def handle_admin_replies(message):
 
 @bot.message_handler(commands=['give'])
 def handle_give_cmd(message):
-    if str(message.chat.id) != STAFF_GROUP_ID: return
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
         
     args = message.text.split()
     if len(args) != 4:
@@ -544,7 +544,7 @@ def process_tag_input(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
 def handle_admin_tag_decision(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
     
@@ -597,7 +597,7 @@ def process_premium_claim(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prem_done_'))
 def handle_prem_done(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
     target_uid = int(call.data.split('_')[2])
@@ -640,7 +640,7 @@ def process_arrest_claim(message, code):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('arrest_'))
 def handle_arrest_decision(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
     parts = call.data.split('_')

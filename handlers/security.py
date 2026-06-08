@@ -236,7 +236,7 @@ def process_payout_details(message, cb_balance, method):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('payout_'))
 def handle_payout_decision(call):
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
     except: pass
     
@@ -577,7 +577,7 @@ def handle_report_submission(call):
 def handle_admin_report_decision(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if str(call.message.chat.id) != STAFF_GROUP_ID: return
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     
     action = call.data.split('_')[2]
     reporter_uid = int(call.data.split('_')[3])

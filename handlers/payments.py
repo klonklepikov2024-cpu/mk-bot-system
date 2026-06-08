@@ -290,7 +290,7 @@ def successful_payment(message):
 # ================= АУДИТ КАЗИНО =================
 @bot.message_handler(commands=['bank'])
 def handle_bank_check(message):
-    if str(message.chat.id) != STAFF_GROUP_ID:
+    if str(message.chat.id) != str(STAFF_GROUP_ID):
         return
         
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
@@ -309,3 +309,36 @@ def handle_bank_check(message):
         bot.reply_to(message, text, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Не удалось отправить аудит банка: {e}")
+
+# ================= МАГАЗИН ОЧКОВ (НОВЫЕ КНОПКИ) =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('shop_points_buy_'))
+def handle_shop_buy(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    parts = call.data.split('_')
+    points = int(parts[3])
+    price = int(parts[4])
+    try:
+        bot.send_invoice(
+            call.message.chat.id,
+            title=f"Покупка {points} очков",
+            description=f"Пакет на {points} очков бдительности.",
+            invoice_payload=f"buy_points_{points}",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="К оплате", amount=price)]
+        )
+    except Exception as e:
+        logger.error(f"Ошибка магазина: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'shop_points_menu')
+def handle_shop_menu(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    # Имитируем команду /start shop, чтобы открыть витрину
+    call.message.from_user = call.from_user
+    call.message.text = "/start shop"
+    
+    from handlers.start_menu import send_welcome
+    send_welcome(call.message)
