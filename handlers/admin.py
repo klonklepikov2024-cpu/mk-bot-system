@@ -3,6 +3,7 @@ import datetime
 import requests
 import tempfile
 import os
+import base64
 import threading
 from config import GROQ_API_KEY
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -84,12 +85,21 @@ def handle_user_messages(message):
         elif message.content_type in ['photo', 'document']:
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(InlineKeyboardButton("✅ Документ принят (Запросить видео)", callback_data="doc_ok"), InlineKeyboardButton("❌ Плохое фото (Перезапросить)", callback_data="doc_bad"))
-            if message.photo:
-                bot.send_photo(STAFF_GROUP_ID, message.photo[-1].file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            
+            # Получаем file_id в зависимости от того, как юзер скинул фото
+            if message.content_type == 'photo':
+                file_id = message.photo[-1].file_id # Берем фото в лучшем качестве
+                bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             else:
-                bot.send_document(STAFF_GROUP_ID, message.document.file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
-        
-        # КРУЖКИ
+                file_id = message.document.file_id
+                bot.send_document(STAFF_GROUP_ID, file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+            
+            # 🔥 ЗАПУСКАЕМ ЗРЕНИЕ ИИ В ФОНЕ 🔥
+            threading.Thread(
+                target=analyze_document_vision, 
+                args=(file_id, thread_id)
+            ).start()
+          
         # КРУЖКИ
         elif message.content_type == 'video_note':
             # --- НОВАЯ ЗАЩИТА ---
@@ -792,3 +802,64 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id):
         if temp_video_path and os.path.exists(temp_video_path):
             try: os.remove(temp_video_path)
             except: pass
+
+def analyze_document_vision(file_id, thread_id):
+    """Фоновая задача для анализа фото документов (Зрение ИИ)"""
+    if not GROQ_API_KEY:
+        return
+
+    try:
+        # Уведомляем админов, что ИИ изучает фото
+        bot.send_message(STAFF_GROUP_ID, "👁 *Скайнет изучает документ...*", message_thread_id=thread_id, parse_mode="Markdown")
+
+        # 1. Скачиваем фото из Telegram
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        # 2. Переводим картинку в формат Base64 (текстовый код картинки), чтобы нейросеть ее поняла
+        base64_image = base64.b64encode(downloaded_file).decode('utf-8')
+
+        # 3. Отправляем в бесплатную Vision-модель от Groq
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # Инструкция для ИИ
+        prompt = (
+            "Ты строгий ИИ-помощник модератора. Это фотография документа для подтверждения возраста (паспорт, права и т.д.). "
+            "Ответь очень кратко по пунктам:\n"
+            "1. Похоже ли это на документ?\n"
+            "2. Видно ли лицо человека?\n"
+            "3. Читаема ли дата рождения?\n"
+            "4. Итог: Годится ли фото или оно размыто/скрыто?\n"
+            "Отвечай коротко и по делу, на русском языке."
+        )
+
+        data = {
+            "model": "llama-3.2-90b-vision-preview", # Мощнейшая модель с компьютерным зрением
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ],
+            "temperature": 0.2 # Делаем ИИ максимально серьезным и не фантазирующим
+        }
+
+        response = requests.post(url, headers=headers, json=data)
+
+        # 4. Выводим результат админам
+        if response.status_code == 200:
+            ai_text = response.json()["choices"][0]["message"]["content"]
+            msg = f"👁 **Анализ документа (Vision AI):**\n\n{ai_text}"
+            bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+        else:
+            logger.error(f"Ошибка Vision API: {response.text}")
+
+    except Exception as e:
+        logger.error(f"Ошибка при работе Vision AI: {e}")

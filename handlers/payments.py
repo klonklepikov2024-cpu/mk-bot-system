@@ -334,3 +334,80 @@ def handle_shop_menu(call):
     
     from handlers.start_menu import send_welcome
     send_welcome(call.message)
+
+# ================= ДОНАТЫ (ЧАЕВЫЕ) =================
+@bot.callback_query_handler(func=lambda call: call.data == 'start_donate')
+def handle_start_donate(call):
+    # Снимаем залипание главной кнопки
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+    
+    markup = InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        InlineKeyboardButton("50 ⭐️", callback_data="send_don_50"),
+        InlineKeyboardButton("150 ⭐️", callback_data="send_don_150"),
+        InlineKeyboardButton("500 ⭐️", callback_data="send_don_500")
+    )
+    markup.add(InlineKeyboardButton("✍️ Указать свою сумму", callback_data="send_don_custom"))
+    
+    try: 
+        bot.send_message(
+            call.message.chat.id, 
+            "💖 **Поддержка команды**\n\nСпасибо, что высоко оценили нашу работу! Выберите готовую сумму чаевых или укажите свою личную:", 
+            reply_markup=markup
+        )
+    except Exception as e: 
+        logger.warning(f"Ошибка отправки меню доната: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('send_don_'))
+def handle_send_donation_invoice(call):
+    # Снимаем залипание кнопок выбора
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+    
+    action = call.data.split('_')[2]
+    
+    # Если пользователь хочет ввести свою сумму
+    if action == "custom":
+        msg = bot.send_message(
+            call.message.chat.id, 
+            "✍️ **Введите количество звёзд (цифрами), которое вы хотите отправить в качестве чаевых:**\n_Например: 100_"
+        )
+        bot.register_next_step_handler(msg, process_custom_donation)
+        return
+
+    # Если выбрана готовая кнопка
+    amount = int(action)
+    send_donation_invoice_helper(call.message.chat.id, amount)
+
+def process_custom_donation(message):
+    if message.text == '/start':
+        from handlers.start_menu import send_welcome
+        send_welcome(message)
+        return
+        
+    if not message.text or not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ **Ошибка:** Нужно ввести только число цифрами (например: 200). Попробуйте снова, нажав кнопку доната.")
+        return
+        
+    amount = int(message.text)
+    if amount < 1 or amount > 50000:
+        bot.send_message(message.chat.id, "❌ **Ошибка:** Сумма чаевых должна быть от 1 до 50 000 звёзд.")
+        return
+        
+    send_donation_invoice_helper(message.chat.id, amount)
+
+def send_donation_invoice_helper(chat_id, amount):
+    """Вспомогательная функция для генерации инвойса доната"""
+    try:
+        bot.send_invoice(
+            chat_id,
+            title=f"Чаевые ({amount}⭐️)",
+            description="Поддержка команды модераторов Скайнета. Спасибо за вашу бдительность!",
+            invoice_payload=f"donation_{amount}", # Payload динамически подставит любую сумму
+            provider_token="", 
+            currency="XTR",
+            prices=[LabeledPrice(label="Донат", amount=amount)]
+        )
+    except Exception as e:
+        logger.error(f"Ошибка выставления инвойса на донат: {e}")
