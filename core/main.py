@@ -7,8 +7,7 @@ from core.bot import bot
 from core.scheduler import start_scheduler
 from utils.logger import logger
 
---- ЗДЕСЬ БУДЕТ ИМПОРТ ХЭНДЛЕРОВ ---
-Мы раскомментируем их на следующем шаге, когда создадим!
+# Импорт хэндлеров (чтобы они зарегистрировались в боте)
 import handlers.start_menu
 import handlers.security
 import handlers.admin
