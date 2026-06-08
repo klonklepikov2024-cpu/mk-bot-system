@@ -19,7 +19,10 @@ def handle_security_menu(call):
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception as e: logger.warning(f"Не удалось удалить сообщение sec_back_main: {e}")
         
-        # 🔥 ЛОКАЛЬНЫЙ ИМПОРТ (Вставляем прямо перед вызовом)
+        # 🔥 ИСПРАВЛЕНИЕ: Подменяем автора сообщения на реального юзера
+        call.message.from_user = call.from_user
+        call.message.text = "/start" # Чтобы не сломались проверки внутри send_welcome
+        
         from handlers.start_menu import send_welcome
         send_welcome(call.message)
         
