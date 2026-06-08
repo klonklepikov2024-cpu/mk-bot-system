@@ -1,5 +1,6 @@
 import random
 import datetime
+from zoneinfo import ZoneInfo # <--- ДОБАВИТЬ ЭТУ СТРОКУ
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
@@ -91,8 +92,9 @@ def handle_casino_spin(message):
         sent_dice = bot.send_dice(message.chat.id, emoji='🎰')
         val = sent_dice.dice.value # Телеграм сам генерирует честный рандом (1-64)
 
-        # 3. НАДЕЖНЫЙ ЗАПУСК ФОНОВОЙ ЗАДАЧИ (через 2.2 секунды)
-        run_time = datetime.datetime.now() + datetime.timedelta(seconds=2.2)
+        # 3. НАДЕЖНЫЙ ЗАПУСК ФОНОВОЙ ЗАДАЧИ (через 2.2 секунды по МСК)
+        tz = ZoneInfo("Europe/Moscow")
+        run_time = datetime.datetime.now(tz) + datetime.timedelta(seconds=2.2)
         scheduler.add_job(
             process_spin_result, 
             'date', 
