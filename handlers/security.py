@@ -29,9 +29,15 @@ def handle_security_menu(call):
     elif call.data == "sec_submit_report":
         msg = bot.send_message(
             call.message.chat.id, 
-            "🕵️‍♂️ **Подача жалобы**\n\nПожалуйста, отправьте **@username** нарушителя, его **ID**, либо просто **перешлите его сообщение** сюда:"
+            "🕵️‍♂️ **Подача жалобы**\n\nПожалуйста, отправьте **@username** (или ID) нарушителя, а также прикрепите **скриншоты** и опишите ситуацию.\n\n_Один репорт — один нарушитель._",
+            parse_mode="Markdown"
         )
-        bot.register_next_step_handler(msg, process_report_target)
+        # 🚀 FSM: Записываем ожидание жалобы (без next_step_handler)
+        db['user_states'].update_one(
+            {"uid": uid},
+            {"$set": {"state": "waiting_report"}},
+            upsert=True
+        )
         
     elif call.data == "sec_agent_cabinet":
         user_data = paid_collection.find_one({"uid": uid}) or {}
@@ -97,11 +103,11 @@ def handle_reward_purchase(call):
     
     if points < price:
         try: bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {price}, а у вас {points}.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id, "Покупка...") 
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price}})
     
@@ -154,11 +160,11 @@ def handle_cashback_request(call):
     
     if cb_balance < 500:
         try: bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — 500 рублей! У вас: {cb_balance}₽.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -183,11 +189,11 @@ def handle_payout_method(call):
     
     if method == "card" and cb_balance < 3500:
         try: bot.answer_callback_query(call.id, f"❌ Для вывода на карту нужно минимум 3500₽!\nУ вас: {cb_balance}₽.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     prompts = {
         "card": "💳 **Вывод на карту**\n\nНапишите номер карты и название банка (например: `4276123456789012 Сбербанк`):",
@@ -196,13 +202,14 @@ def handle_payout_method(call):
     }
 
     try: bot.delete_message(call.message.chat.id, call.message.message_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     msg = bot.send_message(call.message.chat.id, prompts[method], parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_payout_details, cb_balance=cb_balance, method=method)
 
 def process_payout_details(message, cb_balance, method):
     if message.text == '/start':
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
         
@@ -218,7 +225,10 @@ def process_payout_details(message, cb_balance, method):
 
     paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
     
+    # Защита от подчеркиваний в Markdown
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
+    safe_username = username.replace('_', '\\_') 
+    
     method_names = {"card": "💳 На карту", "phone": "📱 На телефон", "crypto": "💎 USDT (TRC20)"}
     
     markup = InlineKeyboardMarkup(row_width=1)
@@ -229,7 +239,7 @@ def process_payout_details(message, cb_balance, method):
     
     bot.send_message(
         STAFF_GROUP_ID,
-        f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n👤 От: {username} (`{uid}`)\n💵 Сумма к выдаче: **{cb_balance} руб.**\n🏦 Способ: **{method_names[method]}**\n📝 Реквизиты юзера:\n`{details}`\n\nСделайте перевод и нажмите кнопку подтверждения:",
+        f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n👤 От: {safe_username} (`{uid}`)\n💵 Сумма к выдаче: **{cb_balance} руб.**\n🏦 Способ: **{method_names[method]}**\n📝 Реквизиты юзера:\n`{details}`\n\nСделайте перевод и нажмите кнопку подтверждения:",
         reply_markup=markup, parse_mode="Markdown"
     )
     bot.send_message(message.chat.id, "✅ **Заявка на выплату успешно создана!**\nСумма списана с баланса. Ожидайте поступления средств на указанные реквизиты.")
@@ -238,7 +248,7 @@ def process_payout_details(message, cb_balance, method):
 def handle_payout_decision(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     parts = call.data.split('_')
     action = parts[1]
@@ -247,22 +257,22 @@ def handle_payout_decision(call):
     
     if action == "done":
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫПЛАЧЕНО УСПЕШНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"💸 **Ваша заявка на выплату ({amount} руб.) успешно обработана!** Деньги отправлены.")
         except Exception as e: logger.warning(f"Не удалось уведомить {target_uid} о выплате: {e}")
             
     elif action == "cancel":
         paid_collection.update_one({"uid": target_uid}, {"$inc": {"cashback_balance": amount}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Деньги возвращены)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"❌ **Заявка на выплату отклонена.**\nСредства ({amount} руб.) возвращены на ваш внутренний баланс.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= CPA-СЕТЬ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cpa_'))
 def handle_cpa_network(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     uid = call.from_user.id
     
     if call.data == "cpa_menu":
@@ -291,7 +301,7 @@ def handle_cpa_network(call):
             f"✅ **Одобрено (оплачено):** **{approved_count}**"
         )
         try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif call.data == "cpa_generate":
         markup = InlineKeyboardMarkup(row_width=2)
@@ -303,7 +313,7 @@ def handle_cpa_network(call):
         )
         markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_menu"))
         try: bot.edit_message_text("📍 Выберите сеть, которую хотите рекламировать:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif call.data.startswith("cpa_net_"):
         network = call.data.split("_")[2]
@@ -315,12 +325,12 @@ def handle_cpa_network(call):
             markup.add(InlineKeyboardButton(city, callback_data=f"cpa_getlink_{chat_id}"))
         markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_generate"))
         try: bot.edit_message_text("🏙 Выберите город для создания ссылки:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif call.data.startswith("cpa_getlink_"):
         chat_id = int(call.data.split("_")[2])
         try: bot.edit_message_text("⏳ Генерирую персональную ссылку...", call.message.chat.id, call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
         try:
             invite = bot.create_chat_invite_link(chat_id, creates_join_request=True, name=f"cpa_{uid}")
@@ -329,7 +339,7 @@ def handle_cpa_network(call):
         except Exception as e:
             logger.error(f"Ошибка CPA ссылки для чата {chat_id}: {e}")
             try: bot.edit_message_text(f"❌ Ошибка генерации ссылки. Возможно, бот не является админом в этом чате.\n`{e}`", call.message.chat.id, call.message.message_id)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ОБМЕННИК И АИРДРОПЫ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'exchange_shards')
@@ -339,11 +349,11 @@ def handle_shards_exchange(call):
     
     if user_data.get("jackpot_shards", 0) < 50:
         try: bot.answer_callback_query(call.id, "❌ Недостаточно осколков! Нужно 50 шт.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id, "Сборка джекпота...")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
     
@@ -364,12 +374,12 @@ def handle_shards_exchange(call):
             msg, chat_id=call.message.chat.id, message_id=call.message.message_id, 
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet"))
         )
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == 'dummy_shards')
 def handle_dummy_shards(call):
     try: bot.answer_callback_query(call.id, "🧩 Соберите 50 осколков из неудачных прокруток рулетки, чтобы гарантированно получить Супер-Приз!", show_alert=True)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('trade_'))
 def handle_trade_in(call):
@@ -382,7 +392,7 @@ def handle_trade_in(call):
         promo = db['promocodes'].find_one({"_id": code, "is_active": True, "used_count": 0})
         if not promo:
             try: bot.answer_callback_query(call.id, "❌ Этот промокод уже использован или был обменян ранее!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
             
         db['promocodes'].delete_one({"_id": code})
@@ -391,7 +401,7 @@ def handle_trade_in(call):
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points" if reward_type == 'points' else "jackpot_shards": amount}})
             
         try: bot.edit_message_text(f"♻️ **Приз успешно переработан!**\n\nВы уничтожили промокод `{code}`.\nПолучено: **+{reward_text}**.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif parts[1] == 'shield':
         reward_type, amount = parts[2], int(parts[3])
@@ -399,7 +409,7 @@ def handle_trade_in(call):
         
         if user_data.get("immunity", 0) < 1:
             try: bot.answer_callback_query(call.id, "❌ У вас нет активных Щитов для обмена!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
             
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
@@ -407,17 +417,18 @@ def handle_trade_in(call):
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points" if reward_type == 'points' else "jackpot_shards": amount}})
             
         try: bot.edit_message_text(f"♻️ **Щит сдан в утиль!**\n\nВы разобрали 1 Щит Иммунитета.\nПолучено: **+{reward_text}**.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == 'enter_gift_code')
 def handle_enter_gift_code(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     msg = bot.send_message(call.message.chat.id, "🎁 **Активация подарочного кода**\n\nПришлите промокод ответным сообщением:")
     bot.register_next_step_handler(msg, process_gift_code)
 
 def process_gift_code(message):
     if message.text == '/start':
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
         
@@ -447,47 +458,57 @@ def process_gift_code(message):
     else:
         bot.send_message(message.chat.id, "❌ Этот промокод дает скидку, а не бесплатные очки. Введите его при оплате услуг (штраф, реклама).")
 
-# ================= ВОРОНКА ЖАЛОБ =================
+# ================= ВОРОНКА ЖАЛОБ (РАБОТАЕТ ЧЕРЕЗ FSM) =================
 def process_report_target(message):
     if message.text and message.text == "/start":
+        db['user_states'].delete_one({"uid": message.from_user.id})
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
         
     target_info = f"ID: {message.forward_from.id}" if message.forward_from else (message.text if message.text else "Нет текста")
-
     db['temp_reports'].update_one({"uid": message.from_user.id}, {"$set": {"target": target_info, "media": []}}, upsert=True)
 
-    msg = bot.send_message(message.chat.id, f"✅ Цель зафиксирована: {target_info}\n\n✍️ **Теперь подробно опишите ситуацию.** Что именно произошло?")
-    bot.register_next_step_handler(msg, process_report_description)
+    # 🚀 FSM: Переводим юзера на 2-й шаг (Описание)
+    db['user_states'].update_one({"uid": message.from_user.id}, {"$set": {"state": "waiting_report_desc"}}, upsert=True)
+    bot.send_message(message.chat.id, f"✅ Цель зафиксирована: {target_info}\n\n✍️ **Теперь подробно опишите ситуацию.** Что именно произошло?")
 
 def process_report_description(message):
     if message.text == '/start':
+        db['user_states'].delete_one({"uid": message.from_user.id})
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
 
     description = message.text if message.text else "Описание отсутствует"
     db['temp_reports'].update_one({"uid": message.from_user.id}, {"$set": {"description": description}})
 
+    # 🚀 FSM: Переводим юзера на 3-й шаг (Медиа)
+    db['user_states'].update_one({"uid": message.from_user.id}, {"$set": {"state": "waiting_report_media"}}, upsert=True)
+
     markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add("✅ Все доказательства отправлены")
 
-    msg = bot.send_message(
+    bot.send_message(
         message.chat.id,
-        "📸 **Теперь отправляйте доказательства** (скриншоты, видео, аудио или пересланные сообщения).\n\n"
-        "Вы можете отправить сразу **несколько файлов** подряд. Как только загрузите всё необходимое — нажмите кнопку **«✅ Все доказательства отправлены»** внизу экрана 👇",
+        "📸 **Теперь отправляйте доказательства** (скриншоты, видео и т.д.).\n\n"
+        "Вы можете отправить сразу **несколько файлов**. Как только загрузите всё необходимое — нажмите кнопку внизу 👇",
         reply_markup=markup
     )
-    bot.register_next_step_handler(msg, process_evidence_loop)
 
 def process_evidence_loop(message):
     uid = message.from_user.id
 
     if message.text == '/start':
+        db['user_states'].delete_one({"uid": uid})
         bot.send_message(message.chat.id, "Отмена действия...", reply_markup=ReplyKeyboardRemove())
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
 
     if message.text == "✅ Все доказательства отправлены":
+        # 🚀 УРА! Цикл завершен. Удаляем состояние юзера из FSM.
+        db['user_states'].delete_one({"uid": uid})
         bot.send_message(message.chat.id, "⏳ Формируем дело...", reply_markup=ReplyKeyboardRemove())
 
         markup = InlineKeyboardMarkup(row_width=2)
@@ -495,11 +516,12 @@ def process_evidence_loop(message):
             InlineKeyboardButton("💊 Наркотики", callback_data=f"rep_drugs_{uid}"),
             InlineKeyboardButton("👶 Несовершеннолетний", callback_data=f"rep_minor_{uid}"),
             InlineKeyboardButton("💰 Мошенник / Спам", callback_data=f"rep_scam_{uid}"),
-            InlineKeyboardButton("🤬 Неадекват / Оскорбления", callback_data=f"rep_toxic_{uid}")
+            InlineKeyboardButton("🤬 Неадекват", callback_data=f"rep_toxic_{uid}")
         )
         bot.send_message(message.chat.id, "❗️ **Финальный шаг: Выберите причину жалобы из списка:**\n_За ложный донос выдается страйк._", reply_markup=markup)
         return
 
+    # Если юзер кидает фото/видео — сохраняем их (Состояние при этом НЕ удаляется!)
     if message.content_type in ['photo', 'video', 'document', 'audio', 'voice', 'video_note']:
         ev_id = ""
         if message.content_type == 'photo': ev_id = message.photo[-1].file_id
@@ -512,12 +534,10 @@ def process_evidence_loop(message):
         if ev_id:
             db['temp_reports'].update_one({"uid": uid}, {"$push": {"media": {"type": message.content_type, "id": ev_id}}})
 
-    bot.register_next_step_handler(message, process_evidence_loop)
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rep_'))
 def handle_report_submission(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     data_parts = call.data.split('_')
     reason_code = data_parts[1]
@@ -531,7 +551,7 @@ def handle_report_submission(call):
     report_data = db['temp_reports'].find_one({"uid": reporter_uid})
     if not report_data:
         try: bot.answer_callback_query(call.id, "❌ Ошибка: данные устарели. Начните заново через /start", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     target_info = report_data.get("target", "Неизвестно")
@@ -539,7 +559,7 @@ def handle_report_submission(call):
     media_list = report_data.get("media", [])
     
     try: bot.edit_message_text("✅ **Ваша жалоба отправлена в Службу Безопасности.**\nОжидайте проверки!", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     reporter_name = call.from_user.first_name or f"ID {reporter_uid}"
     topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🚨 ЖАЛОБА | {reporter_name}")
@@ -561,7 +581,7 @@ def handle_report_submission(call):
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("✅ Подтвердить нарушение (+Награда заявителю)", callback_data=f"adm_rep_reward_{reporter_uid}"),
+        InlineKeyboardButton("✅ Подтвердить нарушение (+Награда)", callback_data=f"adm_rep_reward_{reporter_uid}"),
         InlineKeyboardButton("❌ Отклонить (Мало улик)", callback_data=f"adm_rep_reject_{reporter_uid}"),
         InlineKeyboardButton("🚨 Ложный донос (Страйк)", callback_data=f"adm_rep_strike_{reporter_uid}")
     )
@@ -576,7 +596,7 @@ def handle_report_submission(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_rep_'))
 def handle_admin_report_decision(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     
     action = call.data.split('_')[2]
@@ -586,18 +606,18 @@ def handle_admin_report_decision(call):
     if action == "reward":
         paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"bounty_points": 10, "successful_reports": 1}}, upsert=True)
         try: bot.send_message(reporter_uid, "🎉 **Ваша жалоба подтвердилась!**\nНарушитель наказан. Вам начислено **+10 очков бдительности**! 💰", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         bot.send_message(STAFF_GROUP_ID, "✅ **Вердикт:** Нарушение подтверждено. Заявитель получил +10 очков.\n\n🔨 **Админы, забаньте нарушителя вручную через Скайнет!**", message_thread_id=thread_id, parse_mode="Markdown")
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ *ЗАКРЫТО: Нарушитель признан виновным.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     elif action == "reject":
         try: bot.send_message(reporter_uid, "❌ Ваша жалоба отклонена. Предоставленных доказательств недостаточно.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ *ЗАКРЫТО: Отклонено (Мало улик).*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     elif action == "strike":
         user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0, "immunity": 0}
@@ -605,18 +625,58 @@ def handle_admin_report_decision(call):
         if user_data.get("immunity", 0) > 0:
             paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"immunity": -1, "bounty_points": -10}, "$unset": {"topic_type": ""}})
             try: bot.send_message(reporter_uid, "⛔️ **Ложный донос!**\nВы использовали систему не по назначению. Списано **-10 очков**.\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен._", parse_mode="Markdown")
-            except: pass
-            try: bot.edit_message_text(f"{call.message.text}\n\n🛡 *ЗАКРЫТО: Юзер спасен Иммунитетом! Страйк поглощен щитом (очки списаны).* ", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            try: bot.edit_message_text(f"{call.message.text}\n\n🛡 *ЗАКРЫТО: Юзер спасен Иммунитетом! Страйк поглощен щитом.* ", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
 
         new_strikes = user_data.get("strikes", 0) + 1
         paid_collection.update_one({"uid": reporter_uid}, {"$set": {"strikes": new_strikes}, "$inc": {"bounty_points": -10}, "$unset": {"topic_type": ""}}, upsert=True)
         try: bot.send_message(reporter_uid, f"🚨 **Внимание! Ложный донос.**\nВы использовали систему не по назначению. Списано **-10 очков**. Выдан страйк ({new_strikes}/3).", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_text(f"{call.message.text}\n\n🚨 *ЗАКРЫТО: Выдан страйк за ложный донос.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+# ================= ГЛОБАЛЬНЫЙ РОУТЕР СОСТОЯНИЙ (FSM) =================
+
+def check_fsm_state(message):
+    """Проверяет, ждет ли бот от юзера какого-то ввода"""
+    state = db['user_states'].find_one({"uid": message.from_user.id})
+    return bool(state) # Вернет True, если юзер есть в базе состояний
+
+@bot.message_handler(func=check_fsm_state, content_types=['text', 'photo', 'document', 'video', 'voice', 'audio'])
+def handle_fsm_states(message):
+    uid = message.from_user.id
+    user_state = db['user_states'].find_one({"uid": uid})
+    state = user_state.get("state")
+    
+    # ⚠️ УМНОЕ УДАЛЕНИЕ СОСТОЯНИЯ:
+    # Мы НЕ удаляем состояние, если юзер в цикле загрузки фото/видео!
+    # Он сам выйдет из него, когда нажмет "✅ Все доказательства отправлены"
+    if state != "waiting_report_media":
+        db['user_states'].delete_one({"uid": uid})
+    
+    # --- РОУТИНГ СООБЩЕНИЙ ПО ШАГАМ ---
+    
+    if state == "waiting_report_target":
+        process_report_target(message)
+        
+    elif state == "waiting_report_desc":
+        process_report_description(message)
+        
+    elif state == "waiting_report_media":
+        process_evidence_loop(message)
+        
+    elif state == "waiting_promo":
+        from handlers.payments import process_promo_code
+        process_promo_code(
+            message, 
+            user_state.get("target_type"), 
+            user_state.get("original_amount"), 
+            user_state.get("call_msg_chat_id"), 
+            user_state.get("call_msg_id")
+        )

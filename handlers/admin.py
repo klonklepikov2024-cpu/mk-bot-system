@@ -1,5 +1,10 @@
 import random
 import datetime
+import requests
+import tempfile
+import os
+import threading
+from config import GROQ_API_KEY
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
@@ -35,7 +40,7 @@ def handle_user_messages(message):
         last_msg_id = user_data.get("last_admin_msg_id")
         if last_msg_id:
             try: bot.edit_message_reply_markup(STAFF_GROUP_ID, last_msg_id, reply_markup=None)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     try:
         # ТЕКСТ
@@ -46,9 +51,9 @@ def handle_user_messages(message):
                 
                 paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
                 
-                text_phrase = f"⏳ **Таймер запущен! У вас ровно 10 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*."
+                text_phrase = f"⏳ **Таймер запущен! У вас ровно 5 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*."
                 bot.send_message(uid, text_phrase, parse_mode="Markdown")
-                bot.send_message(STAFF_GROUP_ID, f"⏳ *Пользователь написал «Готов». Бот выдал код: {secret_code} и запустил таймер 10 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.send_message(STAFF_GROUP_ID, f"⏳ *Пользователь написал «Готов». Бот выдал код: {secret_code} и запустил таймер 5 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
                 return 
 
             cleanup_old_buttons()
@@ -85,20 +90,41 @@ def handle_user_messages(message):
                 bot.send_document(STAFF_GROUP_ID, message.document.file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         
         # КРУЖКИ
+        # КРУЖКИ
         elif message.content_type == 'video_note':
+            # --- НОВАЯ ЗАЩИТА ---
+            # 1. Запрет пересылки (попытка подсунуть старый или чужой кружок)
+            if message.forward_date or getattr(message, 'forward_from', None) or getattr(message, 'forward_from_chat', None):
+                bot.send_message(uid, "❌ **Ошибка:** Пересланные видео-кружки не принимаются! Запишите его прямо сейчас в этот чат.")
+                return
+
+            # 2. Запрет слишком коротких видео (меньше 2 секунд)
+            if message.video_note.duration < 2:
+                bot.send_message(uid, "❌ **Ошибка:** Кружок слишком короткий. Пожалуйста, запишите полноценное видео, четко проговорив всю фразу.")
+                return
+            # --------------------
+
             verif_timer = user_data.get("verif_timer")
-            expected_code = user_data.get("secret_code", "Неизвестно (Старая заявка)")
-            
-            if verif_timer:
+            if verif_timer: # <--- ДОБАВЛЕНО УСЛОВИЕ
                 time_diff = (datetime.datetime.now() - verif_timer).total_seconds()
-                if time_diff > 600:
-                    bot.send_message(uid, "❌ **Время вышло!** Вы не уложились в 10 минут. Ожидайте решения администратора.")
+                if time_diff > 300:
+                    bot.send_message(uid, "❌ **Время вышло!** Вы не уложились в 5 минут. Ожидайте решения администратора.")
                     bot.send_message(STAFF_GROUP_ID, "⚠️ **ВНИМАНИЕ! Юзер просрочил таймер.**", message_thread_id=thread_id)
                 paid_collection.update_one({"uid": uid}, {"$unset": {"verif_timer": ""}})
             
+            # Получаем код для вывода админам
+            # Получаем код для вывода админам
+            secret_code = user_data.get("secret_code", "Неизвестен") 
+            
             markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("✅ Кружок принят (РАЗБАН)", callback_data="vid_ok"), InlineKeyboardButton("❌ Плохое видео (Перезапросить)", callback_data="vid_bad"))
             bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
-            bot.send_message(STAFF_GROUP_ID, f"🎥 **Пользователь прислал кружок!**\n\n🗣 **ОН ДОЛЖЕН СКАЗАТЬ:**\n_{expected_code}_", message_thread_id=thread_id, parse_mode="Markdown")
+            bot.send_message(STAFF_GROUP_ID, f"🎥 **Пользователь прислал кружок!**\n\n🗣 **ОН ДОЛЖЕН СКАЗАТЬ:**\n_{secret_code}_", message_thread_id=thread_id, parse_mode="Markdown")
+
+            # 🔥 ЗАПУСКАЕМ НЕЙРОСЕТЬ В ФОНЕ 🔥
+            threading.Thread(
+                target=analyze_video_speech, 
+                args=(message.video_note.file_id, secret_code, thread_id)
+            ).start()
 
         # ПРОЧЕЕ
         elif message.content_type in ['voice', 'video', 'sticker', 'audio', 'animation']:
@@ -107,14 +133,14 @@ def handle_user_messages(message):
     except Exception as e:
         logger.error(f"СИСТЕМНАЯ ОШИБКА ДОСТАВКИ (Юзер -> Админ): {e}")
         try: bot.send_message(message.chat.id, "⚠️ Произошла ошибка при отправке сообщения. Пожалуйста, отправьте его еще раз.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ПРОВЕРКА ДОКУМЕНТОВ =================
 @bot.callback_query_handler(func=lambda call: call.data in ['doc_ok', 'doc_bad'])
 def handle_doc_check(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -126,11 +152,11 @@ def handle_doc_check(call):
         secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
         paid_collection.update_one({"uid": target_uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
         
-        text_to_user = f"✅ **Документ принят! Отлично.**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*.\n\nУ вас есть 10 минут на отправку видео."
+        text_to_user = f"✅ **Документ принят! Отлично.**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*.\n\nУ вас есть 5 минут на отправку видео."
         try: bot.send_message(target_uid, text_to_user, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_caption(f"✅ *Документ одобрен. Запрошен видео-кружок с кодом: {secret_code}.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     elif call.data == 'doc_bad':
         markup = InlineKeyboardMarkup(row_width=1).add(
@@ -139,14 +165,14 @@ def handle_doc_check(call):
             InlineKeyboardButton("📄 Не тот документ", callback_data="rej_doc_wrong")
         )
         try: bot.edit_message_caption("❓ **Укажите причину отказа:**", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= КНОПКИ АДМИНА И ШТРАФЫ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('tpl_') or call.data.startswith('fine_'))
 def handle_admin_templates(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -195,18 +221,18 @@ def handle_admin_templates(call):
         except Exception as e:
             logger.warning(f"Ошибка отправки шаблона: {e}")
             try: bot.send_message(STAFF_GROUP_ID, "⚠️ **ОШИБКА:** Невозможно отправить шаблон. Пользователь заблокировал бота!", message_thread_id=thread_id, parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_custom_fine(message, target_uid, thread_id, call_msg):
     if not message.text or not message.text.isdigit():
         try: bot.send_message(STAFF_GROUP_ID, "❌ **Ошибка:** Нужно было отправить только число (например: 350).", message_thread_id=thread_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     amount = int(message.text)
     if amount < 1 or amount > 10000:
         try: bot.send_message(STAFF_GROUP_ID, "❌ **Ошибка:** Сумма должна быть от 1 до 10000 звезд.", message_thread_id=thread_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try:
@@ -240,7 +266,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
 def handle_vid_check(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -272,11 +298,11 @@ def handle_vid_check(call):
         archive_collection.update_one({"target": str(target_uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят админом"}}}, upsert=True)
         
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(call.message.chat.id, f"✅ *Видео-кружок одобрен!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-        except: pass 
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
         
         paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
         
@@ -287,13 +313,13 @@ def handle_vid_check(call):
             InlineKeyboardButton("🔇 Нет звука / Тишина", callback_data="rej_vid_sound")
         )
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rej_'))
 def handle_rejections(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -315,20 +341,20 @@ def handle_rejections(call):
     
     if text_to_user:
         try: bot.send_message(target_uid, text_to_user, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_caption(f"❌ *Отклонено (Причина: {admin_report}). Запрошено повторно.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
         except Exception:
             try:
                 bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
                 bot.send_message(call.message.chat.id, f"❌ *Отклонено (Причина: {admin_report}). Запрошено повторно.*", message_thread_id=thread_id, parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= КАПКАНЫ И БАНЫ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('trap_'))
 def handle_trap(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id, "Обработка...")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     target_uid = int(call.data.split('_')[1])
     thread_id = call.message.message_thread_id
@@ -337,46 +363,46 @@ def handle_trap(call):
     if user_data.get("immunity", 0) > 0:
         paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}})
         try: bot.send_message(target_uid, "⛔️ **Вы нарушили правила!**\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен. Будьте осторожны в следующий раз._", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_text(f"{call.message.html}\n\n🛡 <b>Юзер спасен Иммунитетом!</b> Страйк поглощен щитом. Топик закрыт.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     new_strikes = user_data.get("strikes", 0) + 1
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": new_strikes}, "$unset": {"topic_type": ""}}, upsert=True)
     
     try: bot.send_message(target_uid, f"⛔️ **Вы выбрали раздел 'Реклама' для обхода системы.**\nВам начислен штрафной страйк за спам ({new_strikes}/3)! Для разбана используйте платную поддержку.")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_text(f"{call.message.html}\n\n🚨 <b>Хитрец пойман!</b> Ему начислен страйк ({new_strikes}/3). Топик закрыт.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=None)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ban_'))
 def handle_fast_ban(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     target_uid = int(call.data.split('_')[1])
     thread_id = call.message.message_thread_id
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 3, "status": 0}, "$unset": {"topic_type": ""}}, upsert=True)
     
     try: bot.send_message(target_uid, "⛔️ **Вы были заблокированы администратором за нарушение правил общения.**")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_text(f"{call.message.html}\n\n🚷 <b>Юзер заблокирован администратором! Топик закрыт.</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= РАЗНОЕ (ОЦЕНКА, ЗАКРЫТИЕ, АРТЕФАКТЫ, ПРЕМИУМ) =================
 @bot.callback_query_handler(func=lambda call: call.data == "close_ticket")
 def handle_close_ticket(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -392,7 +418,7 @@ def handle_close_ticket(call):
     db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
     
     try: bot.send_message(target_uid, "🏁 **Ваше обращение закрыто.**\n\nПожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
     archive_collection.update_one({"target": str(target_uid)}, {"$push": {"history": {"date": now_str, "action": "Обращение закрыто", "reason": "Вопрос решен админом"}}}, upsert=True)
@@ -400,10 +426,10 @@ def handle_close_ticket(call):
     try: bot.edit_message_text(f"{call.message.html}\n\n🏁 <b>Тикет закрыт.</b> Пользователю отправлен запрос оценки.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
     except: 
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rate_'))
@@ -411,24 +437,24 @@ def handle_rating(call):
     _, rating, t_id = call.data.split('_')
     t_id = int(t_id)
     try: bot.answer_callback_query(call.id, f"Спасибо за вашу оценку {rating}⭐!")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
     try: bot.edit_message_text(f"🙏 Спасибо за оценку {rating}⭐! Мы работаем для вас.", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     rating_data = db['ticket_ratings'].find_one({"thread_id": t_id})
     admin_name = rating_data["admin"] if rating_data else "Неизвестный герой"
     mood = "🎉 Отличная работа!" if rating in ['4', '5'] else "⚠️ Нужно обратить внимание."
         
     try: bot.send_message(STAFF_GROUP_ID, f"🌟 **Получена новая оценка!**\n\n👨‍💻 Админ: @{admin_name}\n⭐️ Оценка: **{rating} из 5**\n{mood}", message_thread_id=t_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == "force_unban")
 def handle_force_unban(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
@@ -451,17 +477,17 @@ def handle_force_unban(call):
         )
         markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
         bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     archive_collection.update_one({"target": str(target_uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Ручная)", "reason": "Вопрос решен админом"}}}, upsert=True)
     
     try: bot.edit_message_text(f"{call.message.html}\n\n🔓 <b>Пользователь разбанен!</b> Приказ передан Скайнету. Тикет закрыт: {ticket_num}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
     except: 
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
 @bot.message_handler(func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
@@ -482,7 +508,7 @@ def handle_give_cmd(message):
     args = message.text.split()
     if len(args) != 4:
         try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try:
@@ -494,41 +520,42 @@ def handle_give_cmd(message):
             paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
             bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
             try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
         elif currency in ['shards', 'осколки']:
             paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
             bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
             try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         else:
             bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
     except ValueError:
         try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     try:
         msg = bot.send_message(call.message.chat.id, "✍️ **Создание личного тега**\n\nПридумайте и напишите ваш новый статус (максимум 15 символов).\n_Внимание: Тег будет проверен модератором!_")
         bot.register_next_step_handler(msg, process_tag_input)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_tag_input(message):
     if message.text == '/start':
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
         
     tag_text = message.text.strip()
     if len(tag_text) > 15:
         try: bot.send_message(message.chat.id, "❌ **Слишком длинный тег!** Максимум 15 символов. Нажмите на кнопку в сообщении с выигрышем еще раз.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     uid = message.from_user.id
@@ -536,17 +563,17 @@ def process_tag_input(message):
     db['temp_tags'].update_one({"uid": uid}, {"$set": {"tag": tag_text, "name": name}}, upsert=True)
     
     try: bot.send_message(message.chat.id, f"⏳ Ваш тег **«{tag_text}»** отправлен на проверку администраторам. Ожидайте!")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     markup = InlineKeyboardMarkup(row_width=2).add(InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"), InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}"))
     try: bot.send_message(STAFF_GROUP_ID, f"👑 **ЗАПРОС НА КАСТОМНЫЙ ТЕГ**\n\n👤 От: {name} (`{uid}`)\n📝 Желаемый тег: **{tag_text}**\n\nОдобрить установку?", parse_mode="Markdown", reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
 def handle_admin_tag_decision(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     action = call.data.split('_')[2]
     target_uid = int(call.data.split('_')[3])
@@ -554,81 +581,85 @@ def handle_admin_tag_decision(call):
     tag_data = db['temp_tags'].find_one({"uid": target_uid})
     if not tag_data:
         try: bot.edit_message_text("❌ Данные устарели или уже обработаны.", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     tag_text = tag_data["tag"]
     if action == "ok":
         db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text}}, upsert=True)
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЕРДИКТ: ОДОБРЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"🎉 **Поздравляем!**\nВаш личный тег **«{tag_text}»** успешно одобрен и установлен во всех чатах сети!")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     elif action == "rej":
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ВЕРДИКТ: ОТКЛОНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Придумать другой тег", callback_data="claim_custom_tag"))
         try: bot.send_message(target_uid, f"❌ **Ваш тег «{tag_text}» был отклонен модератором.**\nПожалуйста, придумайте что-то другое, не нарушающее правила.", reply_markup=markup)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     db['temp_tags'].delete_one({"uid": target_uid})
 
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_premium')
 def handle_claim_premium(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     try:
         msg = bot.send_message(call.message.chat.id, "🎁 **Получение Telegram Premium**\n\nПожалуйста, напишите ваш @username или номер телефона (привязанный к Telegram), чтобы администратор смог отправить вам подарок:")
         bot.register_next_step_handler(msg, process_premium_claim)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_premium_claim(message):
     if message.text == '/start':
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
+        
     uid, name, username = message.from_user.id, message.from_user.first_name, f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Выдано", callback_data=f"prem_done_{uid}"))
     try:
         bot.send_message(STAFF_GROUP_ID, f"🏆 **СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)** 🏆\n\n👤 Победитель: {name} ({username})\n📝 Реквизиты для подарка:\n`{message.text}`\n\nАдмины, подарите подписку и закройте тикет!", reply_markup=markup)
         bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена администрации! С вами скоро свяжутся.")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prem_done_'))
 def handle_prem_done(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     target_uid = int(call.data.split('_')[2])
     try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫДАНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.send_message(target_uid, "🎉 Администрация подтвердила выдачу Telegram Premium! Наслаждайтесь!")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('use_arrest_'))
 def handle_use_arrest(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     code = call.data.split('_')[2]
     promo = db['promocodes'].find_one({"_id": code, "is_active": True, "used_count": 0})
     if not promo:
         try: bot.send_message(call.message.chat.id, "❌ Этот ордер уже был использован или не существует.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try:
         msg = bot.send_message(call.message.chat.id, f"🚓 **Использование Ордера: {code}**\n\nНапишите @username или ID пользователя, которого нужно отправить в мут на 1 час (и укажите причину):")
         bot.register_next_step_handler(msg, process_arrest_claim, code=code)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_arrest_claim(message, code):
     if message.text == '/start':
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
+        
     uid, name, username = message.from_user.id, message.from_user.first_name, f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
     db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
     
@@ -636,26 +667,98 @@ def process_arrest_claim(message, code):
     try:
         bot.send_message(STAFF_GROUP_ID, f"🚓 **ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)** 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: `{code}`\n🎯 Цель и причина:\n`{message.text}`\n\nАдмины, проверьте цель и выдайте мут на 1 час!", reply_markup=markup)
         bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('arrest_'))
 def handle_arrest_decision(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     parts = call.data.split('_')
     action = parts[1]
     
     if action == "done":
         target_uid = int(parts[2])
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ИСПОЛНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, "⚖️ Ваш ордер на арест успешно исполнен. Нарушитель наказан!")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     elif action == "rej":
         code, target_uid = parts[2], int(parts[3])
         db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": -1}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Код возвращен юзеру)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"❌ Администрация отклонила применение ордера (возможно, вы попытались замутить админа). Ваш ордер `{code}` снова активен!")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def analyze_video_speech(file_id, secret_code, thread_id):
+    """Фоновая задача для распознавания речи из кружка через Groq API"""
+    if not GROQ_API_KEY or secret_code == "Неизвестен":
+        return
+
+    temp_video_path = None
+    try:
+        # Уведомляем админов, что процесс пошел
+        bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет слушает кружок...*", message_thread_id=thread_id, parse_mode="Markdown")
+
+        # 1. Скачиваем кружок из Telegram
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        # 2. Сохраняем во временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+            temp_video.write(downloaded_file)
+            temp_video_path = temp_video.name
+
+        # 3. Отправляем в Groq Whisper
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+        
+        with open(temp_video_path, "rb") as audio_file:
+            files = {"file": ("video.mp4", audio_file, "video/mp4")}
+            data = {
+                "model": "whisper-large-v3", 
+                "language": "ru",
+                "response_format": "json"
+            }
+            response = requests.post(url, headers=headers, files=files, data=data)
+
+        # 4. Анализируем ответ
+        if response.status_code == 200:
+            text = response.json().get("text", "").lower()
+            
+            # Разбиваем секретный код (например "ЯБЛОКО-45" -> "яблоко" и "45")
+            parts = secret_code.lower().split('-')
+            word = parts[0]
+            num = parts[1] if len(parts) > 1 else ""
+
+            # Ищем ключевые слова
+            has_city = "город" in text
+            has_word = word in text
+            has_num = num in text
+
+            score = 0
+            if has_city: score += 20
+            if has_word: score += 40
+            if has_num: score += 40
+
+            # Формируем вердикт
+            if score >= 80:
+                verdict = f"✅ **Код подтвержден ({score}%)!**"
+            else:
+                verdict = f"⚠️ **Совпадение низкое ({score}%). Проверьте вручную.**"
+
+            msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+            bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+        else:
+            logger.error(f"Ошибка Groq API: {response.text}")
+            bot.send_message(STAFF_GROUP_ID, "⚠️ *Ошибка нейросети.* Проверьте кружок вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Ошибка при работе STT: {e}")
+    finally:
+        # 5. Надежно удаляем временный файл с диска сервера
+        if temp_video_path and os.path.exists(temp_video_path):
+            try:
+                os.remove(temp_video_path)
+            except: pass

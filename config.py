@@ -6,6 +6,9 @@ MONGO_URI = os.getenv('MONGO_URI')
 CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 APP_URL = os.getenv("APP_URL")
 PORT = int(os.environ.get('PORT', 5000))
+# Токен для нейросети STT (Groq)
+import os
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Проверка критических переменных при запуске
 if not BOT_TOKEN or not MONGO_URI:

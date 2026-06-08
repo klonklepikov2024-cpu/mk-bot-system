@@ -12,10 +12,8 @@ from utils.templates import NETWORK_LINKS
 # ================= ЧЕК-АУТ И ГЕНЕРАЦИЯ СЧЕТОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('checkout_'))
 def handle_checkout(call):
-    try:
-        bot.answer_callback_query(call.id)
-    except Exception as e:
-        logger.warning(f"Не удалось снять часики с checkout: {e}")
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
         
     parts = call.data.split('_')
     action = parts[1] # "promo", "pay", "partial", "balance"
@@ -25,57 +23,60 @@ def handle_checkout(call):
     # 1. Если юзер просто хочет оплатить
     if action == "pay":
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        except: pass
-        
+        except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
         try:
             bot.send_invoice(
                 call.message.chat.id, 
                 title=f"Оплата ({original_amount}⭐️)", 
                 description="Оплата услуг бота. После оплаты ограничения будут сняты.", 
                 invoice_payload=f"{target_type}_payment_{original_amount}", 
-                provider_token="", 
-                currency="XTR", 
+                provider_token="", currency="XTR", 
                 prices=[LabeledPrice(label="К оплате", amount=original_amount)]
             )
-        except Exception as e:
-            logger.error(f"Ошибка генерации инвойса (pay) для {call.from_user.id}: {e}")
+        except Exception as e: logger.error(f"Ошибка инвойса (pay): {e}")
         
     # 2. Если юзер нажал "Ввести промокод"
     elif action == "promo":
         try:
-            msg = bot.send_message(call.message.chat.id, "👇 **Введите ваш промокод ответом на это сообщение:**", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_promo_code, target_type=target_type, original_amount=original_amount, call_msg=call.message)
-        except Exception as e:
-            logger.warning(f"Ошибка запроса промокода: {e}")
+            bot.send_message(call.message.chat.id, "👇 **Введите ваш промокод ответом на это сообщение:**", parse_mode="Markdown")
+            # 🚀 FSM: Записываем состояние в базу (без next_step_handler)
+            db['user_states'].update_one(
+                {"uid": call.from_user.id},
+                {"$set": {
+                    "state": "waiting_promo",
+                    "target_type": target_type,
+                    "original_amount": original_amount,
+                    "call_msg_chat_id": call.message.chat.id,
+                    "call_msg_id": call.message.message_id
+                }},
+                upsert=True
+            )
+        except Exception as e: logger.warning(f"Ошибка запроса промокода: {e}")
 
     # 3. Смешанная оплата (Часть рублями, остаток Звездами)
     elif action == "partial":
         used_rubles = int(parts[4])
-        
         user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        
         if user_data.get("cashback_balance", 0) < used_rubles:
             try: bot.answer_callback_query(call.id, "❌ Ошибка: ваш рублевый баланс изменился!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             return
             
         remaining_stars = original_amount - (used_rubles // 2)
         if remaining_stars < 1: remaining_stars = 1
         
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        except: pass
-        
+        except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
         try:
             bot.send_invoice(
-                call.message.chat.id, 
-                title="Оплата штрафа (Смешанная)", 
+                call.message.chat.id, title="Оплата штрафа (Смешанная)", 
                 description=f"Штраф: {original_amount}⭐️\nСписано: {used_rubles}₽\nК доплате: {remaining_stars}⭐️", 
                 invoice_payload=f"finepartial_{original_amount}_{used_rubles}", 
-                provider_token="", 
-                currency="XTR", 
+                provider_token="", currency="XTR", 
                 prices=[LabeledPrice(label="К оплате", amount=remaining_stars)]
             )
-        except Exception as e:
-            logger.error(f"Ошибка генерации инвойса (partial) для {call.from_user.id}: {e}")
+        except Exception as e: logger.error(f"Ошибка инвойса (partial): {e}")
 
     # 4. Оплата полностью с внутреннего баланса
     elif action == "balance":
@@ -85,51 +86,48 @@ def handle_checkout(call):
         
         if current_balance < cost_rub:
             try: bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽, а у вас {current_balance}₽.", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             return
             
         paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
-        
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
         
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
         db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
-        
         archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
         
         user_data_full = paid_collection.find_one({"uid": call.from_user.id})
         if user_data_full and "thread_id" in user_data_full:
             try: bot.send_message(STAFF_GROUP_ID, f"🟢 **ЮЗЕР ОПЛАТИЛ ШТРАФ С БАЛАНСА ({cost_rub}₽)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             
         paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-        try:
-            bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-        except Exception as e:
-            logger.error(f"Не удалось отправить юзеру сообщение о разбане за баланс: {e}")
+        try: bot.send_message(call.message.chat.id, f"✅ **Оплата с баланса прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+        except Exception as e: logger.error(f"Не удалось отправить юзеру сообщение о разбане за баланс: {e}")
 
-def process_promo_code(message, target_type, original_amount, call_msg):
+# 🔥 ИСПРАВЛЕНО: Функция теперь принимает ID чата и ID сообщения
+def process_promo_code(message, target_type, original_amount, call_msg_chat_id, call_msg_id):
     if message.text == '/start':
+        from handlers.start_menu import send_welcome
         send_welcome(message)
         return
 
-    try: bot.edit_message_reply_markup(call_msg.chat.id, call_msg.message_id, reply_markup=None)
-    except: pass
+    # Удаляем часики со старого сообщения, используя сохраненные ID
+    try: bot.edit_message_reply_markup(call_msg_chat_id, call_msg_id, reply_markup=None)
+    except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
     
     promo_text = message.text.strip().upper()
     promo_data = db['promocodes'].find_one({"_id": promo_text})
     
-    # Функция для отправки счета без скидки, если код не подошел
     def send_full_invoice(error_msg):
         try:
             bot.send_message(message.chat.id, error_msg)
             bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[LabeledPrice(label="К оплате", amount=original_amount)])
-        except Exception as e:
-            logger.warning(f"Ошибка выставления инвойса после неверного промо: {e}")
+        except Exception as e: logger.warning(f"Ошибка выставления инвойса: {e}")
 
     if not promo_data or not promo_data.get("is_active"):
         send_full_invoice("❌ Промокод не найден или уже недействителен. Выставляем полный счет.")
@@ -146,29 +144,23 @@ def process_promo_code(message, target_type, original_amount, call_msg):
     discount = promo_data["value"]
     new_amount = original_amount
     
-    if promo_data["type"] == "percent":
-        new_amount = int(original_amount * (1 - discount / 100))
-    elif promo_data["type"] == "fixed":
-        new_amount = original_amount - discount
+    if promo_data["type"] == "percent": new_amount = int(original_amount * (1 - discount / 100))
+    elif promo_data["type"] == "fixed": new_amount = original_amount - discount
         
-    if new_amount < 1:
-        new_amount = 1 
+    if new_amount < 1: new_amount = 1 
         
     db['promocodes'].update_one({"_id": promo_text}, {"$inc": {"used_count": 1}})
     
     try:
         bot.send_message(message.chat.id, f"✅ **Промокод успешно применен!**\nСкидка составила {original_amount - new_amount}⭐️. Счет пересчитан.", parse_mode="Markdown")
         bot.send_invoice(
-            message.chat.id, 
-            title=f"Оплата со скидкой ({new_amount}⭐️)", 
+            message.chat.id, title=f"Оплата со скидкой ({new_amount}⭐️)", 
             description="Оплата услуг бота с учетом промокода.", 
             invoice_payload=f"{target_type}_payment_{new_amount}", 
-            provider_token="", 
-            currency="XTR", 
+            provider_token="", currency="XTR", 
             prices=[LabeledPrice(label="К оплате", amount=new_amount)]
         )
-    except Exception as e:
-        logger.error(f"Ошибка выставления инвойса СО СКИДКОЙ: {e}")
+    except Exception as e: logger.error(f"Ошибка выставления инвойса СО СКИДКОЙ: {e}")
 
 # ================= ПРИЕМ ПЛАТЕЖЕЙ TELEGRAM STARS =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -223,9 +215,9 @@ def successful_payment(message):
         if user_data and "thread_id" in user_data:
             thread_id = user_data["thread_id"]
             try: bot.send_message(STAFF_GROUP_ID, f"🤑 **ЮЗЕР ОПЛАТИЛ ШТРАФ ({amount}⭐️)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
 
         paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
@@ -254,9 +246,9 @@ def successful_payment(message):
         user_data = paid_collection.find_one({"uid": uid})
         if user_data and "thread_id" in user_data:
             try: bot.send_message(STAFF_GROUP_ID, f"🤑 **СМЕШАННАЯ ОПЛАТА!**\nЮзер доплатил {amount}⭐️ и списал {used_rubles}₽. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data["thread_id"], parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             try: bot.close_forum_topic(STAFF_GROUP_ID, user_data["thread_id"])
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             
         paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
         try:
@@ -314,7 +306,7 @@ def handle_bank_check(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('shop_points_buy_'))
 def handle_shop_buy(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
     parts = call.data.split('_')
     points = int(parts[3])
     price = int(parts[4])
@@ -334,7 +326,7 @@ def handle_shop_buy(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'shop_points_menu')
 def handle_shop_menu(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
     
     # Имитируем команду /start shop, чтобы открыть витрину
     call.message.from_user = call.from_user

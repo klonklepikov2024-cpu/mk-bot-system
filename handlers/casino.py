@@ -92,42 +92,37 @@ def handle_casino_spin(message):
         sent_dice = bot.send_dice(message.chat.id, emoji='🎰')
         val = sent_dice.dice.value # Телеграм сам генерирует честный рандом (1-64)
 
-        # 3. НАДЕЖНЫЙ ЗАПУСК ФОНОВОЙ ЗАДАЧИ (через 2.2 секунды по МСК)
+        # 3. НАДЕЖНЫЙ ЗАПУСК ФОНОВОЙ ЗАДАЧИ
         tz = ZoneInfo("Europe/Moscow")
         run_time = datetime.datetime.now(tz) + datetime.timedelta(seconds=2.2)
         scheduler.add_job(
             process_spin_result, 
             'date', 
             run_date=run_time, 
-            args=[message, sent_dice, val, uid]
+            args=[message.chat.id, message.from_user.username, sent_dice.message_id, val, uid] # Передаем ID вместо объектов
         )
     except Exception as e:
         logger.error(f"Не удалось запустить рулетку для {uid}: {e}")
         # Возвращаем деньги, если бросок сломался
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": SPIN_PRICE}})
 
-def process_spin_result(message, sent_dice, val, uid):
-    # time.sleep(2.2) — УДАЛЕН! Планировщик сам вызвал функцию вовремя.
-    
+def process_spin_result(chat_id, username, dice_msg_id, val, uid): # Изменили аргументы
     user_data = paid_collection.find_one({"uid": uid}) or {}
     points = user_data.get("bounty_points", 0)
     pm_msg = None
     pm_markup = None
 
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
-    premium_cost_stars = 1500 # Цена 3-х месяцев премиума в звездах
+    premium_cost_stars = 1500 
 
-    # 1. 🏆 СУПЕР-ПРИЗ: TELEGRAM PREMIUM (Шанс 1 из 64 — val: 63)
     if val == 63:
         if bank_data.get("balance", 0) >= premium_cost_stars:
             db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
-            
             msg = f"🏆 **ГЛАВНЫЙ СУПЕР-ПРИЗ!!!** 🏆\n\nНевероятно! Барабан остановился на счастливой звезде!\n🎁 **Приз:** Telegram Premium на 3 месяца!\n\n_🎁 Инструкция отправлена в ЛС!_"
-            
             pm_msg = f"💎 **ВЫ ВЫИГРАЛИ TELEGRAM PREMIUM (3 мес.)!** 💎\n\nНажмите кнопку ниже, чтобы забрать ваш приз напрямую у администрации!"
             pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎁 Забрать Premium", callback_data="claim_premium"))
             
-            try: bot.send_message(STAFF_GROUP_ID, f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ!** 🚨\n\nПользователь `{uid}` (@{message.from_user.username}) выбил **TELEGRAM PREMIUM**! Фонд казино списан.")
+            try: bot.send_message(STAFF_GROUP_ID, f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ!** 🚨\n\nПользователь `{uid}` (@{username}) выбил **TELEGRAM PREMIUM**! Фонд казино списан.") # Использовали username
             except Exception as e: logger.error(f"Не удалось уведомить админов о премиуме: {e}")
         else:
             val = 999 
@@ -239,10 +234,10 @@ def process_spin_result(message, sent_dice, val, uid):
         code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True})
         
-        if drop['target'] == 'vip': instruction = "📖 **Как применить:** Перейдите в @Elitepost_bot -> «Вступить в VIP чат». После одобрения кружка, при выставлении счета нажмите **«🎫 У меня есть промокод»**."
-        elif drop['target'] == 'ads': instruction = "📖 **Как применить:** В боте публикации рекламы @PostGoldBot_bot начните создавать объявление. Выберите сеть, город и отправьте текст. Бот выдаст меню тарифов — нажмите в нём **«🎫 У меня есть промокод»**."
+        if drop['target'] == 'vip': instruction = "📖 **Как применить:** Перейдите в @Elitepost\\_bot -> «Вступить в VIP чат». После одобрения кружка, при выставлении счета нажмите **«🎫 У меня есть промокод»**."
+        elif drop['target'] == 'ads': instruction = "📖 **Как применить:** В боте публикации рекламы @PostGoldBot\\_bot начните создавать объявление. Выберите сеть, город и отправьте текст. Бот выдаст меню тарифов — нажмите в нём **«🎫 У меня есть промокод»**."
         elif drop['target'] == 'fine': instruction = "📖 **Как применить:** При обращении в Службу Поддержки за разбаном, администратор выставит вам счет на оплату штрафа. Нажмите кнопку **«🎫 У меня есть промокод»** под счетом."
-        else: instruction = "📖 **Как применить:** Это универсальный код! Нажмите **«🎫 У меня есть промокод»** при оплате любого штрафа через администратора в боте @FAQMKBOT, рекламы @PostGoldBot_bot или VIP-статуса @Elitepost_bot ."
+        else: instruction = "📖 **Как применить:** Это универсальный код! Нажмите **«🎫 У меня есть промокод»** при оплате любого штрафа через администратора в боте @FAQMKBOT, рекламы @PostGoldBot\\_bot или VIP-статуса @Elitepost\\_bot ."
 
         msg = f"✨ **РЕДКИЙ ДРОП!**\n\n🎁 **Ваш приз:** Скидка {drop['name']}!\n_🎁 Промокод отправлен вам в ЛС!_"
         pm_msg = f"✨ **Ваш выигрыш из рулетки!**\n\n🎫 {drop['name']}\nВаш код: `{code}`\n\n{instruction}"
@@ -262,13 +257,12 @@ def process_spin_result(message, sent_dice, val, uid):
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_won}})
         msg = f"🧩 *Барабан остановился...*\n\nВы нашли: **+{shards_won} Осколок Джекпота**!\n_Соберите 50 штук в кабинете для супер-приза._"
 
-    # Отвечаем в чате, где крутили рулетку
     try:
-        bot.reply_to(sent_dice, msg, parse_mode="Markdown")
+        # Отвечаем на кружок рулетки, используя ID чата и ID сообщения
+        bot.send_message(chat_id, msg, reply_to_message_id=dice_msg_id, parse_mode="Markdown")
     except Exception as e:
         logger.warning(f"Не удалось ответить на рулетку в чате: {e}")
     
-    # Отправляем секретные коды и кнопки в ЛС
     if pm_msg:
         try:
             if pm_markup:
@@ -278,5 +272,5 @@ def process_spin_result(message, sent_dice, val, uid):
         except Exception as e:
             logger.warning(f"Не удалось отправить приз в ЛС юзеру {uid}: {e}")
             try:
-                bot.send_message(message.chat.id, f"⚠️ @{message.from_user.username}, я не смог отправить вам приз в ЛС. Напишите мне в личные сообщения /start!", parse_mode="Markdown")
+                bot.send_message(chat_id, f"⚠️ @{username}, я не смог отправить вам приз в ЛС. Напишите мне в личные сообщения /start!", parse_mode="Markdown") # Использовали username и chat_id
             except: pass
