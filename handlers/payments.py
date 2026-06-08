@@ -8,7 +8,6 @@ from config import STAFF_GROUP_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
 from utils.templates import NETWORK_LINKS
-from handlers.start_menu import send_welcome
 
 # ================= ЧЕК-АУТ И ГЕНЕРАЦИЯ СЧЕТОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('checkout_'))

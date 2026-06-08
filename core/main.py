@@ -7,18 +7,21 @@ from core.bot import bot
 from core.scheduler import start_scheduler
 from utils.logger import logger
 
-# Импорт хэндлеров
-import handlers.start_menu
+# Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
 import handlers.security
 import handlers.admin
 import handlers.casino
 import handlers.payments
+import handlers.start_menu # <--- ГЛАВНОЕ МЕНЮ ВСЕГДА В САМОМ НИЗУ!
 
 app = Flask(__name__)
 
+# Флаг для одноразового запуска внутри воркера Gunicorn
+is_setup_done = False
+
 def setup():
-    """Настройка бота перед запуском сервера"""
-    start_scheduler() # Запускаем фоновые задачи!
+    """Настройка бота (выполняется внутри воркера)"""
+    start_scheduler() # Моторчик запустится там, где нужно!
     
     try:
         bot.remove_webhook()
@@ -27,9 +30,15 @@ def setup():
     except Exception as e:
         logger.error(f"❌ Ошибка установки вебхука: {e}")
 
-# 🔥 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: 
-# Вызываем setup() на уровне модуля, чтобы Gunicorn выполнил его при старте.
-setup()
+# 🔥 ГЛАВНАЯ МАГИЯ ЗДЕСЬ 🔥
+# Запускаем setup() только в момент первого пинга от сервера.
+# Теперь планировщик будет жить внутри рабочего процесса!
+@app.before_request
+def initialize_worker():
+    global is_setup_done
+    if not is_setup_done:
+        setup()
+        is_setup_done = True
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -50,4 +59,5 @@ def ping():
 if __name__ == '__main__':
     # Этот блок теперь используется только для локального тестирования
     logger.info("🚀 Бот Секретарь запускается локально...")
+    setup()
     app.run(host='0.0.0.0', port=PORT)

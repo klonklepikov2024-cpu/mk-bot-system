@@ -8,7 +8,6 @@ from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
 from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
-from handlers.start_menu import send_welcome
 
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private' and not (message.text and message.text.startswith('/')), content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])

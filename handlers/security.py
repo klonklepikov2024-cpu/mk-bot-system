@@ -6,7 +6,6 @@ from core.bot import bot
 from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 from database.mongo import paid_collection, db
 from utils.logger import logger
-from handlers.start_menu import send_welcome # Импортируем для возврата в главное меню
 
 # ================= МЕНЮ СЛУЖБЫ БЕЗОПАСНОСТИ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('sec_'))
@@ -19,6 +18,9 @@ def handle_security_menu(call):
     if call.data == "sec_back_main":
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception as e: logger.warning(f"Не удалось удалить сообщение sec_back_main: {e}")
+        
+        # 🔥 ЛОКАЛЬНЫЙ ИМПОРТ (Вставляем прямо перед вызовом)
+        from handlers.start_menu import send_welcome
         send_welcome(call.message)
         
     elif call.data == "sec_submit_report":
