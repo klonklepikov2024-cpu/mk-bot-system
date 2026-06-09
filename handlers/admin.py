@@ -155,7 +155,10 @@ def handle_doc_check(call):
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return 
+    if not user_data: 
+        try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
+        except: pass
+        return 
     target_uid = user_data["uid"]
         
     if call.data == 'doc_ok':
@@ -187,7 +190,10 @@ def handle_admin_templates(call):
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return
+    if not user_data: 
+        try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
+        except: pass
+        return
     target_uid = user_data["uid"]
 
     if call.data == 'fine_custom':
@@ -281,7 +287,10 @@ def handle_vid_check(call):
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return 
+    if not user_data: 
+        try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
+        except: pass
+        return 
     target_uid = user_data["uid"]
         
     if call.data == 'vid_ok':
@@ -334,7 +343,10 @@ def handle_rejections(call):
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return 
+    if not user_data: 
+        try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
+        except: pass
+        return 
     target_uid = user_data["uid"]
         
     reasons_user = {
@@ -417,7 +429,10 @@ def handle_close_ticket(call):
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return 
+    if not user_data: 
+        try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
+        except: pass
+        return 
     target_uid = user_data["uid"]
         
     markup = InlineKeyboardMarkup(row_width=5).add(
@@ -469,7 +484,10 @@ def handle_force_unban(call):
         
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return
+    if not user_data: 
+        try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
+        except: pass
+        return
     target_uid = user_data["uid"]
     
     now = datetime.datetime.now()
@@ -505,7 +523,11 @@ def handle_force_unban(call):
 def handle_admin_replies(message):
     thread_id = message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
-    if not user_data: return
+    
+    if not user_data: 
+        # Если админ пишет в уже закрытый топик — бот просто молча игнорирует это
+        return
+        
     target_uid = user_data["uid"]
 
     paid_collection.update_one({"uid": target_uid}, {"$set": {"topic_type": "manual"}})
@@ -558,6 +580,11 @@ def handle_claim_tag(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_tag_input(message):
+    if not message.text:
+        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
+        bot.register_next_step_handler(msg, process_tag_input)
+        return
+        
     if message.text == '/start':
         from handlers.start_menu import send_welcome
         send_welcome(message)
@@ -577,7 +604,7 @@ def process_tag_input(message):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     markup = InlineKeyboardMarkup(row_width=2).add(InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"), InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}"))
-    try: bot.send_message(STAFF_GROUP_ID, f"👑 **ЗАПРОС НА КАСТОМНЫЙ ТЕГ**\n\n👤 От: {name} (`{uid}`)\n📝 Желаемый тег: **{tag_text}**\n\nОдобрить установку?", parse_mode="Markdown", reply_markup=markup)
+    try: bot.send_message(STAFF_GROUP_ID, f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ</b>\n\n👤 От: {name} (<code>{uid}</code>)\n📝 Желаемый тег: <b>{tag_text}</b>\n\nОдобрить установку?", parse_mode="HTML", reply_markup=markup)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
@@ -623,6 +650,11 @@ def handle_claim_premium(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_premium_claim(message):
+    if not message.text:
+        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
+        bot.register_next_step_handler(msg, process_tag_input)
+        return
+        
     if message.text == '/start':
         from handlers.start_menu import send_welcome
         send_welcome(message)
@@ -631,7 +663,7 @@ def process_premium_claim(message):
     uid, name, username = message.from_user.id, message.from_user.first_name, f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Выдано", callback_data=f"prem_done_{uid}"))
     try:
-        bot.send_message(STAFF_GROUP_ID, f"🏆 **СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)** 🏆\n\n👤 Победитель: {name} ({username})\n📝 Реквизиты для подарка:\n`{message.text}`\n\nАдмины, подарите подписку и закройте тикет!", reply_markup=markup)
+        bot.send_message(STAFF_GROUP_ID, f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)</b> 🏆\n\n👤 Победитель: {name} ({username})\n📝 Реквизиты для подарка:\n<code>{message.text}</code>\n\nАдмины, подарите подписку и закройте тикет!", parse_mode="HTML", reply_markup=markup)
         bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена администрации! С вами скоро свяжутся.")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
@@ -666,6 +698,11 @@ def handle_use_arrest(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_arrest_claim(message, code):
+    if not message.text:
+        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
+        bot.register_next_step_handler(msg, process_tag_input)
+        return
+        
     if message.text == '/start':
         from handlers.start_menu import send_welcome
         send_welcome(message)
@@ -676,7 +713,7 @@ def process_arrest_claim(message, code):
     
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}"))
     try:
-        bot.send_message(STAFF_GROUP_ID, f"🚓 **ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)** 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: `{code}`\n🎯 Цель и причина:\n`{message.text}`\n\nАдмины, проверьте цель и выдайте мут на 1 час!", reply_markup=markup)
+        bot.send_message(STAFF_GROUP_ID, f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{message.text}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", parse_mode="HTML", reply_markup=markup)
         bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
@@ -816,7 +853,7 @@ def analyze_document_vision(file_id, thread_id):
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # 2. Переводим картинку в формат Base64 (текстовый код картинки), чтобы нейросеть ее поняла
+        # 2. Переводим картинку в формат Base64
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
 
         # 3. Отправляем в бесплатную Vision-модель от Groq
@@ -826,7 +863,6 @@ def analyze_document_vision(file_id, thread_id):
             "Content-Type": "application/json"
         }
         
-        # Инструкция для ИИ
         prompt = (
             "Ты строгий ИИ-помощник модератора. Это фотография документа для подтверждения возраста (паспорт, права и т.д.). "
             "Ответь очень кратко по пунктам:\n"
@@ -838,7 +874,7 @@ def analyze_document_vision(file_id, thread_id):
         )
 
         data = {
-            "model": "llama-3.2-90b-vision-preview", # Мощнейшая модель с компьютерным зрением
+            "model": "llama-3.2-90b-vision-preview", 
             "messages": [
                 {
                     "role": "user",
@@ -848,7 +884,7 @@ def analyze_document_vision(file_id, thread_id):
                     ]
                 }
             ],
-            "temperature": 0.2 # Делаем ИИ максимально серьезным и не фантазирующим
+            "temperature": 0.2
         }
 
         response = requests.post(url, headers=headers, json=data)
@@ -857,9 +893,22 @@ def analyze_document_vision(file_id, thread_id):
         if response.status_code == 200:
             ai_text = response.json()["choices"][0]["message"]["content"]
             msg = f"👁 **Анализ документа (Vision AI):**\n\n{ai_text}"
-            bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+            
+            # 🔥 СТРАХОВКА ОТ ПОЛОМКИ MARKDOWN 🔥
+            try:
+                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+            except Exception as markdown_err:
+                logger.warning(f"Ошибка разметки Markdown в Vision AI: {markdown_err}")
+                # Если Markdown сломался — шлем чистым текстом, чтобы бот не висел!
+                clean_msg = f"👁 Анализ документа (Vision AI):\n\n{ai_text}"
+                bot.send_message(STAFF_GROUP_ID, clean_msg, message_thread_id=thread_id)
         else:
             logger.error(f"Ошибка Vision API: {response.text}")
+            bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ошибка сервера нейросети (Код {response.status_code}).* Проверьте вручную.", message_thread_id=thread_id, parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"Ошибка при работе Vision AI: {e}")
+        # Выводим ошибку прямо в чат, чтобы сразу видеть, в чем дело
+        try:
+            bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        except: pass
