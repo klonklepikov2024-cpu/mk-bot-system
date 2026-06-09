@@ -858,6 +858,15 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                 msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
                 bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
 
+    except Exception as e:
+        logger.error(f"Ошибка STT (Голос ИИ): {e}")
+        try: bot.send_message(STAFF_GROUP_ID, "❌ *Ошибка Скайнета при прослушивании видео.* Проверьте кружок вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        except: pass
+    finally:
+        # Обязательно удаляем временный файл с сервера, чтобы не забить диск!
+        if temp_video_path and os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+
 def check_face_in_thumbnail(thumb_file_id):
     """Отправляет превью видео в Vision AI для поиска лица"""
     if not GROQ_API_KEY or not thumb_file_id: return False
