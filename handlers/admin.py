@@ -804,70 +804,53 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
             if has_word: score += 40
             if has_num: score += 40
 
-            # === ЛОГИКА ДВОЙНОГО КОНТРОЛЯ ===
+            # === ЛОГИКА ОДИНАРНОГО КОНТРОЛЯ (ТОЛЬКО ТЕКСТ) ===
             if score >= 80:
-                # 1. Текст совпал. Проверяем лицо!
-                has_face = check_face_in_thumbnail(thumb_file_id)
+                # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ (ПРОВЕРКА ЛИЦА ОТКЛЮЧЕНА)
+                verdict = f"✅ **Код подтвержден ({score}%)! Автоматическое одобрение.**\n_👀 Админы, проверьте наличие лица визуально. Если юзер закрыл камеру — выдайте бан вручную!_"
+                msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
                 
-                if has_face:
-                    # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ И ЛИЦО ЕСТЬ
-                    verdict = f"✅ **Код подтвержден ({score}%) и лицо найдено! Автоматическое одобрение.**"
-                    msg = f"🤖 **Нейросеть Скайнета (Двойной контроль):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
-                    bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-                    
-                    now = datetime.datetime.now()
-                    ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
-                    
-                    # Приказ Скайнету и запись в базу
-                    db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
-                    db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
-                    db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
-                    
-                    # Уведомление пользователя
-                    try:
-                        bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-                        markup = InlineKeyboardMarkup(row_width=5).add(
-                            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-                            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
-                            InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
-                        )
-                        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-                        bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
-                    except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
-                    
-                    archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
-                    
-                    # Убираем кнопки с видео в админке
-                    if video_msg_id:
-                        try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
-                        except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
-                    
-                    # Закрываем топик
-                    try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
-                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-                    try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-                    except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
-                    
-                    paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-                    
-                else:
-                    # ❌ ПАЛЕВО: ТЕКСТ ВЕРНЫЙ, А ЛИЦА НЕТ (ЧЕРНЫЙ ЭКРАН / ПАЛЕЦ)
-                    verdict = f"⚠️ **ВНИМАНИЕ! Текст совпал ({score}%), НО ЛИЦО НЕ ОБНАРУЖЕНО! Возможна попытка обмана (закрытая камера).** Требуется ручная проверка."
-                    msg = f"🤖 **Нейросеть Скайнета (Двойной контроль):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
-                    bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-                    
+                now = datetime.datetime.now()
+                ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+                
+                # Приказ Скайнету и запись в базу
+                db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+                db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
+                db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
+                
+                # Уведомление пользователя
+                try:
+                    bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+                    markup = InlineKeyboardMarkup(row_width=5).add(
+                        InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                        InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                        InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
+                    )
+                    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+                    bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+                except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
+                
+                archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
+                
+                # Убираем кнопки с видео в админке
+                if video_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
+                    except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
+                
+                # Закрываем топик
+                try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
+                
+                paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+                
             else:
-                # Если совпадение текста меньше 80%, тоже оставляем админам
+                # Если совпадение текста меньше 80%, оставляем админам
                 verdict = f"⚠️ **Совпадение текста низкое ({score}%). Требуется ручная проверка.**"
                 msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
                 bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-
-    except Exception as e:
-        logger.error(f"Ошибка при работе STT: {e}")
-    finally:
-        if temp_video_path and os.path.exists(temp_video_path):
-            try: os.remove(temp_video_path)
-            except: pass
 
 def check_face_in_thumbnail(thumb_file_id):
     """Отправляет превью видео в Vision AI для поиска лица"""
