@@ -1,3 +1,5 @@
+import time
+from telebot.apihelper import ApiTelegramException
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from config import STAFF_GROUP_ID
@@ -107,7 +109,19 @@ def handle_user_query(call):
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
             else:
-                topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
+                # 🔥 Бронебойное создание топика с защитой от ошибки 429 🔥
+                try:
+                    topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
+                except ApiTelegramException as e:
+                    if e.error_code == 429:
+                        # Телеграм просит подождать. Достаем время из ответа (обычно 3-5 сек)
+                        retry_after = e.result_json.get('parameters', {}).get('retry_after', 3)
+                        time.sleep(retry_after + 0.5) # Спим указанное время + полсекунды
+                        # Пробуем создать топик еще раз после паузы
+                        topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
+                    else:
+                        raise e # Если ошибка другая, пропускаем её дальше
+
                 thread_id = topic.message_thread_id
                 paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}}, upsert=True)
                 caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
