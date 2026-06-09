@@ -991,12 +991,13 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         
         is_hard_ban = False
         is_specific_mute = False
+        is_basic_mute = False # 🔥 Добавили новый флаг для обычных мутов
 
         if user_record and "history" in user_record:
             recent_history = user_record["history"][-3:] # Хронология сохранена
             dossier = "\n".join([f"- {e['date']}: {e['action']} ({e.get('reason', 'Не указана')})" for e in recent_history])
             
-            # 🔥 Анализируем только САМОЕ СВЕЖЕЕ действие (последнее в списке)
+            # Анализируем только САМОЕ СВЕЖЕЕ действие (последнее в списке)
             if recent_history:
                 last_event = recent_history[-1]
                 action_text = str(last_event.get('action', '')).upper()
@@ -1007,18 +1008,22 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                     # Проверяем жесткий бан (или тяжелую причину)
                     if "БАН" in action_text or "BAN" in action_text or any(w in reason_text for w in ["НАРК", "NARK", "СПАМ", "ФЛУД"]):
                         is_hard_ban = True
-                    # Проверяем муты/ограничения (МП, БИО, и т.д.)
+                    # Проверяем муты/ограничения
                     elif "МУТ" in action_text or "MUTE" in action_text or "ОГРАНИЧЕНИЕ" in action_text:
-                        is_specific_mute = True
+                        # 🔥 Отделяем обычный мут от специфического
+                        if "ПАРАМЕТРОВ" in reason_text or "ФОРМАТ" in reason_text:
+                            is_basic_mute = True
+                        else:
+                            is_specific_mute = True
 
         # 2. СИСТЕМНЫЕ АЛЕРТЫ (ЖЕСТКАЯ ИЕРАРХИЯ ПРИОРИТЕТОВ)
         system_alert = ""
         if is_hard_ban:
             system_alert = "\n🚨 КРИТИЧЕСКИ ВАЖНО: У пользователя АКТИВНЫЙ БАН или тяжелое нарушение (Наркотики/Спам)! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдавать автоматическую верификацию. Твоя ЕДИНСТВЕННАЯ задача — перевести диалог на человека (выбери действие transfer_to_human)."
         elif is_specific_mute:
-            system_alert = "\n⚠️ ВНИМАНИЕ: У пользователя активный МУТ или ограничение (например, за МП, БИО). Изучи досье и выдай СООТВЕТСТВУЮЩИЙ ШАБЛОН (например, tpl_mp, tpl_bio или transfer_to_human). ЗАПРЕЩЕНО выдавать базовую верификацию (tpl_verif)!"
-        elif int(uid) > 7800000000:
-            system_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это новый аккаунт Telegram (ID > 7.8 млрд). Он находится в карантине от спама. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
+            system_alert = "\n⚠️ ВНИМАНИЕ: У пользователя активный МУТ за специфическое нарушение (например, МП, БИО). Изучи досье и выдай СООТВЕТСТВУЮЩИЙ ШАБЛОН (например, tpl_mp, tpl_bio или transfer_to_human). ЗАПРЕЩЕНО выдавать базовую верификацию (tpl_verif)!"
+        elif is_basic_mute or int(uid) > 7800000000:
+            system_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это базовый системный мут (нет параметров) или новый аккаунт. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
 
         # 3. Формируем инструкцию
         prompt = f"""Ты строгий ИИ-модератор поддержки. Проанализируй сообщение пользователя и выбери одно действие.
