@@ -134,12 +134,14 @@ def handle_user_messages(message):
 
             # Проверка таймера
             verif_timer = user_data.get("verif_timer")
-            if verif_timer: # <--- ДОБАВЛЕНО УСЛОВИЕ
+            is_expired = False
+            if verif_timer:
                 time_diff = (datetime.datetime.now() - verif_timer).total_seconds()
+                paid_collection.update_one({"uid": uid}, {"$unset": {"verif_timer": ""}}) # Снимаем таймер
                 if time_diff > 300:
-                    bot.send_message(uid, "❌ **Время вышло!** Вы не уложились в 5 минут. Ожидайте решения администратора.")
-                    bot.send_message(STAFF_GROUP_ID, "⚠️ **ВНИМАНИЕ! Юзер просрочил таймер.**", message_thread_id=thread_id)
-                paid_collection.update_one({"uid": uid}, {"$unset": {"verif_timer": ""}})
+                    is_expired = True
+                    bot.send_message(uid, "❌ **Время вышло!** Вы не уложились в 5 минут. Ожидайте ручной проверки администратором.")
+                    bot.send_message(STAFF_GROUP_ID, "⚠️ **ВНИМАНИЕ! Юзер просрочил таймер. Автоматическая проверка отключена.**", message_thread_id=thread_id)
             
             # Получаем код для вывода админам
             secret_code = user_data.get("secret_code", "Неизвестен")
@@ -151,6 +153,10 @@ def handle_user_messages(message):
             
             sent_video = bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
             bot.send_message(STAFF_GROUP_ID, f"🎥 **Пользователь прислал кружок!**\n\n🗣 **ОН ДОЛЖЕН СКАЗАТЬ:**\n_{secret_code}_", message_thread_id=thread_id, parse_mode="Markdown")
+
+            # 🛑 ЖЕСТКИЙ СТОП: Если таймер вышел, видео уходит админам, но ИИ его НЕ слушает!
+            if is_expired:
+                return 
 
             # 🔥 ПЕРЕДАЕМ ПРЕВЬЮШКУ В ФУНКЦИЮ ИИ 🔥
             threading.Thread(
@@ -970,23 +976,38 @@ def process_ticket_with_ai(uid, user_text, thread_id):
     if not GROQ_API_KEY: return
 
     try:
-        # 1. Собираем досье и проверяем наличие банов
+        # 1. Собираем досье и анализируем ПОСЛЕДНЕЕ действие
         user_record = archive_collection.find_one({"target": str(uid)})
         dossier = "История чиста."
-        has_recent_ban = False
+        
+        is_hard_ban = False
+        is_specific_mute = False
 
         if user_record and "history" in user_record:
-            recent_history = user_record["history"][-3:]
+            recent_history = user_record["history"][-3:] # Хронология сохранена
             dossier = "\n".join([f"- {e['date']}: {e['action']} ({e.get('reason', 'Не указана')})" for e in recent_history])
             
-            # Ищем слово "БАН" в последних действиях юзера
-            if any("БАН" in str(e.get('action', '')).upper() for e in recent_history):
-                has_recent_ban = True
+            # 🔥 Анализируем только САМОЕ СВЕЖЕЕ действие (последнее в списке)
+            if recent_history:
+                last_event = recent_history[-1]
+                action_text = str(last_event.get('action', '')).upper()
+                reason_text = str(last_event.get('reason', '')).upper()
+                
+                # Исключаем ложные срабатывания на разбаны и амнистии
+                if "РАЗБАН" not in action_text and "РАЗМУТ" not in action_text and "СНЯТИЕ" not in action_text:
+                    # Проверяем жесткий бан (или тяжелую причину)
+                    if "БАН" in action_text or "BAN" in action_text or any(w in reason_text for w in ["НАРК", "NARK", "СПАМ", "ФЛУД"]):
+                        is_hard_ban = True
+                    # Проверяем муты/ограничения (МП, БИО, и т.д.)
+                    elif "МУТ" in action_text or "MUTE" in action_text or "ОГРАНИЧЕНИЕ" in action_text:
+                        is_specific_mute = True
 
-        # 2. СИСТЕМНЫЕ АЛЕРТЫ (ПРИОРИТЕТ БАНА НАД НОВОРЕГОМ)
+        # 2. СИСТЕМНЫЕ АЛЕРТЫ (ЖЕСТКАЯ ИЕРАРХИЯ ПРИОРИТЕТОВ)
         system_alert = ""
-        if has_recent_ban:
-            system_alert = "\n🚨 КРИТИЧЕСКИ ВАЖНО: В досье пользователя есть активный или недавний БАН! Тебе КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдавать ему автоматическую верификацию. Твоя единственная задача — перевести диалог на человека (выбери действие transfer_to_human)."
+        if is_hard_ban:
+            system_alert = "\n🚨 КРИТИЧЕСКИ ВАЖНО: У пользователя АКТИВНЫЙ БАН или тяжелое нарушение (Наркотики/Спам)! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдавать автоматическую верификацию. Твоя ЕДИНСТВЕННАЯ задача — перевести диалог на человека (выбери действие transfer_to_human)."
+        elif is_specific_mute:
+            system_alert = "\n⚠️ ВНИМАНИЕ: У пользователя активный МУТ или ограничение (например, за МП, БИО). Изучи досье и выдай СООТВЕТСТВУЮЩИЙ ШАБЛОН (например, tpl_mp, tpl_bio или transfer_to_human). ЗАПРЕЩЕНО выдавать базовую верификацию (tpl_verif)!"
         elif int(uid) > 7800000000:
             system_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это новый аккаунт Telegram (ID > 7.8 млрд). Он находится в карантине от спама. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
 
