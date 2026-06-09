@@ -109,18 +109,30 @@ def handle_user_messages(message):
           
         # КРУЖКИ
         elif message.content_type == 'video_note':
-            # --- НОВАЯ ЗАЩИТА ---
-            # 1. Запрет пересылки (попытка подсунуть старый или чужой кружок)
-            if message.forward_date or getattr(message, 'forward_from', None) or getattr(message, 'forward_from_chat', None):
-                bot.send_message(uid, "❌ **Ошибка:** Пересланные видео-кружки не принимаются! Запишите его прямо сейчас в этот чат.")
-                return
+            # 🔥 АНТИ-ФЕЙК: ПРОВЕРКА НА ПЕРЕСЛАННЫЙ КРУЖОК 🔥
+            if getattr(message, 'forward_date', None) or getattr(message, 'forward_origin', None):
+                bot.send_message(
+                    uid, 
+                    "❌ **Ошибка верификации!**\n\nСистема обнаружила, что вы отправили пересланное видео. Для верификации необходимо записать кружок прямо сейчас, глядя в камеру.", 
+                    parse_mode="Markdown"
+                )
+                try:
+                    bot.send_message(
+                        STAFF_GROUP_ID, 
+                        f"🚨 **ПОПЫТКА ОБМАНА (ФЕЙК-КРУЖОК)!**\nПользователь `{uid}` попытался пройти верификацию чужим/пересланным видео.\n\nЗаявка автоматически отклонена.", 
+                        message_thread_id=thread_id,
+                        parse_mode="Markdown"
+                    )
+                except Exception as e: 
+                    logger.debug(f"Игнор ошибки: {e}")
+                return # 🛑 Жестко прерываем функцию, видео до нейросети не дойдет!
 
-            # 2. Запрет слишком коротких видео (меньше 2 секунд)
+            # Запрет слишком коротких видео (меньше 2 секунд)
             if message.video_note.duration < 2:
                 bot.send_message(uid, "❌ **Ошибка:** Кружок слишком короткий. Пожалуйста, запишите полноценное видео, четко проговорив всю фразу.")
                 return
-            # --------------------
 
+            # Проверка таймера
             verif_timer = user_data.get("verif_timer")
             if verif_timer: # <--- ДОБАВЛЕНО УСЛОВИЕ
                 time_diff = (datetime.datetime.now() - verif_timer).total_seconds()
@@ -132,16 +144,18 @@ def handle_user_messages(message):
             # Получаем код для вывода админам
             secret_code = user_data.get("secret_code", "Неизвестен")
             
+            # 🔥 ВЫТАСКИВАЕМ ПРЕВЬЮШКУ ВИДЕО 🔥
+            thumb_file_id = message.video_note.thumb.file_id if message.video_note.thumb else None
+            
             markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("✅ Кружок принят (РАЗБАН)", callback_data="vid_ok"), InlineKeyboardButton("❌ Плохое видео (Перезапросить)", callback_data="vid_bad"))
             
-            # 🔥 ИЗМЕНЕНИЕ 1: Сохраняем отправленное видео в переменную sent_video
             sent_video = bot.send_video_note(STAFF_GROUP_ID, message.video_note.file_id, message_thread_id=thread_id, reply_markup=markup)
             bot.send_message(STAFF_GROUP_ID, f"🎥 **Пользователь прислал кружок!**\n\n🗣 **ОН ДОЛЖЕН СКАЗАТЬ:**\n_{secret_code}_", message_thread_id=thread_id, parse_mode="Markdown")
 
-            # 🔥 ИЗМЕНЕНИЕ 2: Передаем uid и ID сообщения с видео в функцию
+            # 🔥 ПЕРЕДАЕМ ПРЕВЬЮШКУ В ФУНКЦИЮ ИИ 🔥
             threading.Thread(
                 target=analyze_video_speech, 
-                args=(message.video_note.file_id, secret_code, thread_id, uid, sent_video.message_id)
+                args=(message.video_note.file_id, secret_code, thread_id, uid, sent_video.message_id, thumb_file_id)
             ).start()
 
         # ПРОЧЕЕ
@@ -746,7 +760,7 @@ def handle_arrest_decision(call):
         try: bot.send_message(target_uid, f"❌ Администрация отклонила применение ордера (возможно, вы попытались замутить админа). Ваш ордер `{code}` снова активен!")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
-def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id):
+def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thumb_file_id):
     """Фоновая задача для распознавания речи из кружка через Groq API"""
     if not GROQ_API_KEY or secret_code == "Неизвестен":
         return
@@ -790,55 +804,63 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id):
             if has_word: score += 40
             if has_num: score += 40
 
-            # === ЛОГИКА АВТОМАТИЧЕСКОГО ЗАКРЫТИЯ ===
+            # === ЛОГИКА ДВОЙНОГО КОНТРОЛЯ ===
             if score >= 80:
-                verdict = f"✅ **Код подтвержден ({score}%)! Автоматическое одобрение.**"
-                msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
-                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                # 1. Текст совпал. Проверяем лицо!
+                has_face = check_face_in_thumbnail(thumb_file_id)
                 
-                now = datetime.datetime.now()
-                ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
-                
-                # 1. Приказ Скайнету и запись в базу
-                db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
-                db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
-                db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
-                
-                # 2. Уведомление пользователя
-                try:
-                    bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-                    markup = InlineKeyboardMarkup(row_width=5).add(
-                        InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-                        InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
-                        InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
-                    )
-                    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-                    bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
-                except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
-                
-                archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
-                
-                # 3. Убираем кнопки (✅ / ❌) с видео-сообщения в админке
-                if video_msg_id:
-                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
-                    except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
-                
-                # 4. Закрываем топик и оповещаем админов
-                try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
-                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-                try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-                except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
-                
-                paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-                
+                if has_face:
+                    # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ И ЛИЦО ЕСТЬ
+                    verdict = f"✅ **Код подтвержден ({score}%) и лицо найдено! Автоматическое одобрение.**"
+                    msg = f"🤖 **Нейросеть Скайнета (Двойной контроль):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                    bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                    
+                    now = datetime.datetime.now()
+                    ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+                    
+                    # Приказ Скайнету и запись в базу
+                    db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+                    db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
+                    db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
+                    
+                    # Уведомление пользователя
+                    try:
+                        bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+                        markup = InlineKeyboardMarkup(row_width=5).add(
+                            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                            InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
+                        )
+                        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+                        bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+                    except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
+                    
+                    archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
+                    
+                    # Убираем кнопки с видео в админке
+                    if video_msg_id:
+                        try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
+                        except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
+                    
+                    # Закрываем топик
+                    try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                    try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
+                    
+                    paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+                    
+                else:
+                    # ❌ ПАЛЕВО: ТЕКСТ ВЕРНЫЙ, А ЛИЦА НЕТ (ЧЕРНЫЙ ЭКРАН / ПАЛЕЦ)
+                    verdict = f"⚠️ **ВНИМАНИЕ! Текст совпал ({score}%), НО ЛИЦО НЕ ОБНАРУЖЕНО! Возможна попытка обмана (закрытая камера).** Требуется ручная проверка."
+                    msg = f"🤖 **Нейросеть Скайнета (Двойной контроль):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                    bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                    
             else:
-                # Если совпадение меньше 80%, оставляем кнопки и ждем ручной проверки админа
-                verdict = f"⚠️ **Совпадение низкое ({score}%). Требуется ручная проверка.**"
+                # Если совпадение текста меньше 80%, тоже оставляем админам
+                verdict = f"⚠️ **Совпадение текста низкое ({score}%). Требуется ручная проверка.**"
                 msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
                 bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-        else:
-            logger.error(f"Ошибка Groq API: {response.text}")
-            bot.send_message(STAFF_GROUP_ID, "⚠️ *Ошибка нейросети.* Проверьте кружок вручную.", message_thread_id=thread_id, parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"Ошибка при работе STT: {e}")
@@ -846,6 +868,46 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id):
         if temp_video_path and os.path.exists(temp_video_path):
             try: os.remove(temp_video_path)
             except: pass
+
+def check_face_in_thumbnail(thumb_file_id):
+    """Отправляет превью видео в Vision AI для поиска лица"""
+    if not GROQ_API_KEY or not thumb_file_id: return False
+
+    try:
+        file_info = bot.get_file(thumb_file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        base64_image = base64.b64encode(downloaded_file).decode('utf-8')
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt = "Это первый кадр из видео. Видно ли на нем человеческое лицо крупным планом? Ответь строго одним словом: ДА или НЕТ."
+        
+        data = {
+            "model": "llama-3.2-90b-vision-preview",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ],
+            "temperature": 0.1
+        }
+
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code == 200:
+            ai_answer = response.json()["choices"][0]["message"]["content"].strip().upper()
+            return "ДА" in ai_answer
+        return False
+    except Exception as e:
+        logger.error(f"Ошибка Vision AI (поиск лица): {e}")
+        return False
 
 def analyze_document_vision(file_id, thread_id):
     """Фоновая задача для анализа фото документов (Зрение ИИ)"""
@@ -925,21 +987,30 @@ def process_ticket_with_ai(uid, user_text, thread_id):
     if not GROQ_API_KEY: return
 
     try:
-        # 1. Собираем досье
+        # 1. Собираем досье и проверяем наличие банов
         user_record = archive_collection.find_one({"target": str(uid)})
         dossier = "История чиста."
-        if user_record and "history" in user_record:
-            dossier = "\n".join([f"- {e['date']}: {e['action']} ({e.get('reason', 'Не указана')})" for e in user_record["history"][-3:]])
+        has_recent_ban = False
 
-        # 2. СПЕЦ-ПРОВЕРКА НА НОВОРЕГОВ
-        newbie_alert = ""
-        if int(uid) > 7800000000:
-            newbie_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это новый аккаунт Telegram (ID > 7.8 млрд). Он находится в карантине от спама. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
+        if user_record and "history" in user_record:
+            recent_history = user_record["history"][-3:]
+            dossier = "\n".join([f"- {e['date']}: {e['action']} ({e.get('reason', 'Не указана')})" for e in recent_history])
+            
+            # Ищем слово "БАН" в последних действиях юзера
+            if any("БАН" in str(e.get('action', '')).upper() for e in recent_history):
+                has_recent_ban = True
+
+        # 2. СИСТЕМНЫЕ АЛЕРТЫ (ПРИОРИТЕТ БАНА НАД НОВОРЕГОМ)
+        system_alert = ""
+        if has_recent_ban:
+            system_alert = "\n🚨 КРИТИЧЕСКИ ВАЖНО: В досье пользователя есть активный или недавний БАН! Тебе КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдавать ему автоматическую верификацию. Твоя единственная задача — перевести диалог на человека (выбери действие transfer_to_human)."
+        elif int(uid) > 7800000000:
+            system_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это новый аккаунт Telegram (ID > 7.8 млрд). Он находится в карантине от спама. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
 
         # 3. Формируем инструкцию
         prompt = f"""Ты строгий ИИ-модератор поддержки. Проанализируй сообщение пользователя и выбери одно действие.
         Текст пользователя: "{user_text}"
-        Досье пользователя: {dossier}{newbie_alert}
+        Досье пользователя: {dossier}{system_alert}
 
         Доступные действия (action):
         - tpl_18: Запросить фото документа (если нарушение связано с возрастом или 18+)
