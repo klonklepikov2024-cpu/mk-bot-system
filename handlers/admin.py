@@ -3,6 +3,7 @@ import datetime
 import requests
 import tempfile
 import os
+import json
 import base64
 import threading
 from config import GROQ_API_KEY
@@ -80,6 +81,12 @@ def handle_user_messages(message):
                 
             sent_msg = bot.send_message(STAFF_GROUP_ID, f"📩 {message.text}", message_thread_id=thread_id, reply_markup=markup)
             paid_collection.update_one({"uid": uid}, {"$set": {"last_admin_msg_id": sent_msg.message_id}})
+
+            # 🔥 ЗАПУСКАЕМ АВТОПИЛОТ ИИ В ФОНЕ 🔥
+            threading.Thread(
+                target=process_ticket_with_ai, 
+                args=(uid, message.text, thread_id)
+            ).start()
         
         # ФОТО И ДОКУМЕНТЫ
         elif message.content_type in ['photo', 'document']:
@@ -911,4 +918,73 @@ def analyze_document_vision(file_id, thread_id):
         # Выводим ошибку прямо в чат, чтобы сразу видеть, в чем дело
         try:
             bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        except: pass
+
+def process_ticket_with_ai(uid, user_text, thread_id):
+    """Мозг ИИ-Секретаря: Анализ текста и выдача базовых шаблонов"""
+    if not GROQ_API_KEY: return
+
+    try:
+        # 1. Собираем досье
+        user_record = archive_collection.find_one({"target": str(uid)})
+        dossier = "История чиста."
+        if user_record and "history" in user_record:
+            dossier = "\n".join([f"- {e['date']}: {e['action']} ({e.get('reason', 'Не указана')})" for e in user_record["history"][-3:]])
+
+        # 2. СПЕЦ-ПРОВЕРКА НА НОВОРЕГОВ
+        newbie_alert = ""
+        if int(uid) > 7800000000:
+            newbie_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это новый аккаунт Telegram (ID > 7.8 млрд). Он находится в карантине от спама. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
+
+        # 3. Формируем инструкцию
+        prompt = f"""Ты строгий ИИ-модератор поддержки. Проанализируй сообщение пользователя и выбери одно действие.
+        Текст пользователя: "{user_text}"
+        Досье пользователя: {dossier}{newbie_alert}
+
+        Доступные действия (action):
+        - tpl_18: Запросить фото документа (если нарушение связано с возрастом или 18+)
+        - tpl_verif: Запросить видео-кружок (базовая верификация или если сработал анти-спам)
+        - tpl_flood: Выдать шаблон про флуд/спам (если юзер спамил ссылками или текстом)
+        - tpl_mp: Выдать шаблон про материальную помощь (если бан за "коммерцию")
+        - tpl_nark: Выдать шаблон про наркотики (если в досье бан за вещества)
+        - tpl_bio: Выдать шаблон про ссылку в профиле
+        - transfer_to_human: Перевести на админа (если юзер задает сложный вопрос, просит выставить счет на штраф, ругается, или ситуация нестандартная)
+
+        Ответь строго в JSON формате: {{"action": "имя_действия", "reason": "краткое объяснение логики на русском"}}"""
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        data = {
+            "model": "llama-3.3-70b-versatile",
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1
+        }
+
+        # Отчитываемся, что ИИ думает
+        thinking_msg = bot.send_message(STAFF_GROUP_ID, "⏳ *ИИ анализирует тикет...*", message_thread_id=thread_id, parse_mode="Markdown")
+
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 200:
+            result = json.loads(response.json()["choices"][0]["message"]["content"])
+            action = result.get("action", "transfer_to_human")
+            reason = result.get("reason", "Решение ИИ")
+
+            # Убираем часики
+            try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
+            except: pass
+
+            if action == "transfer_to_human":
+                bot.send_message(STAFF_GROUP_ID, f"🤖 **ИИ передает управление:**\n_«{reason}»_\n\nЖду действий администратора.", message_thread_id=thread_id, parse_mode="Markdown")
+            
+            elif action.startswith("tpl_"):
+                template_text = TEMPLATES.get(action)
+                if template_text:
+                    bot.send_message(uid, template_text, parse_mode="Markdown")
+                    bot.send_message(STAFF_GROUP_ID, f"🤖 **АВТОПИЛОТ СРАБОТАЛ**\n\n🎯 **Действие:** Выдан шаблон `{action}`\n🧠 **Логика ИИ:** {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Ошибка ИИ-Секретаря: {e}")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка ИИ-Секретаря: `{e}`", message_thread_id=thread_id, parse_mode="Markdown")
         except: pass
