@@ -988,3 +988,46 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         logger.error(f"Ошибка ИИ-Секретаря: {e}")
         try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка ИИ-Секретаря: `{e}`", message_thread_id=thread_id, parse_mode="Markdown")
         except: pass
+
+# ================= ПЕРЕХВАТ РУЧНОГО ЗАКРЫТИЯ ТОПИКА =================
+@bot.message_handler(content_types=['forum_topic_closed'])
+def handle_native_topic_close(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    thread_id = message.message_thread_id
+    
+    # Ищем, кому принадлежит этот топик и был ли он еще "открыт" в базе
+    user_data = paid_collection.find_one({"thread_id": thread_id, "topic_type": {"$exists": True}})
+    
+    if not user_data: 
+        # Если топик закрыл сам бот (через кнопку) - база уже очищена, просто игнорируем
+        return 
+        
+    target_uid = user_data["uid"]
+    
+    # Обновляем базу: стираем активный статус диалога
+    paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+    
+    # Уведомляем юзера, что саппорт с ним попрощался
+    try: 
+        bot.send_message(
+            target_uid, 
+            "🏁 **Ваше обращение было закрыто администратором.**\n\nЕсли у вас возникнут новые вопросы — используйте меню бота (/start).", 
+            parse_mode="Markdown"
+        )
+    except Exception as e: 
+        logger.debug(f"Игнор ошибки при ручном закрытии: {e}")
+    
+    # Пишем след в досье
+    now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+    archive_collection.update_one(
+        {"target": str(target_uid)}, 
+        {"$push": {"history": {"date": now_str, "action": "Обращение закрыто", "reason": "Топик закрыт админом (нативно)"}}}, 
+        upsert=True
+    )
+    
+    # Оставляем след для других админов
+    try:
+        bot.send_message(STAFF_GROUP_ID, "⚠️ *Топик был закрыт системно (смахнули/закрыли через меню ТГ).* База данных очищена, диалог с пользователем официально разорван.", message_thread_id=thread_id, parse_mode="Markdown")
+    except Exception as e: 
+        logger.debug(f"Игнор ошибки: {e}")
