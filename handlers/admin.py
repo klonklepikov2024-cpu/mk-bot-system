@@ -260,7 +260,10 @@ def handle_admin_templates(call):
             logger.warning(f"Ошибка выставления штрафа: {e}")
         return
 
-    template_text = TEMPLATES.get(call.data)
+    # Сначала ищем шаблон в облаке Mongo, если нет - берем из файла
+    db_tpl = db['bot_templates'].find_one({"_id": call.data})
+    template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(call.data)
+    
     if template_text:
         try:
             bot.send_message(target_uid, template_text, parse_mode="Markdown")
@@ -1095,8 +1098,12 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         history_arr = user_data_updated.get("dialog_history", [])[-6:] # Помним последние 6 реплик
         dialogue_context = "\n".join([f"{'👤 Юзер' if m['role']=='user' else '🤖 Скайнет'}: {m['content']}" for m in history_arr])
 
+        # Вытаскиваем Базу Знаний из вебки!
+        ai_brain = db['bot_templates'].find_one({"_id": "ai_system_prompt"})
+        base_prompt = ai_brain["text"] if ai_brain else "Ты строгий, но понимающий ИИ-модератор поддержки."
+
         # 4. Формируем инструкцию с Базой Знаний и Контекстом
-        prompt = f"""Ты строгий, но понимающий ИИ-модератор поддержки. Проанализируй ТЕКУЩИЙ ДИАЛОГ и выбери ОДНО действие.
+        prompt = f"""{base_prompt} Проанализируй ТЕКУЩИЙ ДИАЛОГ и выбери ОДНО действие.
         Досье пользователя: {dossier}{system_alert}
 
         ТЕКУЩИЙ ДИАЛОГ (История последних сообщений):
@@ -1162,7 +1169,9 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 bot.send_message(STAFF_GROUP_ID, f"🤖 ИИ передает управление:\n«{reason}»\n\nЖду действий администратора.", message_thread_id=thread_id)
             
             elif action.startswith("tpl_"):
-                template_text = TEMPLATES.get(action)
+                db_tpl = db['bot_templates'].find_one({"_id": action})
+                template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(action)
+                
                 if template_text:
                     # Тут Markdown ОСТАВЛЯЕМ, потому что текст шаблона пишем мы сами и он безопасен
                     bot.send_message(uid, template_text, parse_mode="Markdown") 
