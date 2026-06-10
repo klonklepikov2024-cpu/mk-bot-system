@@ -1152,24 +1152,26 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             # 🔥 НОВАЯ ЛОГИКА ДЛЯ СВОБОДНОГО ОТВЕТА 🔥
             if action == "reply_text":
                 ai_answer = result.get("response_text", "Пожалуйста, перефразируйте ваш вопрос.")
-                bot.send_message(uid, f"🤖 **Консультант Скайнет:**\n\n{ai_answer}", parse_mode="Markdown")
-                bot.send_message(STAFF_GROUP_ID, f"🤖 **АВТОПИЛОТ (Режим диалога):**\n_Ответил юзеру:_ {ai_answer}\n🧠 **Логика ИИ:** {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.send_message(uid, f"🤖 Консультант Скайнет:\n\n{ai_answer}")
+                bot.send_message(STAFF_GROUP_ID, f"🤖 АВТОПИЛОТ (Режим диалога):\nОтветил юзеру: {ai_answer}\n🧠 Логика ИИ: {reason}", message_thread_id=thread_id)
                 
                 # Запоминаем ответ Скайнета в память
                 paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": ai_answer}}})
 
             elif action == "transfer_to_human":
-                bot.send_message(STAFF_GROUP_ID, f"🤖 **ИИ передает управление:**\n_«{reason}»_\n\nЖду действий администратора.", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.send_message(STAFF_GROUP_ID, f"🤖 ИИ передает управление:\n«{reason}»\n\nЖду действий администратора.", message_thread_id=thread_id)
             
             elif action.startswith("tpl_"):
                 template_text = TEMPLATES.get(action)
                 if template_text:
-                    bot.send_message(uid, template_text, parse_mode="Markdown")
-                    bot.send_message(STAFF_GROUP_ID, f"🤖 **АВТОПИЛОТ СРАБОТАЛ**\n\n🎯 **Действие:** Выдан шаблон `{action}`\n🧠 **Логика ИИ:** {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+                    # Тут Markdown ОСТАВЛЯЕМ, потому что текст шаблона пишем мы сами и он безопасен
+                    bot.send_message(uid, template_text, parse_mode="Markdown") 
+                    bot.send_message(STAFF_GROUP_ID, f"🤖 АВТОПИЛОТ СРАБОТАЛ\n\n🎯 Действие: Выдан шаблон {action}\n🧠 Логика ИИ: {reason}", message_thread_id=thread_id)
 
     except Exception as e:
         logger.error(f"Ошибка ИИ-Секретаря: {e}")
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка ИИ-Секретаря: `{e}`", message_thread_id=thread_id, parse_mode="Markdown")
+        # Тут тоже убрали Markdown, так как в тексте ошибки (e) могут быть спецсимволы
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка ИИ-Секретаря: {e}", message_thread_id=thread_id)
         except: pass
 
 # ================= ПЕРЕХВАТ РУЧНОГО ЗАКРЫТИЯ ТОПИКА =================
