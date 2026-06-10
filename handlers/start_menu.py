@@ -27,7 +27,8 @@ def send_welcome(message):
         markup.add(
             InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
             InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
-            InlineKeyboardButton("🛡 Кабинет Агента / Жалобы", callback_data="btn_report")
+            InlineKeyboardButton("🛡 Кабинет Агента / Жалобы", callback_data="btn_report"),
+            InlineKeyboardButton("📜 Снять бан без вопросов (2000⭐️)", callback_data="buy_indulgence") # 🔥 Кнопка для Китов здесь!
         )
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
         

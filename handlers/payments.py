@@ -279,6 +279,43 @@ def successful_payment(message):
         except Exception as e:
             logger.warning(f"Ошибка уведомления о покупке очков: {e}")
 
+    # 🔥 4. ПОКУПКА ИНДУЛЬГЕНЦИИ (ПОЛНЫЙ РАЗБАН) 🔥
+    elif payload.startswith("indulgence_"):
+        # Добавляем доход в стату (в веб-панели будет отображаться)
+        db['daily_revenue'].insert_one({"type": "indulgence", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
+        now = datetime.datetime.now()
+        
+        # 1. Очищаем все грехи (обнуляем страйки, закрываем тикет)
+        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0, "strikes": 0}, "$unset": {"topic_type": ""}})
+        
+        # 2. Выдаем VIP-статус грешника
+        db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "📜 Индульгенция"}}, upsert=True)
+        
+        # 3. Передаем приказ Скайнету на глобальный разбан
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+        
+        # 4. Пишем в личное дело для истории
+        archive_collection.update_one(
+            {"target": str(uid)}, 
+            {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "📜 Куплена Индульгенция", "reason": f"Оплата {amount} звезд"}}}, 
+            upsert=True
+        )
+        
+        # 5. Уведомляем админов и закрываем топик, если он был открыт
+        user_data = paid_collection.find_one({"uid": uid})
+        if user_data and "thread_id" in user_data:
+            try: bot.send_message(STAFF_GROUP_ID, f"📜 **КИТ КУПИЛ ИНДУЛЬГЕНЦИЮ ({amount}⭐️)!**\nСкайнет получил приказ на полный разбан, выдачу тега и очистку истории. Тикет закрыт.", message_thread_id=user_data["thread_id"], parse_mode="Markdown")
+            except: pass
+            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data["thread_id"])
+            except: pass
+
+        # 6. Уведомляем юзера
+        try:
+            bot.send_message(uid, "🎉 **Грехи отпущены!**\n\nВы успешно приобрели 📜 Индульгенцию. Все блокировки сняты, статус выдан.\nПриятного общения в Империи!", parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление об Индульгенции: {e}")
+
 # ================= АУДИТ КАЗИНО =================
 @bot.message_handler(commands=['bank'])
 def handle_bank_check(message):
