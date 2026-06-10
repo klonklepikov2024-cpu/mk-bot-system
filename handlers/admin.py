@@ -2,6 +2,7 @@ import random
 import datetime
 import requests
 import tempfile
+import re
 import os
 import json
 import base64
@@ -68,6 +69,7 @@ def handle_user_messages(message):
                     InlineKeyboardButton("🔞 Запрос /18", callback_data="tpl_18"),
                     InlineKeyboardButton("🎥 Верификация", callback_data="tpl_verif"),
                     InlineKeyboardButton("💰 /мп", callback_data="tpl_mp"),
+                    InlineKeyboardButton("💎 Спонсор", callback_data="tpl_sponsor"),
                     InlineKeyboardButton("💊 /нарк", callback_data="tpl_nark"),
                     InlineKeyboardButton("💉 Реакция нарк", callback_data="tpl_nark_react"),
                     InlineKeyboardButton("🔇 /флуд", callback_data="tpl_flood"),
@@ -82,11 +84,12 @@ def handle_user_messages(message):
             sent_msg = bot.send_message(STAFF_GROUP_ID, f"📩 {message.text}", message_thread_id=thread_id, reply_markup=markup)
             paid_collection.update_one({"uid": uid}, {"$set": {"last_admin_msg_id": sent_msg.message_id}})
 
-            # 🔥 ЗАПУСКАЕМ АВТОПИЛОТ ИИ В ФОНЕ 🔥
-            threading.Thread(
-                target=process_ticket_with_ai, 
-                args=(uid, message.text, thread_id)
-            ).start()
+            # 🔥 ЗАПУСКАЕМ АВТОПИЛОТ ИИ ТОЛЬКО ДЛЯ РАЗБАНОВ 🔥
+            if topic_type == "unban":
+                threading.Thread(
+                    target=process_ticket_with_ai, 
+                    args=(uid, message.text, thread_id)
+                ).start()
         
         # ФОТО И ДОКУМЕНТЫ
         elif message.content_type in ['photo', 'document']:
@@ -766,6 +769,62 @@ def handle_arrest_decision(call):
         try: bot.send_message(target_uid, f"❌ Администрация отклонила применение ордера (возможно, вы попытались замутить админа). Ваш ордер `{code}` снова активен!")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
+def parse_time_string(time_str):
+    """Парсит строку времени (1h, 30m) в секунды"""
+    unit_multipliers = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+    match = re.match(r"^(\d+)([smhd])$", time_str.lower())
+    if match:
+        return int(match.group(1)) * unit_multipliers[match.group(2)]
+    return None
+
+@bot.message_handler(commands=['mute'])
+def handle_timed_mute(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    args = message.text.split(maxsplit=3)
+    if len(args) < 3:
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/mute [ID] [время] [причина]`\n_Время: s (сек), m (мин), h (час), d (дни)._\n*Пример:* `/mute 123456789 1h Ордер на арест`", parse_mode="Markdown")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+        
+    try:
+        target_uid = int(args[1])
+    except ValueError:
+        try: bot.reply_to(message, "❌ Ошибка: ID пользователя должен быть числом.")
+        except: pass
+        return
+        
+    duration_seconds = parse_time_string(args[2])
+    if not duration_seconds:
+        try: bot.reply_to(message, "❌ Неверный формат времени. Используйте: 30s, 15m, 1h, 2d.")
+        except: pass
+        return
+        
+    reason = args[3] if len(args) > 3 else "Решение администратора / Ордер"
+    
+    now = datetime.datetime.now()
+    unmute_time = now + datetime.timedelta(seconds=duration_seconds)
+    
+    # 🔥 Отправляем приказ Скайнету на мут
+    db['skynet_tasks'].insert_one({
+        "uid": target_uid, 
+        "action": "timed_mute", 
+        "duration": duration_seconds,
+        "unmute_time": unmute_time,
+        "reason": reason,
+        "timestamp": now
+    })
+    
+    # 📝 Сохраняем след в досье юзера
+    archive_collection.update_one(
+        {"target": str(target_uid)}, 
+        {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": f"Глобальный МУТ ({args[2]})", "reason": reason}}}, 
+        upsert=True
+    )
+    
+    try: bot.reply_to(message, f"✅ **Приказ передан Скайнету!** 🚓\nПользователь `{target_uid}` отправлен в мут на **{args[2]}**.\nПричина: {reason}", parse_mode="Markdown")
+    except: pass
+
 def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thumb_file_id):
     """Фоновая задача для распознавания речи из кружка через Groq API"""
     if not GROQ_API_KEY or secret_code == "Неизвестен":
@@ -981,7 +1040,7 @@ def analyze_document_vision(file_id, thread_id):
         except: pass
 
 def process_ticket_with_ai(uid, user_text, thread_id):
-    """Мозг ИИ-Секретаря: Анализ текста и выдача базовых шаблонов"""
+    """Мозг ИИ-Секретаря: Анализ текста, память диалогов и выдача шаблонов"""
     if not GROQ_API_KEY: return
 
     try:
@@ -991,58 +1050,81 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         
         is_hard_ban = False
         is_specific_mute = False
-        is_basic_mute = False # 🔥 Добавили новый флаг для обычных мутов
+        is_basic_mute = False
 
         if user_record and "history" in user_record:
             recent_history = user_record["history"][-3:] # Хронология сохранена
             dossier = "\n".join([f"- {e['date']}: {e['action']} ({e.get('reason', 'Не указана')})" for e in recent_history])
             
-            # Анализируем только САМОЕ СВЕЖЕЕ действие (последнее в списке)
+            # 🔥 УМНЫЙ ПРИОРИТЕТ: Сначала ищем жесткий бан во всей недавней истории (3 записи)
             if recent_history:
-                last_event = recent_history[-1]
-                action_text = str(last_event.get('action', '')).upper()
-                reason_text = str(last_event.get('reason', '')).upper()
-                
-                # Исключаем ложные срабатывания на разбаны и амнистии
-                if "РАЗБАН" not in action_text and "РАЗМУТ" not in action_text and "СНЯТИЕ" not in action_text:
-                    # Проверяем жесткий бан (или тяжелую причину)
-                    if "БАН" in action_text or "BAN" in action_text or any(w in reason_text for w in ["НАРК", "NARK", "СПАМ", "ФЛУД"]):
-                        is_hard_ban = True
-                    # Проверяем муты/ограничения
-                    elif "МУТ" in action_text or "MUTE" in action_text or "ОГРАНИЧЕНИЕ" in action_text:
-                        # 🔥 Отделяем обычный мут от специфического
-                        if "ПАРАМЕТРОВ" in reason_text or "ФОРМАТ" in reason_text:
-                            is_basic_mute = True
-                        else:
-                            is_specific_mute = True
+                for event in recent_history:
+                    act_txt = str(event.get('action', '')).upper()
+                    rsn_txt = str(event.get('reason', '')).upper()
+                    
+                    if "РАЗБАН" not in act_txt and "РАЗМУТ" not in act_txt and "СНЯТИЕ" not in act_txt:
+                        if "БАН" in act_txt or "BAN" in act_txt or any(w in rsn_txt for w in ["НАРК", "NARK", "СПАМ", "ФЛУД"]):
+                            is_hard_ban = True
+                            break # Жесткий бан найден! Дальше не ищем, это абсолютный приоритет.
+
+                # Если жесткого бана нет, тогда смотрим ТОЛЬКО на самое свежее действие (для мутов)
+                if not is_hard_ban:
+                    last_event = recent_history[-1]
+                    action_text = str(last_event.get('action', '')).upper()
+                    reason_text = str(last_event.get('reason', '')).upper()
+                    
+                    if "РАЗБАН" not in action_text and "РАЗМУТ" not in action_text and "СНЯТИЕ" not in action_text:
+                        if "МУТ" in action_text or "MUTE" in action_text or "ОГРАНИЧЕНИЕ" in action_text:
+                            if "ПАРАМЕТРОВ" in reason_text or "ФОРМАТ" in reason_text:
+                                is_basic_mute = True
+                            else:
+                                is_specific_mute = True
 
         # 2. СИСТЕМНЫЕ АЛЕРТЫ (ЖЕСТКАЯ ИЕРАРХИЯ ПРИОРИТЕТОВ)
         system_alert = ""
         if is_hard_ban:
-            system_alert = "\n🚨 КРИТИЧЕСКИ ВАЖНО: У пользователя АКТИВНЫЙ БАН или тяжелое нарушение (Наркотики/Спам)! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдавать базовую верификацию (tpl_verif). Твоя задача — изучить причину в досье и выдать профильный шаблон наказания (например, tpl_nark, tpl_nark_react, tpl_flood). Если подходящего шаблона нет — переведи диалог на человека (transfer_to_human)."
+            system_alert = "\n🚨 КРИТИЧЕСКИ ВАЖНО: У пользователя АКТИВНЫЙ БАН или тяжелое нарушение! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО запрашивать базовую верификацию (tpl_verif). Внимательно изучи причину в досье и выдай профильный шаблон (tpl_18, tpl_vip, tpl_nark, tpl_bio, tpl_flood и т.д.). Если подходящего шаблона нет — transfer_to_human."
         elif is_specific_mute:
-            system_alert = "\n⚠️ ВНИМАНИЕ: У пользователя активный МУТ за специфическое нарушение (например, МП, БИО). Изучи досье и выдай СООТВЕТСТВУЮЩИЙ ШАБЛОН (например, tpl_mp, tpl_bio или transfer_to_human). ЗАПРЕЩЕНО выдавать базовую верификацию (tpl_verif)!"
+            system_alert = "\n⚠️ ВНИМАНИЕ: Специфический МУТ (МП, Спонсор, БИО, VIP). ЗАПРЕЩЕНО запрашивать базовую верификацию (tpl_verif)! Изучи досье и выдай СООТВЕТСТВУЮЩИЙ ШАБЛОН (tpl_mp, tpl_sponsor, tpl_bio, tpl_vip). Если шаблона нет - transfer_to_human."
         elif is_basic_mute or int(uid) > 7800000000:
-            system_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Это базовый системный мут (нет параметров) или новый аккаунт. Твоя задача — строго запросить у него видео-кружок для верификации (выбери действие tpl_verif)."
+            system_alert = "\n⚠️ СИСТЕМНОЕ ПРЕДУПРЕЖДЕНИЕ: Базовый мут (нет параметров) или новорег. Основное действие — tpl_verif. НО если юзер просит оператора/админа, или пишет, что уже всё оплатил/сделал ранее — НЕМЕДЛЕННО используй transfer_to_human."
 
-        # 3. Формируем инструкцию
-        prompt = f"""Ты строгий ИИ-модератор поддержки. Проанализируй сообщение пользователя и выбери одно действие.
-        Текст пользователя: "{user_text}"
+        # 3. 🔥 КРАТКОВРЕМЕННАЯ ПАМЯТЬ ИИ (Записываем фразу юзера и достаем историю)
+        paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "user", "content": user_text}}})
+        user_data_updated = paid_collection.find_one({"uid": uid}) or {}
+        history_arr = user_data_updated.get("dialog_history", [])[-6:] # Помним последние 6 реплик
+        dialogue_context = "\n".join([f"{'👤 Юзер' if m['role']=='user' else '🤖 Скайнет'}: {m['content']}" for m in history_arr])
+
+        # 4. Формируем инструкцию с Базой Знаний и Контекстом
+        prompt = f"""Ты строгий, но понимающий ИИ-модератор поддержки. Проанализируй ТЕКУЩИЙ ДИАЛОГ и выбери ОДНО действие.
         Досье пользователя: {dossier}{system_alert}
 
-        Доступные действия (action):
-        - tpl_18: Запросить фото документа (если нарушение связано с возрастом или 18+)
-        - tpl_minor: Выдать шаблон про несовершеннолетних (если нарушение связано с реакцией на детей / 18-)
-        - tpl_verif: Запросить видео-кружок (базовая верификация или если сработал анти-спам)
-        - tpl_flood: Выдать шаблон про флуд/спам (если юзер спамил ссылками или текстом)
-        - tpl_mp: Выдать шаблон про материальную помощь (если бан за "коммерцию")
-        - tpl_nark: Выдать шаблон про наркотики (если в досье бан за вещества)
-        - tpl_nark_react: Выдать шаблон за реакцию на наркотики (если нарушение связано с покупкой/реакцией на вещества)
-        - tpl_bio: Выдать шаблон про ссылку в профиле
-        - tpl_vip: Выдать шаблон про Блок (если причина: сбежал с верификации, заблокировал бота, бтб, бвб, T/V блокировка бота без оснований, не оплатил ВИП или ТРАНС, тянул время, приостановление действий в группах-партнерах)
-        - transfer_to_human: Перевести на админа (если юзер задает сложный вопрос, просит выставить счет на штраф, ругается, или ситуация нестандартная)
+        ТЕКУЩИЙ ДИАЛОГ (История последних сообщений):
+        {dialogue_context}
 
-        Ответь строго в JSON формате: {{"action": "имя_действия", "reason": "краткое объяснение логики на русском"}}"""
+        ВНУТРЕННИЕ ПРАВИЛА (База знаний):
+        1. "Кружок" (tpl_verif) нужен ТОЛЬКО для снятия базового мута (нет параметров при входе) или для проверки новых аккаунтов.
+        2. Паспорт (tpl_18) запрашивается ТОЛЬКО если нарушение связано с несовершеннолетием (18+ / Оранжевая зона).
+        3. Если юзер наказан за спам, коммерцию (МП), спонсорство, наркотики, ссылку БИО или Блок VIP - кружки и паспорта НЕ НУЖНЫ! Просто выдай соответствующий шаблон наказания.
+        4. "Взятка" (Альтернатива кружку): Если юзер должен записать кружок, но категорически отказывается/стесняется — предложи оплатить штраф 650⭐️ (тег "Свободен") через свободный текст (reply_text).
+        5. АНТИ-СПАМ ЗАЩИТА: Если юзер просит "оператора", "админа", "человека", "счет", или пишет "я уже платил", "и как?" — НЕМЕДЛЕННО переводи диалог на человека (transfer_to_human).
+
+        Доступные действия (action):
+        - reply_text: Ответить свободным текстом (для консультаций, ответов на вопросы или предложения штрафа 650⭐️ вместо кружка).
+        - tpl_18: Запросить фото документа (только 18+).
+        - tpl_minor: Шаблон про несовершеннолетних.
+        - tpl_verif: Запросить видео-кружок (только базовый мут / новорег).
+        - tpl_flood: Шаблон про флуд/спам.
+        - tpl_mp: Шаблон про коммерцию (если юзер ИЩЕТ спонсора, просит материальную помощь или предлагает услуги).
+        - tpl_sponsor: Шаблон для спонсоров (если юзер сам ПРЕДЛАГАЕТ деньги, ищет за деньги, выступает в роли спонсора).
+        - tpl_nark: Шаблон про наркотики.
+        - tpl_nark_react: Шаблон за реакцию на наркотики.
+        - tpl_bio: Шаблон про ссылку в профиле.
+        - tpl_vip: Шаблон про Блок VIP/Транс бота.
+        - transfer_to_human: Перевести на админа (если просит оператора/счет, или сложная ситуация).
+
+        Ответь строго в JSON формате. Если выбрал reply_text, обязательно добавь поле "response_text": 
+        {{"action": "имя_действия", "reason": "краткое объяснение логики на русском", "response_text": "твой текстовый ответ (заполнять только для reply_text)"}}"""
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -1067,7 +1149,16 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
             except: pass
 
-            if action == "transfer_to_human":
+            # 🔥 НОВАЯ ЛОГИКА ДЛЯ СВОБОДНОГО ОТВЕТА 🔥
+            if action == "reply_text":
+                ai_answer = result.get("response_text", "Пожалуйста, перефразируйте ваш вопрос.")
+                bot.send_message(uid, f"🤖 **Консультант Скайнет:**\n\n{ai_answer}", parse_mode="Markdown")
+                bot.send_message(STAFF_GROUP_ID, f"🤖 **АВТОПИЛОТ (Режим диалога):**\n_Ответил юзеру:_ {ai_answer}\n🧠 **Логика ИИ:** {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+                
+                # Запоминаем ответ Скайнета в память
+                paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": ai_answer}}})
+
+            elif action == "transfer_to_human":
                 bot.send_message(STAFF_GROUP_ID, f"🤖 **ИИ передает управление:**\n_«{reason}»_\n\nЖду действий администратора.", message_thread_id=thread_id, parse_mode="Markdown")
             
             elif action.startswith("tpl_"):

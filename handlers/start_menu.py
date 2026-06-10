@@ -107,23 +107,22 @@ def handle_user_query(call):
                     
                 caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
-                paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}})
+                # 🔥 Добавили очистку памяти
+                paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
             else:
-                # 🔥 Бронебойное создание топика с защитой от ошибки 429 🔥
                 try:
                     topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
                 except ApiTelegramException as e:
                     if e.error_code == 429:
-                        # Телеграм просит подождать. Достаем время из ответа (обычно 3-5 сек)
                         retry_after = e.result_json.get('parameters', {}).get('retry_after', 3)
-                        time.sleep(retry_after + 0.5) # Спим указанное время + полсекунды
-                        # Пробуем создать топик еще раз после паузы
+                        time.sleep(retry_after + 0.5) 
                         topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
                     else:
-                        raise e # Если ошибка другая, пропускаем её дальше
+                        raise e 
 
                 thread_id = topic.message_thread_id
-                paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}}, upsert=True)
+                # 🔥 Добавили очистку памяти
+                paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}, "$unset": {"dialog_history": ""}}, upsert=True)
                 caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                  
