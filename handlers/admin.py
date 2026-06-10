@@ -493,19 +493,49 @@ def handle_close_ticket(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('rate_'))
 def handle_rating(call):
-    _, rating, t_id = call.data.split('_')
+    _, rating_str, t_id = call.data.split('_')
+    rating = int(rating_str)
     t_id = int(t_id)
+    target_uid = call.from_user.id
+    
     try: bot.answer_callback_query(call.id, f"Спасибо за вашу оценку {rating}⭐!")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-    try: bot.edit_message_text(f"🙏 Спасибо за оценку {rating}⭐! Мы работаем для вас.", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    
+    # 1. Достаем инфу о том, кто закрыл тикет (админ или ИИ)
     rating_data = db['ticket_ratings'].find_one({"thread_id": t_id})
     admin_name = rating_data["admin"] if rating_data else "Неизвестный герой"
-    mood = "🎉 Отличная работа!" if rating in ['4', '5'] else "⚠️ Нужно обратить внимание."
+    
+    # 2. 🔥 ОБНОВЛЯЕМ БАЗУ ДЛЯ РАДАРА ГНЕВА И АНАЛИТИКИ ВЕБ-ПАНЕЛИ 🔥
+    db['ticket_ratings'].update_one(
+        {"thread_id": t_id},
+        {"$set": {
+            "uid": target_uid,
+            "admin_id": admin_name,
+            "rating": rating,
+            "timestamp": datetime.datetime.now().timestamp()
+        }},
+        upsert=True
+    )
+
+    # 3. 🔥 ГЕЙМИФИКАЦИЯ (МОМЕНТАЛЬНАЯ КАРМА ЗА 5 ЗВЕЗД) 🔥
+    if rating == 5:
+        paid_collection.update_one(
+            {"uid": target_uid},
+            {"$inc": {"bounty_points": 5, "jackpot_shards": 1}},
+            upsert=True
+        )
+        reply_text = "💖 **Спасибо за высокую оценку!**\nСкайнет начислил вам бонусы:\n🎁 **+5 Очков бдительности**\n🔮 **+1 Осколок рулетки**\n\nПриятного общения! 😎"
+    else:
+        reply_text = f"✨ **Спасибо за оценку {rating}⭐!**\nМы постоянно докручиваем нейросети и улучшаем качество работы."
         
+    # Сохраняем кнопку Доната, как у вас и было!
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+    
+    try: bot.edit_message_text(reply_text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    
+    # 4. Отчет админам в чат
+    mood = "🎉 Отличная работа!" if rating >= 4 else "⚠️ Нужно обратить внимание (Радар Гнева)."
     try: bot.send_message(STAFF_GROUP_ID, f"🌟 **Получена новая оценка!**\n\n👨‍💻 Админ: @{admin_name}\n⭐️ Оценка: **{rating} из 5**\n{mood}", message_thread_id=t_id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
