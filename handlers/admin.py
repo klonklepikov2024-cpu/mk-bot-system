@@ -908,53 +908,6 @@ def parse_time_string(time_str):
         return int(match.group(1)) * unit_multipliers[match.group(2)]
     return None
 
-@bot.message_handler(commands=['mute'])
-def handle_timed_mute(message):
-    if str(message.chat.id) != str(STAFF_GROUP_ID): return
-    
-    args = message.text.split(maxsplit=3)
-    if len(args) < 3:
-        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/mute [ID] [время] [причина]`\n_Время: s (сек), m (мин), h (час), d (дни)._\n*Пример:* `/mute 123456789 1h Ордер на арест`", parse_mode="Markdown")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        return
-        
-    try:
-        target_uid = int(args[1])
-    except ValueError:
-        try: bot.reply_to(message, "❌ Ошибка: ID пользователя должен быть числом.")
-        except: pass
-        return
-        
-    duration_seconds = parse_time_string(args[2])
-    if not duration_seconds:
-        try: bot.reply_to(message, "❌ Неверный формат времени. Используйте: 30s, 15m, 1h, 2d.")
-        except: pass
-        return
-        
-    reason = args[3] if len(args) > 3 else "Решение администратора / Ордер"
-    
-    now = datetime.datetime.now()
-    unmute_time = now + datetime.timedelta(seconds=duration_seconds)
-    
-    # 🔥 Отправляем приказ Скайнету на мут
-    db['skynet_tasks'].insert_one({
-        "uid": target_uid, 
-        "action": "timed_mute", 
-        "duration": duration_seconds,
-        "unmute_time": unmute_time,
-        "reason": reason,
-        "timestamp": now
-    })
-    
-    # 📝 Сохраняем след в досье юзера
-    archive_collection.update_one(
-        {"target": str(target_uid)}, 
-        {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": f"Глобальный МУТ ({args[2]})", "reason": reason}}}, 
-        upsert=True
-    )
-    
-    try: bot.reply_to(message, f"✅ **Приказ передан Скайнету!** 🚓\nПользователь `{target_uid}` отправлен в мут на **{args[2]}**.\nПричина: {reason}", parse_mode="Markdown")
-    except: pass
 
 def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thumb_file_id):
     """Фоновая задача для распознавания речи из кружка через Groq API"""
