@@ -108,7 +108,11 @@ def handle_user_messages(message):
             # Получаем file_id в зависимости от того, как юзер скинул фото
             if message.content_type == 'photo':
                 file_id = message.photo[-1].file_id 
-                ai_file_id = message.photo[-2].file_id if len(message.photo) > 1 else message.photo[0].file_id 
+                
+                # 🔥 БЕРЕМ ЛЕГКУЮ ВЕРСИЮ ФОТО ДЛЯ ИИ (~320x320). 
+                # Это ~15-20 КБ, что идеально помещается в строгие лимиты Groq!
+                ai_file_id = message.photo[1].file_id if len(message.photo) > 1 else message.photo[0].file_id 
+                
                 bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             else:
                 file_id = message.document.file_id
@@ -953,53 +957,67 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
             if has_word: score += 40
             if has_num: score += 40
 
-            # === ЛОГИКА ОДИНАРНОГО КОНТРОЛЯ (ТОЛЬКО ТЕКСТ) ===
+            # === ЛОГИКА ДВОЙНОГО КОНТРОЛЯ (ГОЛОС + ЛИЦО) ===
             if score >= 80:
-                # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ (ПРОВЕРКА ЛИЦА ОТКЛЮЧЕНА)
                 
-                # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем успешный вердикт
-                speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер четко сказал: «{text}». Код подтвержден на {score}%. Я уже автоматически разбанил юзера. Поблагодари его."
-                paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
-                
-                verdict = f"✅ **Код подтвержден ({score}%)! Автоматическое одобрение.**\n_👀 Админы, проверьте наличие лица визуально. Если юзер закрыл камеру — выдайте бан вручную!_"
-                msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
-                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-                
-                now = datetime.datetime.now()
-                ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
-                
-                # Приказ Скайнету и запись в базу
-                db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
-                db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
-                db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
-                
-                # Уведомление пользователя
-                try:
-                    bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-                    markup = InlineKeyboardMarkup(row_width=5).add(
-                        InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-                        InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
-                        InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
-                    )
-                    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-                    bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
-                except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
-                
-                archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
-                
-                # Убираем кнопки с видео в админке
-                if video_msg_id:
-                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
-                    except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
-                
-                # Закрываем топик
-                try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
-                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-                try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-                except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
-                
-                paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-                
+                # Включаем нейросеть-зрение для проверки наличия лица на превью!
+                has_face = check_face_in_thumbnail(thumb_file_id)
+
+                if has_face:
+                    # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ И ЛИЦО НАЙДЕНО
+                    
+                    # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем успешный вердикт
+                    speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер четко сказал: «{text}». Код подтвержден на {score}%. Лицо в кадре найдено. Я автоматически разбанил юзера."
+                    paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
+                    
+                    verdict = f"✅ **Код ({score}%) и Лицо подтверждены! Автоматическое одобрение.**"
+                    msg = f"🤖 **Нейросеть Скайнета (STT + Vision):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                    bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                    
+                    now = datetime.datetime.now()
+                    ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+                    
+                    # Приказ Скайнету и запись в базу
+                    db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+                    db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
+                    db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
+                    
+                    # Уведомление пользователя
+                    try:
+                        bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+                        markup = InlineKeyboardMarkup(row_width=5).add(
+                            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                            InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
+                        )
+                        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+                        bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+                    except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
+                    
+                    archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
+                    
+                    # Убираем кнопки с видео в админке
+                    if video_msg_id:
+                        try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
+                        except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
+                    
+                    # Закрываем топик
+                    try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                    try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
+                    
+                    paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+                    
+                else:
+                    # ⚠️ ГОЛОС ВЕРНЫЙ, НО ЛИЦА НЕТ (КАМЕРА В ПОТОЛОК ИЛИ ТЕМНОТА)
+                    speech_memory = f"Юзер сказал правильный текст («{text}»), но моя зрительная нейросеть не нашла лицо в кадре. Я оставил тикет открытым для ручной проверки админом. Возможно он прячет лицо."
+                    paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
+                    
+                    verdict = f"⚠️ **Текст верный ({score}%), НО ИИ не увидел лицо в кадре!**\n_Возможно, темно или камера направлена в пол. Проверьте кружок визуально!_"
+                    msg = f"🤖 **Нейросеть Скайнета (STT + Vision):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
+                    bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+
             else:
                 # Если совпадение текста меньше 80%, оставляем админам
                 
@@ -1035,7 +1053,12 @@ def check_face_in_thumbnail(thumb_file_id):
             "Content-Type": "application/json"
         }
         
-        prompt = "Это первый кадр из видео. Видно ли на нем человеческое лицо крупным планом? Ответь строго одним словом: ДА или НЕТ."
+        # 🔥 ПРОМПТ СТАЛ ДОБРЕЕ И УМНЕЕ 🔥
+        prompt = (
+            "Это кадр из видеосообщения. Присутствует ли на этом изображении хотя бы одно человеческое лицо? "
+            "Оно может быть немного размытым, находиться вдалеке или быть не по центру — это нормально. "
+            "Ответь строго одним словом: ДА или НЕТ."
+        )
         
         data = {
             "model": "llama-3.2-90b-vision-preview",
@@ -1048,7 +1071,8 @@ def check_face_in_thumbnail(thumb_file_id):
                     ]
                 }
             ],
-            "temperature": 0.1
+            "temperature": 0.0, # 🔥 Фантазия на нуле — отвечает четко как машина
+            "max_tokens": 10    # Больше 10 токенов на слово "ДА" не нужно
         }
 
         response = requests.post(url, headers=headers, json=data)
@@ -1060,7 +1084,6 @@ def check_face_in_thumbnail(thumb_file_id):
         logger.error(f"Ошибка Vision AI (поиск лица): {e}")
         return False
 
-# 🔥 ВАЖНО: Добавили uid в скобки!
 def analyze_document_vision(file_id, thread_id, uid):
     """Фоновая задача для анализа фото документов (Зрение ИИ)"""
     if not GROQ_API_KEY:
@@ -1072,6 +1095,12 @@ def analyze_document_vision(file_id, thread_id, uid):
 
         # 1. Скачиваем фото из Telegram
         file_info = bot.get_file(file_id)
+        
+        # 🔥 СИСТЕМНАЯ ЗАЩИТА: Если файл весит больше 500 КБ (500000 байт), не пускаем в нейросеть
+        if file_info.file_size > 500000:
+            bot.send_message(STAFF_GROUP_ID, f"⚠️ *Файл слишком тяжелый для нейросети ({file_info.file_size // 1024} КБ).* Проверьте документ вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+            return
+            
         downloaded_file = bot.download_file(file_info.file_path)
 
         # 2. Переводим картинку в формат Base64
@@ -1105,7 +1134,8 @@ def analyze_document_vision(file_id, thread_id, uid):
                     ]
                 }
             ],
-            "temperature": 0.2
+            "temperature": 0.2,
+            "max_tokens": 1024  # 🔥 ОБЯЗАТЕЛЬНЫЙ ПАРАМЕТР ДЛЯ GROQ VISION (Устраняет 400 ошибку)
         }
 
         response = requests.post(url, headers=headers, json=data)
