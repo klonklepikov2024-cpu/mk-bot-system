@@ -1103,7 +1103,7 @@ def analyze_document_vision(file_id, thread_id, uid):
 
         file_info = bot.get_file(file_id)
         
-        # 🔥 ЖЕСТКИЙ ЛИМИТ: 80 КБ (Groq падает от строк больше 131,000 символов)
+        # 🔥 ЖЕСТКИЙ ЛИМИТ: 80 КБ
         if file_info.file_size > 80000:
             bot.send_message(STAFF_GROUP_ID, f"⚠️ *Файл слишком тяжелый для нейросети ({file_info.file_size // 1024} КБ).* Проверьте документ вручную.", message_thread_id=thread_id, parse_mode="Markdown")
             return
@@ -1132,7 +1132,7 @@ def analyze_document_vision(file_id, thread_id, uid):
         )
 
         data = {
-            "model": "llama-3.2-11b-vision-preview", # 🔥 Перешли на стабильную 11B
+            "model": "llama-3.2-11b-vision-preview",
             "messages": [
                 {
                     "role": "user",
@@ -1158,7 +1158,7 @@ def analyze_document_vision(file_id, thread_id, uid):
             try: bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
             except Exception: bot.send_message(STAFF_GROUP_ID, f"👁 Анализ документа:\n\n{ai_text}", message_thread_id=thread_id)
         else:
-            # 👇 МАГИЯ ДЕБАГГИНГА: Ловим точную причину ошибки 👇
+            # 👇 МАГИЯ ДЕБАГГИНГА 👇
             error_details = response.text 
             try:
                 bot.send_message(
@@ -1169,6 +1169,12 @@ def analyze_document_vision(file_id, thread_id, uid):
                 )
             except Exception:
                 print(f"🔥 ТОЧНАЯ ОШИБКА GROQ: {error_details}")
+
+    # 👇 ЭТОТ БЛОК ТЫ СЛУЧАЙНО СТЕР В ПРОШЛЫЙ РАЗ 👇
+    except Exception as e:
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        except: pass
+
 
 def process_ticket_with_ai(uid, user_text, thread_id):
     """Мозг ИИ-Секретаря: Анализ текста, память диалогов и выдача шаблонов"""
