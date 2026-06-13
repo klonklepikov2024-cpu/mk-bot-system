@@ -1072,7 +1072,7 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            "model": "llama-3.2-90b-vision-preview", # Стабильная модель
+            "model": ""meta-llama/llama-4-scout-17b-16e-instruct"", # Стабильная модель
             "messages": [
                 {
                     "role": "user",
@@ -1132,7 +1132,7 @@ def analyze_document_vision(file_id, thread_id, uid):
         )
 
         data = {
-            "model": "llama-3.2-90b-vision-preview",
+            "model": ""meta-llama/llama-4-scout-17b-16e-instruct"",
             "messages": [
                 {
                     "role": "user",
