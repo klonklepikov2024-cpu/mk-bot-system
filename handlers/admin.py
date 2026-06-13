@@ -105,21 +105,25 @@ def handle_user_messages(message):
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(InlineKeyboardButton("✅ Документ принят (Запросить видео)", callback_data="doc_ok"), InlineKeyboardButton("❌ Плохое фото (Перезапросить)", callback_data="doc_bad"))
             
-            # Получаем file_id в зависимости от того, как юзер скинул фото
             if message.content_type == 'photo':
                 file_id = message.photo[-1].file_id 
                 
-                # 🔥 БЕРЕМ ЛЕГКУЮ ВЕРСИЮ ФОТО ДЛЯ ИИ (~320x320). 
-                # Это ~15-20 КБ, что идеально помещается в строгие лимиты Groq!
-                ai_file_id = message.photo[1].file_id if len(message.photo) > 1 else message.photo[0].file_id 
+                # 🔥 УМНЫЙ ПОИСК: Ищем самое большое фото, но СТРОГО до 80 КБ
+                ai_file_id = message.photo[0].file_id # Дефолт - самая маленькая
+                for p in message.photo[::-1]:
+                    if p.file_size and p.file_size < 80000:
+                        ai_file_id = p.file_id
+                        break
                 
                 bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             else:
                 file_id = message.document.file_id
-                ai_file_id = file_id 
+                
+                # 🔥 ЕСЛИ ДОКУМЕНТ: Берем его превьюшку (она всегда легкая)
+                ai_file_id = message.document.thumb.file_id if message.document.thumb else file_id 
+                
                 bot.send_document(STAFF_GROUP_ID, file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             
-            # 🔥 ВАЖНО: Добавили uid в передаваемые аргументы! 🔥
             threading.Thread(
                 target=analyze_document_vision, 
                 args=(ai_file_id, thread_id, uid) 
@@ -1044,8 +1048,16 @@ def check_face_in_thumbnail(thumb_file_id):
 
     try:
         file_info = bot.get_file(thumb_file_id)
+        
+        # Защита от краша (превью кружка обычно весит 2-5 КБ, но перестрахуемся)
+        if file_info.file_size > 80000: return False 
+        
         downloaded_file = bot.download_file(file_info.file_path)
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
+        
+        # ДИНАМИЧЕСКИЙ ФОРМАТ
+        ext = file_info.file_path.split('.')[-1].lower()
+        mime_type = "image/png" if ext == "png" else "image/jpeg"
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
@@ -1053,7 +1065,6 @@ def check_face_in_thumbnail(thumb_file_id):
             "Content-Type": "application/json"
         }
         
-        # 🔥 ПРОМПТ СТАЛ ДОБРЕЕ И УМНЕЕ 🔥
         prompt = (
             "Это кадр из видеосообщения. Присутствует ли на этом изображении хотя бы одно человеческое лицо? "
             "Оно может быть немного размытым, находиться вдалеке или быть не по центру — это нормально. "
@@ -1061,18 +1072,18 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            "model": "llama-3.2-90b-vision-preview",
+            "model": "llama-3.2-11b-vision-preview", # Стабильная модель
             "messages": [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
                     ]
                 }
             ],
-            "temperature": 0.0, # 🔥 Фантазия на нуле — отвечает четко как машина
-            "max_tokens": 10    # Больше 10 токенов на слово "ДА" не нужно
+            "temperature": 0.0,
+            "max_tokens": 10
         }
 
         response = requests.post(url, headers=headers, json=data)
@@ -1081,32 +1092,29 @@ def check_face_in_thumbnail(thumb_file_id):
             return "ДА" in ai_answer
         return False
     except Exception as e:
-        logger.error(f"Ошибка Vision AI (поиск лица): {e}")
         return False
 
 def analyze_document_vision(file_id, thread_id, uid):
     """Фоновая задача для анализа фото документов (Зрение ИИ)"""
-    if not GROQ_API_KEY:
-        return
+    if not GROQ_API_KEY: return
 
     try:
-        # Уведомляем админов, что ИИ изучает фото
         bot.send_message(STAFF_GROUP_ID, "👁 *Скайнет изучает документ...*", message_thread_id=thread_id, parse_mode="Markdown")
 
-        # 1. Скачиваем фото из Telegram
         file_info = bot.get_file(file_id)
         
-        # 🔥 СИСТЕМНАЯ ЗАЩИТА: Если файл весит больше 500 КБ (500000 байт), не пускаем в нейросеть
-        if file_info.file_size > 500000:
+        # 🔥 ЖЕСТКИЙ ЛИМИТ: 80 КБ (Groq падает от строк больше 131,000 символов)
+        if file_info.file_size > 80000:
             bot.send_message(STAFF_GROUP_ID, f"⚠️ *Файл слишком тяжелый для нейросети ({file_info.file_size // 1024} КБ).* Проверьте документ вручную.", message_thread_id=thread_id, parse_mode="Markdown")
             return
             
         downloaded_file = bot.download_file(file_info.file_path)
-
-        # 2. Переводим картинку в формат Base64
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
+        
+        # 🔥 ДИНАМИЧЕСКИЙ ФОРМАТ (Чтобы API не ругался на Invalid Base64)
+        ext = file_info.file_path.split('.')[-1].lower()
+        mime_type = "image/png" if ext == "png" else "image/jpeg"
 
-        # 3. Отправляем в бесплатную Vision-модель от Groq
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -1124,47 +1132,36 @@ def analyze_document_vision(file_id, thread_id, uid):
         )
 
         data = {
-            "model": "llama-3.2-90b-vision-preview", 
+            "model": "llama-3.2-11b-vision-preview", # 🔥 Перешли на стабильную 11B
             "messages": [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
                     ]
                 }
             ],
             "temperature": 0.2,
-            "max_tokens": 1024  # 🔥 ОБЯЗАТЕЛЬНЫЙ ПАРАМЕТР ДЛЯ GROQ VISION (Устраняет 400 ошибку)
+            "max_tokens": 1024
         }
 
         response = requests.post(url, headers=headers, json=data)
 
-        # 4. Выводим результат админам
         if response.status_code == 200:
             ai_text = response.json()["choices"][0]["message"]["content"]
             msg = f"👁 **Анализ документа (Vision AI):**\n\n{ai_text}"
             
-            # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем отчет Зрения в память Текстового ИИ
-            vision_memory = f"Моя зрительная нейросеть (Vision AI) только что изучила этот документ. Вот её отчет:\n{ai_text}\nЕсли пользователь спрашивает, всё ли в порядке — ответь ему на основе этого отчета. Если документ плохой - объясни почему."
+            vision_memory = f"Моя зрительная нейросеть только что изучила этот документ. Вот её отчет:\n{ai_text}\nЕсли пользователь спрашивает, всё ли в порядке — ответь ему на основе этого отчета."
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": vision_memory}}})
 
-            # 🔥 СТРАХОВКА ОТ ПОЛОМКИ MARKDOWN 🔥
-            try:
-                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-            except Exception as markdown_err:
-                logger.warning(f"Ошибка разметки Markdown в Vision AI: {markdown_err}")
-                clean_msg = f"👁 Анализ документа (Vision AI):\n\n{ai_text}"
-                bot.send_message(STAFF_GROUP_ID, clean_msg, message_thread_id=thread_id)
+            try: bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+            except Exception: bot.send_message(STAFF_GROUP_ID, f"👁 Анализ документа:\n\n{ai_text}", message_thread_id=thread_id)
         else:
-            logger.error(f"Ошибка Vision API: {response.text}")
             bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ошибка сервера нейросети (Код {response.status_code}).* Проверьте вручную.", message_thread_id=thread_id, parse_mode="Markdown")
 
     except Exception as e:
-        logger.error(f"Ошибка при работе Vision AI: {e}")
-        # Выводим ошибку прямо в чат, чтобы сразу видеть, в чем дело
-        try:
-            bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
         except: pass
 
 def process_ticket_with_ai(uid, user_text, thread_id):
