@@ -1158,11 +1158,17 @@ def analyze_document_vision(file_id, thread_id, uid):
             try: bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
             except Exception: bot.send_message(STAFF_GROUP_ID, f"👁 Анализ документа:\n\n{ai_text}", message_thread_id=thread_id)
         else:
-            bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ошибка сервера нейросети (Код {response.status_code}).* Проверьте вручную.", message_thread_id=thread_id, parse_mode="Markdown")
-
-    except Exception as e:
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
-        except: pass
+            # 👇 МАГИЯ ДЕБАГГИНГА: Ловим точную причину ошибки 👇
+            error_details = response.text 
+            try:
+                bot.send_message(
+                    STAFF_GROUP_ID, 
+                    f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{error_details}`", 
+                    message_thread_id=thread_id, 
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                print(f"🔥 ТОЧНАЯ ОШИБКА GROQ: {error_details}")
 
 def process_ticket_with_ai(uid, user_text, thread_id):
     """Мозг ИИ-Секретаря: Анализ текста, память диалогов и выдача шаблонов"""
