@@ -768,6 +768,83 @@ def handle_give_cmd(message):
         try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
+# ================= РУЧНОЕ ВЫСТАВЛЕНИЕ СЧЕТА (КОМАНДА /bill) =================
+@bot.message_handler(commands=['bill', 'invoice', 'счет'])
+def handle_manual_bill(message):
+    # Команда работает только в группе админов
+    if str(message.chat.id) != str(STAFF_GROUP_ID): 
+        return
+    
+    # Проверяем, что команда написана внутри конкретного топика юзера
+    if not message.is_topic_message:
+        try: bot.reply_to(message, "❌ Эту команду нужно использовать внутри топика конкретного пользователя.")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+
+    # Парсим сумму из команды
+    args = message.text.split()
+    if len(args) != 2 or not args[1].isdigit():
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/bill [сумма]`\n\n*Пример:* `/bill 750`", parse_mode="Markdown")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+        
+    amount = int(args[1])
+    if amount < 1 or amount > 50000:
+        try: bot.reply_to(message, "❌ Сумма должна быть от 1 до 50 000 звёзд.")
+        except: pass
+        return
+
+    thread_id = message.message_thread_id
+    
+    # Ищем, кому принадлежит этот топик
+    user_data = paid_collection.find_one({"thread_id": thread_id})
+    if not user_data:
+        try: bot.reply_to(message, "❌ Не удалось найти пользователя, привязанного к этому топику (возможно, он уже закрыт).")
+        except: pass
+        return
+        
+    target_uid = user_data["uid"]
+
+    try:
+        # Проверяем баланс кэшбека юзера, как при обычных штрафах
+        cb_balance = user_data.get("cashback_balance", 0)
+        cost_in_rub = amount * 2
+        
+        # Генерируем ссылки CryptoBot (так как мы вызываем это из админки)
+        # Убедись, что get_crypto_pay_url импортирован в начале файла!
+        url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+        url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+        
+        # Собираем такую же клавиатуру, как в handle_admin_templates (fine_custom)
+        markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+        
+        if cb_balance >= cost_in_rub:
+            markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+        elif cb_balance > 0:
+            remaining_stars = amount - (cb_balance // 2)
+            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+        else:
+            markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+        
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+            
+        # Отправляем юзеру счет
+        bot.send_message(
+            target_uid, 
+            f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", 
+            reply_markup=markup, 
+            parse_mode="Markdown"
+        )
+        
+        # Подтверждаем в админке
+        bot.reply_to(message, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю!**", parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.warning(f"Ошибка при ручном выставлении счета через команду: {e}")
+        try: bot.reply_to(message, f"❌ Произошла ошибка при отправке счета: {e}")
+        except: pass
+
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
