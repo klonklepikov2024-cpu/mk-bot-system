@@ -721,53 +721,6 @@ def handle_force_unban(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
 
-@bot.message_handler(func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
-def handle_admin_replies(message):
-    thread_id = message.message_thread_id
-    user_data = paid_collection.find_one({"thread_id": thread_id})
-    
-    if not user_data: 
-        # Если админ пишет в уже закрытый топик — бот просто молча игнорирует это
-        return
-        
-    target_uid = user_data["uid"]
-
-    paid_collection.update_one({"uid": target_uid}, {"$set": {"topic_type": "manual"}})
-    try: bot.copy_message(target_uid, STAFF_GROUP_ID, message.message_id)
-    except: logger.warning(f"Ошибка ручного ответа админа юзеру {target_uid}")
-
-@bot.message_handler(commands=['give'])
-def handle_give_cmd(message):
-    if str(message.chat.id) != str(STAFF_GROUP_ID): return
-        
-    args = message.text.split()
-    if len(args) != 4:
-        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        return
-        
-    try:
-        target_uid = int(args[1])
-        currency = args[2].lower()
-        amount = int(args[3])
-        
-        if currency in ['points', 'очки']:
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
-            bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
-            try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-            
-        elif currency in ['shards', 'осколки']:
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
-            bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
-            try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        else:
-            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
-    except ValueError:
-        try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
 # ================= РУЧНОЕ ВЫСТАВЛЕНИЕ СЧЕТА (КОМАНДА /bill) =================
 @bot.message_handler(commands=['bill', 'invoice', 'счет'])
 def handle_manual_bill(message):
@@ -844,6 +797,53 @@ def handle_manual_bill(message):
         logger.warning(f"Ошибка при ручном выставлении счета через команду: {e}")
         try: bot.reply_to(message, f"❌ Произошла ошибка при отправке счета: {e}")
         except: pass
+
+@bot.message_handler(func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
+def handle_admin_replies(message):
+    thread_id = message.message_thread_id
+    user_data = paid_collection.find_one({"thread_id": thread_id})
+    
+    if not user_data: 
+        # Если админ пишет в уже закрытый топик — бот просто молча игнорирует это
+        return
+        
+    target_uid = user_data["uid"]
+
+    paid_collection.update_one({"uid": target_uid}, {"$set": {"topic_type": "manual"}})
+    try: bot.copy_message(target_uid, STAFF_GROUP_ID, message.message_id)
+    except: logger.warning(f"Ошибка ручного ответа админа юзеру {target_uid}")
+
+@bot.message_handler(commands=['give'])
+def handle_give_cmd(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+        
+    args = message.text.split()
+    if len(args) != 4:
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+        
+    try:
+        target_uid = int(args[1])
+        currency = args[2].lower()
+        amount = int(args[3])
+        
+        if currency in ['points', 'очки']:
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+            bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        elif currency in ['shards', 'осколки']:
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
+            bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        else:
+            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
+    except ValueError:
+        try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
