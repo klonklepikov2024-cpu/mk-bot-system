@@ -8,7 +8,17 @@ APP_URL = os.getenv("APP_URL")
 PORT = int(os.environ.get('PORT', 5000))
 # Токен для нейросети STT (Groq)
 import os
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Основной ключ (оставляем как было для других файлов, чтобы не сломать фото-зрение)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+# Дополнительные ключи для пула
+GROQ_API_KEY_2 = os.environ.get("GROQ_API_KEY_2")
+GROQ_API_KEY_3 = os.environ.get("GROQ_API_KEY_3")
+
+# Собираем все ключи в один список.
+# Конструкция "if key" защитит от ошибки, если ты вдруг забыл прописать переменную на Рендере — скрипт просто проигнорирует пустую строку.
+GROQ_API_KEYS = [key for key in [GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3] if key]
 
 # Проверка критических переменных при запуске
 if not BOT_TOKEN or not MONGO_URI:

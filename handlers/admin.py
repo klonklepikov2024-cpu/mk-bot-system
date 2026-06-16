@@ -8,7 +8,7 @@ import json
 import time
 import base64
 import threading
-from config import GROQ_API_KEY
+from config import GROQ_API_KEY, GROQ_API_KEYS
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
@@ -1416,32 +1416,50 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 Ответ строго в JSON:
 {{"action": "название_действия", "reason": "твоя логика", "response_text": "твой УНИКАЛЬНЫЙ ответ юзеру (заполнять ТОЛЬКО для reply_text)"}}"""
 
-        # ================== 5. ЗАПУСК ИИ ==================
-        thinking_msg = bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет анализирует тикет...*", message_thread_id=thread_id, parse_mode="Markdown")
+        # ================== 5. ЗАПУСК ИИ (ПУЛ КЛЮЧЕЙ) ==================
+        try:
+            thinking_msg = bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет анализирует тикет...*", message_thread_id=thread_id, parse_mode="Markdown")
+        except:
+            thinking_msg = None
 
-        for attempt in range(2):
-            response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "response_format": {"type": "json_object"},
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": 350
-                },
-                timeout=20
-            )
-            if response.status_code == 429:
-                time.sleep(2)
+        response = None
+        # Перебираем все доступные ключи из нашего пула по очереди
+        for key in GROQ_API_KEYS:
+            try:
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "response_format": {"type": "json_object"},
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 350
+                    },
+                    timeout=20
+                )
+                
+                # Если словили лимит, ругаемся в логи и идем к следующему ключу!
+                if response.status_code == 429:
+                    logger.warning(f"⚠️ Ключ {key[:8]}... словил лимит токенов (429)! Переключаюсь на резервный...")
+                    continue 
+                
+                # Если ответ 200 (успех) или любая другая ошибка - прерываем перебор ключей
+                break 
+                
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"⚠️ Сбой соединения на ключах. Ошибка: {e}")
                 continue
-            break
 
-        try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
-        except: pass
+        # Удаляем сообщение "Скайнет думает"
+        if thinking_msg:
+            try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
+            except: pass
 
-        if response.status_code != 200:
-            raise Exception(f"API Error {response.status_code}: {response.text}")
+        # Если мы перебрали ВСЕ ключи, и ни один не сработал
+        if not response or response.status_code != 200:
+            error_details = response.text if response else "Нет ответа от серверов Groq"
+            raise Exception(f"Все резервные ключи исчерпаны! API Error: {error_details}")
 
         result = json.loads(response.json()["choices"][0]["message"]["content"])
         action = result.get("action", "transfer_to_human")
