@@ -1056,7 +1056,17 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
             response = requests.post(url, headers=headers, files=files, data=data)
 
         if response.status_code == 200:
-            text = response.json().get("text", "").lower()
+            raw_text = response.json().get("text", "").lower()
+            
+            # 🔥 ДЕШИФРАТОР АНГЛИЙСКОГО WHISPER (Защита от sokol39) 🔥
+            translit_fixes = {
+                "sokol": "сокол", "yabloko": "яблоко", "tigr": "тигр",
+                "solnce": "солнце", "more": "море", "raketa": "ракета",
+                "veter": "ветер", "mayak": "маяк"
+            }
+            text = raw_text
+            for eng, rus in translit_fixes.items():
+                text = text.replace(eng, rus)
             
             parts = secret_code.lower().split('-')
             word = parts[0]
@@ -1080,7 +1090,6 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                 if has_face:
                     # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ И ЛИЦО НАЙДЕНО
                     
-                    # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем успешный вердикт
                     speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер четко сказал: «{text}». Код подтвержден на {score}%. Лицо в кадре найдено. Я автоматически разбанил юзера."
                     paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
                     
@@ -1091,12 +1100,10 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     now = datetime.datetime.now()
                     ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
                     
-                    # Приказ Скайнету и запись в базу
                     db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
                     db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
                     db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
                     
-                    # Уведомление пользователя
                     try:
                         bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
                         markup = InlineKeyboardMarkup(row_width=5).add(
@@ -1110,12 +1117,10 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     
                     archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
                     
-                    # Убираем кнопки с видео в админке
                     if video_msg_id:
                         try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
                         except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
                     
-                    # Закрываем топик
                     try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
                     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
@@ -1125,7 +1130,7 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     
                 else:
                     # ⚠️ ГОЛОС ВЕРНЫЙ, НО ЛИЦА НЕТ (КАМЕРА В ПОТОЛОК ИЛИ ТЕМНОТА)
-                    speech_memory = f"Юзер сказал правильный текст («{text}»), но моя зрительная нейросеть не нашла лицо в кадре. Я оставил тикет открытым для ручной проверки админом. Возможно он прячет лицо."
+                    speech_memory = f"Юзер сказал правильный текст («{text}»), но моя зрительная нейросеть не нашла лицо в кадре. Я оставил тикет открытым для ручной проверки админом."
                     paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
                     
                     verdict = f"⚠️ **Текст верный ({score}%), НО ИИ не увидел лицо в кадре!**\n_Возможно, темно или камера направлена в пол. Проверьте кружок визуально!_"
@@ -1133,15 +1138,29 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
 
             else:
-                # Если совпадение текста меньше 80%, оставляем админам
+                # 🔥 НОВОЕ: ИИ САМ ОТБРАКОВЫВАЕТ КРУЖОК И ДАЕТ ОБРАТНУЮ СВЯЗЬ ЮЗЕРУ 🔥
                 
-                # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем негативный вердикт
-                speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер сказал: «{text}». Это неверно (совпадение {score}%). Я отклонил кружок, ждем решения админа. Если юзер спрашивает, что не так — объясни, что он ошибся во фразе."
+                speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер сказал: «{text}». Это неверно (совпадение {score}%). Я автоматически отклонил видео и попросил его написать «Готов» заново. Если он спросит, что не так — объясни, что он промямлил или перепутал слова."
                 paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
                 
-                verdict = f"⚠️ **Совпадение текста низкое ({score}%). Требуется ручная проверка.**"
+                # Сбрасываем код и таймер, чтобы заставить его написать "Готов" заново (Защита от спама кружками)
+                paid_collection.update_one({"uid": uid}, {"$unset": {"secret_code": "", "verif_timer": ""}})
+                
+                verdict = f"⚠️ **Совпадение текста низкое ({score}%). Скайнет АВТОМАТИЧЕСКИ отклонил видео.**"
                 msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
                 bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                
+                # Убираем кнопки (✅ / ❌) с видео у админов, так как ИИ уже всё решил
+                if video_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
+                    except: pass
+                
+                # 💬 ПИШЕМ ЮЗЕРУ!
+                bot.send_message(
+                    uid, 
+                    "❌ **Видео-кружок не принят нейросетью.**\n\nСкайнет не смог четко расслышать секретную фразу, или вы перепутали слова. Возможно, на фоне играла музыка.\n\n🔄 **Напишите слово «Готов»**, чтобы получить новый код и записать видео заново (говорите громко и четко!).", 
+                    parse_mode="Markdown"
+                )
 
     except Exception as e:
         logger.error(f"Ошибка STT (Голос ИИ): {e}")
@@ -1302,29 +1321,34 @@ def process_ticket_with_ai(uid, user_text, thread_id):
     try:
         # ================== 1. ЛЕГКИЙ АНАЛИЗ ДОСЬЕ (Python) ==================
         user_record = archive_collection.find_one({"target": str(uid)})
-        ban_type = "basic"
-        dossier_lines = ["История чиста."]
+        
+        # 🔥 ПО УМОЛЧАНИЮ: Если история пуста, это Карантин новорега или Нет подписки.
+        # Им мы как раз ДОЛЖНЫ выдавать инструкцию с кружком!
+        ban_type = "basic" 
+        dossier_lines = ["История пуста. Вероятно, это системный карантин (120ч) или отсутствие подписки."]
 
-        if user_record and "history" in user_record:
+        if user_record and "history" in user_record and len(user_record["history"]) > 0:
             recent = user_record["history"][-3:]  # Берем 3 последних для текста досье
             dossier_lines = [f"• {e.get('date', '')}: {e.get('action', '')} | {e.get('reason', '')} | {e.get('evidence_summary', '')}" for e in recent]
             
-            # 🔥 ИСПРАВЛЕНИЕ: Ищем причину ТОЛЬКО в самой последней записи...
             latest_entry = recent[-1] if recent else {}
             latest_text = f"{latest_entry.get('action', '')} {latest_entry.get('reason', '')} {latest_entry.get('evidence_summary', '')}".upper()
-            
-            # 🔥 НОВОЕ: Полный текст истории только для поиска ТЯЖКИХ преступлений (Наркотики), которые не имеют срока давности
             full_text = " ".join([f"{e.get('action', '')} {e.get('reason', '')} {e.get('evidence_summary', '')}" for e in recent]).upper()
 
-            # 1. СНАЧАЛА ПРОВЕРЯЕМ ТЯЖКИЕ НАРУШЕНИЯ ПО ВСЕЙ ИСТОРИИ (Они перебивают всё)
+            # 1. СНАЧАЛА ПРОВЕРЯЕМ ТЯЖКИЕ НАРУШЕНИЯ (Наркотики) ПО ВСЕЙ ИСТОРИИ
             if any(x in full_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
                 ban_type = "nark"
-            # 2. ЕСЛИ КРИМИНАЛА НЕТ - СМОТРИМ ТОЛЬКО НА ПОСЛЕДНИЙ БАН (Чтобы не путать старый возраст и новую коммерцию)
+                
+            # 🔥 2. ПРОВЕРЯЕМ НА АМНИСТИЮ: Если последнее действие - это снятие бана, юзер ЧИСТ!
+            elif any(x in latest_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
+                ban_type = "clean"
+                
+            # 3. ЕСЛИ НЕ АМНИСТИРОВАН - ИЩЕМ ПРИЧИНУ ПОСЛЕДНЕГО БАНА
             elif any(x in latest_text for x in ["ЧЕРНАЯ ЗОНА", "ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "НЕСОВЕРШЕННОЛЕТ", "<18", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ"]):
                 ban_type = "age"
             elif any(x in latest_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
                 ban_type = "may_1"
-            elif any(x in latest_text for x in ["НЕ ВАЛИДНА", "ТАЙМАУТ 24Ч", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ"]):
+            elif any(x in latest_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
                 ban_type = "failed_verif"
             elif any(x in latest_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ"]):
                 ban_type = "commercial"
@@ -1341,7 +1365,10 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         dialogue_context = "\n".join([f"{'👤 Юзер' if m['role']=='user' else '🤖 Скайнет'}: {m['content']}" for m in user_data.get("dialog_history", [])[-4:]])
 
         # ================== 3. ДИНАМИЧЕСКИЙ ПРАЙС-ЛИСТ И ПРАВИЛА ==================
-        if ban_type == "basic":
+        if ban_type == "clean":
+            behavior_rules = """3. ЧИСТАЯ ИСТОРИЯ: У пользователя НЕТ нарушений в базе (он амнистирован или чист). Если он жалуется на мут/блокировку, вежливо объясни ему, что со стороны модерации никаких ограничений нет. Возможно, это временный системный баг Telegram, либо он забыл подписаться на основной канал сети. Отвечай вежливо и конструктивно (выбирай `reply_text`). КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить записывать видео-кружок, упоминать слово «Готов» или требовать штраф!"""
+        
+        elif ban_type == "basic":
             behavior_rules = """3. БАЗОВЫЙ МУТ: Если юзер просит верификацию ("верификацию пожалуйста", "хочу верификацию", "пройти проверку") или спрашивает "как разбаниться?" -> СТРОГО выбирай действие `tpl_verif` (в этом шаблоне уже зашита идеальная инструкция, не пытайся писать ее сам). Если юзер просто не понимает, что произошло, и спрашивает "что это такое?" или "за что бан?" -> ответь `reply_text`, используя Техническую Справку.
 4. ПРОДАЖА (650⭐️): Если юзер отказывается записывать видео (пишет "не хочу", "нет денег", "стесняюсь") -> выбирай `reply_text`. Саркастично высмей его отмазку и предложи откупиться за 650⭐️."""
         
@@ -1382,8 +1409,13 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 - "Видео-кружок" — это короткое круглое видеосообщение прямо в Telegram.
 - 🔑 КАК ЗАПУСТИТЬ ВЕРИФИКАЦИЮ: Юзер должен отправить ровно одно слово: «Готов». Только после этого скрипт выдаст ему код и запустит таймер! Если отправляешь юзера писать кружок — ВСЕГДА говори ему: "Напиши слово «Готов», чтобы получить код"."""
             dead_end_rule = """- Если мут за формат/возраст: СРАЗУ скажи: "Напиши слово «Готов», чтобы получить секретный код и записать видео-кружок для разбана.\""""
+            
+        elif ban_type == "clean":
+            # Юзер чист, никаких кружков и штрафов!
+            dead_end_rule = """- Юзер чист! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вымогать штрафы, отправлять на верификацию или просить слово «Готов». Просто помоги разобраться."""
+            
         else:
-            # Для коммерции, наркотиков, спама и прочего - ИИ вообще не знает про кружки!
+            # Для коммерции, наркотиков, спама и проваленных верификаций - ИИ вообще не знает про кружки!
             dead_end_rule = """- Если юзер должен оплатить штраф: Скажи ему "Ожидайте, администратор скоро выставит вам счет на оплату кнопкой в этот чат". КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов»!"""
 
         # ================== 4. УМНЫЙ ПРОМПТ ==================
