@@ -1849,6 +1849,27 @@ def handle_admin_panel_clicks(call):
     elif action == "give_shards":
         msg = bot.send_message(call.message.chat.id, "🧩 **Выдача ОСКОЛКОВ**\nОтправьте ID и количество (например: `123456 10`):", parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_admin_give_shards)
+
+# --- НОВЫЕ КНОПКИ МОДЕРАЦИИ ---
+    elif action == "mute":
+        msg = bot.send_message(call.message.chat.id, "🔇 **Выдать Мут**\nОтправьте ID пользователя и время в часах (например: `12345 24`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_mute)
+        
+    elif action == "city":
+        msg = bot.send_message(call.message.chat.id, "📍 **Сменить город**\nОтправьте ID пользователя и новый город (например: `12345 Москва`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_set_city)
+
+    # --- НОВАЯ КНОПКА ЭКОНОМИКИ ---
+    elif action == "invoice":
+        msg = bot.send_message(call.message.chat.id, "🧾 **Выставить счет (Штраф)**\nОтправьте ID пользователя и сумму (например: `12345 500`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_invoice)
+
+    # --- ЗАГЛУШКИ ДЛЯ АНАЛИТИКИ (Если функционал еще не написан) ---
+    elif action == "zreport":
+        bot.send_message(call.message.chat.id, "🚧 Функционал Z-Отчета находится в разработке...")
+
+    elif action == "cpa":
+        bot.send_message(call.message.chat.id, "🚧 CPA Статистика собирается... (Функционал в разработке)")
         
     # --- ПРОМОКОДЫ И АИРДРОПЫ ---
     elif action == "promo_vip":
@@ -1933,3 +1954,68 @@ def process_admin_set_tag(message):
         bot.send_message(message.chat.id, f"✅ Тег `{tag}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
     except:
         bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ТЕГ`")
+
+def process_admin_mute(message):
+    try:
+        parts = message.text.split()
+        uid = int(parts[0])
+        hours = int(parts[1])
+        
+        # Передаем задачу Скайнету (он читает базу skynet_tasks)
+        db['skynet_tasks'].insert_one({
+            "uid": uid,
+            "action": "global_mute",
+            "duration": hours * 3600,
+            "timestamp": datetime.datetime.now()
+        })
+        bot.send_message(message.chat.id, f"✅ Приказ на выдачу мута пользователю `{uid}` на **{hours} ч.** успешно передан Скайнету.", parse_mode="Markdown")
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ЧАСЫ` (например: 123456 24)")
+
+def process_admin_set_city(message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        uid = int(parts[0])
+        city = parts[1]
+        
+        db['users'].update_one({"_id": uid}, {"$set": {"main_city": city}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Город `{city}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ГОРОД` (например: 123456 Москва)")
+
+def process_admin_invoice(message):
+    try:
+        parts = message.text.split()
+        target_uid = int(parts[0])
+        amount = int(parts[1])
+        
+        user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
+        cb_balance = user_data_pay.get("cashback_balance", 0)
+        cost_in_rub = amount * 2
+        
+        url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+        url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+        
+        markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+        
+        if cb_balance >= cost_in_rub:
+            markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+        elif cb_balance > 0:
+            remaining_stars = amount - (cb_balance // 2)
+            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+        else:
+            markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+        
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+            
+        bot.send_message(
+            target_uid, 
+            f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", 
+            reply_markup=markup, 
+            parse_mode="Markdown"
+        )
+        bot.send_message(message.chat.id, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю `{target_uid}`!**", parse_mode="Markdown")
+        
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА` (например: 123456 500)")
