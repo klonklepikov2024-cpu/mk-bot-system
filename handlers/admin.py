@@ -12,7 +12,7 @@ from config import GROQ_API_KEY, GROQ_API_KEYS
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
-from config import STAFF_GROUP_ID
+from config import STAFF_GROUP_ID, OWNER_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
 from utils.templates import TEMPLATES, NETWORK_LINKS
@@ -368,7 +368,7 @@ def handle_buy_indulgence(call):
     if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
     
     # Возврат назад в меню
-    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_start"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="sec_back_main"))
 
     text = (
         "📜 **ПОКУПКА ИНДУЛЬГЕНЦИИ**\n\n"

@@ -29,7 +29,7 @@ def send_welcome(message):
             InlineKeyboardButton("🆘 Поддержка", callback_data="btn_unban")
         )
         markup.add(
-            InlineKeyboardButton("🚨 Подать жалобу", callback_data="sec_submit_report"), # <-- Жалобы теперь тут!
+            InlineKeyboardButton("🚨 Подать жалобу на нарушителя", callback_data="sec_submit_report"), # <-- Жалобы теперь тут!
             InlineKeyboardButton("🎰 Игровой Кабинет", callback_data="btn_game_club")    # <-- Вход в Метавселенную
         )
         markup.add(
@@ -72,7 +72,7 @@ def handle_user_query(call):
     # ================= ЛОГИКА КНОПКИ РАЗБАНА =================
     if call.data == "btn_unban":
         if user_data.get("strikes", 0) >= 3 and user_data.get("status") != 1:
-            bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.")
+            bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.\n\nДля разблокировки доступа напишите в службу поддержки: @FAQMKBOT")
             return 
 
         # ПРОВЕРКА ЩИТА ИММУНИТЕТА
@@ -108,13 +108,16 @@ def handle_user_query(call):
             if thread_id:
                 try:
                     bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
-                except Exception as e:
-                    logger.warning(f"Топик {thread_id} не удалось переоткрыть: {e}")
-                    
-                caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
-                bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
-                # 🔥 Добавили очистку памяти
-                paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
+                    caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
+                    bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
+                    paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
+                except ApiTelegramException as e:
+                    logger.warning(f"Топик {thread_id} мертв, создаем новый: {e}")
+                    topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
+                    thread_id = topic.message_thread_id
+                    paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}, "$unset": {"dialog_history": ""}}, upsert=True)
+                    caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡) [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
+                    bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
             else:
                 try:
                     topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
@@ -137,7 +140,7 @@ def handle_user_query(call):
             paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
             
             if new_strikes >= 3:
-                bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Обращения без оплаты игнорируются.")
+                bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.\n\nДля разблокировки доступа напишите в службу поддержки: @FAQMKBOT")
             else:
                 warning_text = f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 50 звезд.\n\nПопытка {new_strikes} из 3. После 3-й попытки бот вас заблокирует."
                 bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -153,37 +156,18 @@ def handle_user_query(call):
         if thread_id:
             try: 
                 bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
-            except Exception as e: 
-                logger.warning(f"Не удалось переоткрыть топик для рекламы {thread_id}: {e}")
-            
-            bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
-            paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
+                bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
+            except ApiTelegramException as e: 
+                logger.warning(f"Топик рекламы {thread_id} мертв, создаем новый: {e}")
+                topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
+                thread_id = topic.message_thread_id
+                paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
+                bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         else:
             topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
             thread_id = topic.message_thread_id
             paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
             bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         
-        return
-
-    # ================= ЛОГИКА КНОПКИ СЛУЖБЫ БЕЗОПАСНОСТИ =================
-    elif call.data == "btn_report":
-        points = user_data.get("bounty_points", 0)
-        if points <= -50:
-            bot.send_message(call.message.chat.id, "⛔️ **Доступ закрыт.**\nСлужба безопасности отключила вам доступ к системе жалоб из-за большого количества ложных доносов.")
-            return
-
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🚨 Подать жалобу на нарушителя", callback_data="sec_submit_report"),
-            InlineKeyboardButton(f"🎰 Игровой Кабинет ({points} очков)", callback_data="btn_game_club"), # <--- Ведем в новый Хаб!
-            InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main")
-        )
-        
-        text = (
-            "🛡 **Служба Безопасности МК**\n\n"
-            "Помогайте нам очищать чаты от спамеров, мошенников и нарушителей, и получайте за это баллы!\n\n"
-            "Накопленные баллы можно обменять на ценные скидки или VIP-статус."
-        )
-        bot.send_message(call.message.chat.id, text, reply_markup=markup)
         return
