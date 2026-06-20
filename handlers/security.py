@@ -1,5 +1,6 @@
 import random
 import string
+import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from core.bot import bot
@@ -39,56 +40,161 @@ def handle_security_menu(call):
             upsert=True
         )
         
-    elif call.data == "sec_agent_cabinet":
-        user_data = paid_collection.find_one({"uid": uid}) or {}
-        points = user_data.get("bounty_points", 0)
-        reports_count = user_data.get("successful_reports", 0)
-        shards = user_data.get("jackpot_shards", 0)
-        cb_balance = user_data.get("cashback_balance", 0)
+    # ================= 🎰 ГЛАВНЫЙ ИГРОВОЙ ХАБ =================
+@bot.callback_query_handler(func=lambda call: call.data == 'btn_game_club')
+def handle_game_club(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    shards = user_data.get("jackpot_shards", 0)
+    cb_balance = user_data.get("cashback_balance", 0)
 
-        markup = InlineKeyboardMarkup(row_width=2) 
+    markup = InlineKeyboardMarkup(row_width=2)
+    # 1 ряд: Рулетка и Призы
+    markup.add(
+        InlineKeyboardButton("🎰 Рулетка (-50)", callback_data="play_roulette_btn"),
+        InlineKeyboardButton("🏆 Призы", callback_data="show_prizes_btn")
+    )
+    # 2 ряд: Бонусы и Крафт
+    markup.add(
+        InlineKeyboardButton("📅 Бонус", callback_data="btn_daily_bonus"),
+        InlineKeyboardButton("🎒 Инвентарь и Ломбард", callback_data="forge_main")
+    )
+    # 3 ряд: Покупки и Заработок
+    markup.add(
+        InlineKeyboardButton("🛒 Магазин скидок", callback_data="shop_rewards_menu"),
+        InlineKeyboardButton("🔗 Заработать (CPA)", callback_data="cpa_menu")
+    )
+    # Вывод денег, если есть
+    if cb_balance > 0:
+        markup.add(InlineKeyboardButton(f"💸 Вывести средства ({cb_balance}₽)", callback_data="request_cashback_payout"))
         
-        if cb_balance > 0:
-            markup.add(InlineKeyboardButton(f"💸 Вывести / Потратить ({cb_balance}₽)", callback_data="request_cashback_payout"))
+    markup.add(InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main"))
 
-        markup.add(
-            InlineKeyboardButton("🎫 -25% Штраф (30)", callback_data="buy_reward_fine25_30"),
-            InlineKeyboardButton("🎫 -50% Штраф (60)", callback_data="buy_reward_fine50_60")
-        )
-        markup.add(
-            InlineKeyboardButton("💎 -50% VIP (100)", callback_data="buy_reward_vip50_100"),
-            InlineKeyboardButton("📢 -50% Реклама (150)", callback_data="buy_reward_ads50_150")
-        )
-        markup.add(
-            InlineKeyboardButton("👑 VIP-билет БЕСПЛАТНО (300)", callback_data="buy_reward_vip100_300")
-        )
-        markup.add(InlineKeyboardButton("💳 ПОПОЛНИТЬ БАЛАНС (Купить очки)", callback_data="shop_points_menu"))
+    text = (
+        f"🎰 **ИГРОВОЙ КАБИНЕТ СКАЙНЕТА**\n\n"
+        f"💰 Очки Бдительности: **{points}**\n"
+        f"🧩 Осколки рулетки: **{shards} шт.**\n"
+        f"💵 Рублевый счет: **{cb_balance} руб.**\n\n"
+        f"Выберите раздел:"
+    )
+    try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
+
+# ================= 🛒 ПАПКА: МАГАЗИН СКИДОК =================
+@bot.callback_query_handler(func=lambda call: call.data == 'shop_rewards_menu')
+def handle_shop_rewards_menu(call):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🎫 -25% Штраф (30)", callback_data="buy_reward_fine25_30"),
+        InlineKeyboardButton("🎫 -50% Штраф (60)", callback_data="buy_reward_fine50_60")
+    )
+    markup.add(
+        InlineKeyboardButton("💎 -50% VIP (100)", callback_data="buy_reward_vip50_100"),
+        InlineKeyboardButton("📢 -50% Реклама (150)", callback_data="buy_reward_ads50_150")
+    )
+    markup.add(
+        InlineKeyboardButton("👑 VIP-билет БЕСПЛАТНО (300)", callback_data="buy_reward_vip100_300")
+    )
+    markup.add(InlineKeyboardButton("💳 Купить очки за ⭐️", callback_data="shop_points_menu"))
+    markup.add(InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_gift_code"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
+    
+    try: bot.edit_message_text("🛒 **Магазин Скидок и Услуг**\nОбменивайте заработанные очки на полезные купоны:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    except: pass
+
+# ================= ⚒ ПАПКА: ИНВЕНТАРЬ И ЛОМБАРД (КРАФТ) =================
+@bot.callback_query_handler(func=lambda call: call.data == 'forge_main')
+def handle_forge_main(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    shields = user_data.get("immunity", 0)
+    shards = user_data.get("jackpot_shards", 0)
+    orders = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    
+    if shards >= 50:
+        markup.add(InlineKeyboardButton("🧩 СОБРАТЬ ДЖЕКПОТ (50 осколков)", callback_data="exchange_shards"))
+    else:
+        markup.add(InlineKeyboardButton(f"🧩 Копите осколки ({shards}/50)", callback_data="dummy_shards"))
         
-        if shards >= 50:
-            markup.add(InlineKeyboardButton("🧩 СОБРАТЬ ДЖЕКПОТ (50 осколков)", callback_data="exchange_shards"))
-        else:
-            markup.add(InlineKeyboardButton(f"🧩 Копите осколки ({shards}/50)", callback_data="dummy_shards"))
-            
-        markup.add(InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_gift_code"))
-        markup.add(InlineKeyboardButton("🔗 CPA: Заработать на рекламе", callback_data="cpa_menu"))
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_report"))
+    markup.add(InlineKeyboardButton("✨ Скрафтить BEYOND-статус", callback_data="forge_craft_beyond"))
+    markup.add(InlineKeyboardButton("♻️ Сдать промокод (Ломбард)", callback_data="forge_pawn_promo"))
+    
+    if shields > 0:
+        markup.add(InlineKeyboardButton(f"👼 Призвать Ангела (Сжечь 1 щит)", callback_data="inv_use_angel"))
+    if orders > 0:
+        markup.add(InlineKeyboardButton(f"🚓 Использовать Ордер", callback_data="inv_use_arrest"))
+        
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
+    
+    text = (
+        "⚒ **ИНВЕНТАРЬ И ТЕНЕВОЙ ЛОМБАРД**\n\n"
+        f"🛡 Щиты Иммунитета: **{shields} шт.**\n"
+        f"🚓 Ордера на арест: **{orders} шт.**\n\n"
+        "Здесь вы можете использовать свои артефакты, переплавить ненужные промокоды обратно в ресурсы или скрафтить элитный статус."
+    )
+    try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
 
-        try:
-            bot.edit_message_text(
-                f"🕵️‍♂️ **Ваш профиль Агента**\n\n"
-                f"💰 Баланс: **{points} очков**\n"
-                f"💵 Рублевый счет: **{cb_balance} руб.**\n"
-                f"📊 Успешных жалоб: **{reports_count}**\n"
-                f"🧩 Осколки рулетки: **{shards} шт.**\n\n"
-                f"💡 _Очки можно зарабатывать бесплатными жалобами на спамеров, либо просто купить, нажав кнопку **«ПОПОЛНИТЬ БАЛАНС»**._\n\n"
-                f"*Выберите действие:*",
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.warning(f"Ошибка редактирования кабинета агента {uid}: {e}")
+@bot.callback_query_handler(func=lambda call: call.data == 'forge_craft_beyond')
+def handle_craft_beyond(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    shields = user_data.get("immunity", 0)
+    
+    # Проверяем, есть ли уже статус
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    if u_info.get("is_queer"):
+        try: bot.answer_callback_query(call.id, "❌ У вас уже есть максимальный статус BEYOND!", show_alert=True)
+        except: pass
+        return
+        
+    # ЦЕНА КРАФТА: 3000 очков и 2 щита
+    CRAFT_POINTS = 3000
+    CRAFT_SHIELDS = 2
+    
+    if points < CRAFT_POINTS or shields < CRAFT_SHIELDS:
+        try: bot.answer_callback_query(call.id, f"❌ Не хватает ресурсов!\nНужно: {CRAFT_POINTS} очков и {CRAFT_SHIELDS} щита.", show_alert=True)
+        except: pass
+        return
+        
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}})
+    db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
+    
+    try: bot.edit_message_text("🔮 **КРАФТ УСПЕШЕН!**\n\nЭнергия щитов и очков слилась воедино...\nВы получили элитный статус **BEYOND (QUEER)**! 🏳️‍🌈\nТеперь вам доступны все закрытые функции сети.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data == 'forge_pawn_promo')
+def handle_pawn_promo(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    msg = bot.send_message(call.message.chat.id, "♻️ **Ломбард Промокодов**\n\nОтправьте мне любой рабочий промокод (например, на VIP или Рекламу), и я переплавлю его в **Осколки Джекпота**:")
+    bot.register_next_step_handler(msg, process_pawn_promo)
+
+def process_pawn_promo(message):
+    if message.text == '/start':
+        from handlers.start_menu import send_welcome
+        send_welcome(message)
+        return
+        
+    code = message.text.strip().upper()
+    uid = message.from_user.id
+    
+    promo = db['promocodes'].find_one({"_id": code, "is_active": True})
+    if not promo or promo.get("used_count", 0) >= promo.get("usage_limit", 1):
+        bot.send_message(message.chat.id, "❌ Промокод не найден, уже использован или сгорел.")
+        return
+        
+    # VIP-код дает 10 осколков, обычный - 5
+    shards_reward = 10 if promo.get("target") == "vip" else 5
+    
+    db['promocodes'].delete_one({"_id": code})
+    paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}}, upsert=True)
+    
+    bot.send_message(message.chat.id, f"♻️ **Успешная переплавка!**\n\nПромокод `{code}` уничтожен.\nВы получили: **+{shards_reward} Осколков рулетки** 🧩!", parse_mode="Markdown")
 
 # ================= НАГРАДЫ И ПРОМОКОДЫ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_reward_'))
@@ -171,7 +277,7 @@ def handle_cashback_request(call):
         InlineKeyboardButton("💳 На банковскую карту (от 3500₽)", callback_data=f"paymeth_card_{cb_balance}"),
         InlineKeyboardButton("📱 На баланс телефона (от 500₽)", callback_data=f"paymeth_phone_{cb_balance}"),
         InlineKeyboardButton("💎 В крипте USDT (от 500₽)", callback_data=f"paymeth_crypto_{cb_balance}"),
-        InlineKeyboardButton("🔙 Отмена", callback_data="sec_agent_cabinet")
+        InlineKeyboardButton("🔙 Отмена", callback_data="btn_game_club")
     )
     
     try:
@@ -288,7 +394,7 @@ def handle_cpa_network(call):
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
             InlineKeyboardButton("🔗 Сгенерировать ссылку", callback_data="cpa_generate"),
-            InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet")
+            InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")
         )
         text = (
             f"💼 **Партнерская CPA-Сеть**\n\n"
@@ -355,31 +461,44 @@ def handle_shards_exchange(call):
     try: bot.answer_callback_query(call.id, "Сборка джекпота...")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
+    # Списываем 50 осколков
     paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
     
-    is_vip = random.choice([True, False])
-    if is_vip:
+    # 🔥 НОВАЯ МЕХАНИКА ШАНСОВ (60% VIP, 30% Щит, 10% TG Premium) 🔥
+    chance = random.randint(1, 100)
+    
+    if chance <= 60:
+        # 60% ШАНС: VIP-БИЛЕТ СО СГОРАНИЕМ (72 часа)
         code = f"JACKPOT-{random.randint(1000, 9999)}"
+        import datetime
         db['promocodes'].insert_one({
             "_id": code, "type": "percent", "value": 100, "target": "vip",
-            "usage_limit": 1, "used_count": 0, "is_active": True
+            "usage_limit": 1, "used_count": 0, "is_active": True,
+            "expires_at": datetime.datetime.now() + datetime.timedelta(hours=72) # ⏳ ТАЙМЕР СМЕРТИ
         })
-        msg = f"🎉 **ПОЗДРАВЛЯЕМ!** 🎉\n\nВы собрали из осколков **Золотой Билет (VIP-доступ)**!\nВаш промокод: `{code}`\n\n_Сохраните его и введите при оплате._"
-    else:
+        msg = f"🎉 **ПОЗДРАВЛЯЕМ!** 🎉\n\nВы собрали из осколков **Золотой Билет (VIP-доступ)**!\nВаш промокод: `{code}`\n\n⏳ _Внимание! Код сгорит ровно через 72 часа, успейте использовать или подарить его!_"
+        
+        try:
+            bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")))
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    elif chance <= 90:
+        # 30% ШАНС: ЩИТ ИММУНИТЕТА
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
         msg = f"🛡 **ПОЗДРАВЛЯЕМ!** 🛡\n\nВы собрали из осколков **Щит Иммунитета**!\nВаш аккаунт теперь защищен от одного случайного нарушения или страйка."
         
-    try:
-        bot.edit_message_text(
-            msg, chat_id=call.message.chat.id, message_id=call.message.message_id, 
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В кабинет", callback_data="sec_agent_cabinet"))
-        )
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        try:
+            bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")))
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data == 'dummy_shards')
-def handle_dummy_shards(call):
-    try: bot.answer_callback_query(call.id, "🧩 Соберите 50 осколков из неудачных прокруток рулетки, чтобы гарантированно получить Супер-Приз!", show_alert=True)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    else:
+        # 10% ШАНС: TELEGRAM PREMIUM (СУПЕР-ПРИЗ)
+        msg = "💎 **О БОЖЕ, ЭТО ДЖЕКПОТ!!!** 💎\n\nВы выиграли **100% Супер-Приз (Telegram Premium)**! 🎉\n\nНажмите кнопку ниже, чтобы оформить заявку на получение подписки:"
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎁 Забрать Premium", callback_data="claim_premium"))
+        
+        try:
+            bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('trade_'))
 def handle_trade_in(call):
@@ -680,3 +799,172 @@ def handle_fsm_states(message):
             user_state.get("call_msg_chat_id"), 
             user_state.get("call_msg_id")
         )
+
+# ================= КНОПКИ КАБИНЕТА: БОНУС И ИНВЕНТАРЬ =================
+@bot.callback_query_handler(func=lambda call: call.data == 'btn_daily_bonus')
+def handle_btn_daily_bonus(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    last_bonus = user_data.get("last_bonus_date")
+    now = datetime.datetime.now()
+
+    if last_bonus:
+        time_diff = (now - last_bonus).total_seconds()
+        if time_diff < 86400: 
+            hours_left = int((86400 - time_diff) // 3600)
+            mins_left = int(((86400 - time_diff) % 3600) // 60)
+            try: bot.answer_callback_query(call.id, f"⏳ Рано! Возвращайтесь через {hours_left} ч. {mins_left} мин.", show_alert=True)
+            except: pass
+            return
+
+    bonus_points = random.randint(15, 50)
+    bonus_shards = 1 if random.randint(1, 100) <= 5 else 0 
+    
+    paid_collection.update_one(
+        {"uid": uid}, 
+        {"$inc": {"bounty_points": bonus_points, "jackpot_shards": bonus_shards}, "$set": {"last_bonus_date": now}}, 
+        upsert=True
+    )
+    
+    msg = f"🎁 **Получен ежедневный бонус!**\nВы нашли **+{bonus_points} очков**!"
+    if bonus_shards > 0: msg += "\nИ редкий дроп: **+1 Осколок рулетки!** 🧩"
+    
+    try: bot.answer_callback_query(call.id, msg, show_alert=True)
+    except: pass
+    # Перезагружаем кабинет, чтобы обновились цифры
+    handle_security_menu(call) 
+
+@bot.callback_query_handler(func=lambda call: call.data == 'btn_my_inventory')
+def handle_btn_inventory(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    shields = user_data.get("immunity", 0)
+    
+    # Ищем ордера юзера в базе промокодов
+    orders = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    if shields > 0:
+        markup.add(InlineKeyboardButton(f"👼 Использовать Ангела-Хранителя (Сжечь 1 щит)", callback_data="inv_use_angel"))
+    if orders > 0:
+        markup.add(InlineKeyboardButton(f"🚓 Использовать Ордер на арест", callback_data="inv_use_arrest"))
+        
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
+    
+    text = f"🎒 **Ваш Инвентарь Артефактов**\n\n🛡 Щиты Иммунитета: **{shields} шт.**\n🚓 Ордера на арест: **{orders} шт.**\n\n_Щиты срабатывают автоматически при нарушениях, но вы также можете потратить их, чтобы разбанить друга!_"
+    try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data == 'inv_use_angel')
+def handle_inv_angel(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    msg = bot.send_message(call.message.chat.id, "👼 **Ангел-Хранитель**\n\nНапишите ID пользователя (друга), с которого нужно снять все блокировки и страйки за счет вашего Щита:")
+    bot.register_next_step_handler(msg, process_angel_id)
+
+def process_angel_id(message):
+    uid = message.from_user.id
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ Ошибка: ID должен состоять только из цифр.")
+        return
+        
+    target_uid = int(message.text)
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if user_data.get("immunity", 0) < 1:
+        bot.send_message(message.chat.id, "❌ У вас нет активных Щитов Иммунитета!")
+        return
+        
+    paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
+    db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+    
+    bot.send_message(message.chat.id, f"👼 **Магия сработала!** Вы спасли пользователя `{target_uid}`. Приказ передан Скайнету!", parse_mode="Markdown")
+    try: bot.send_message(target_uid, "👼 **ЧУДО!** Кто-то из друзей пожертвовал своим Щитом, чтобы спасти вас! Все блокировки сняты.")
+    except: pass
+
+# ================= ⚒ ТЕНЕВОЙ ЛОМБАРД И КУЗНИЦА =================
+@bot.callback_query_handler(func=lambda call: call.data == 'forge_main')
+def handle_forge_main(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    shields = user_data.get("immunity", 0)
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✨ Скрафтить BEYOND-статус", callback_data="forge_craft_beyond"),
+        InlineKeyboardButton("♻️ Сдать промокод (Ломбард)", callback_data="forge_pawn_promo"),
+        InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")
+    )
+    
+    text = (
+        "⚒ **ТЕНЕВОЙ ЛОМБАРД СКАЙНЕТА**\n\n"
+        "Здесь вы можете переплавить ненужные вещи в полезные ресурсы или создать элитный статус.\n\n"
+        f"📦 **Ваши ресурсы:**\n"
+        f"💰 Очки: **{points}**\n"
+        f"🛡 Щиты: **{shields}**\n\n"
+        "Выберите действие:"
+    )
+    try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
+    
+@bot.callback_query_handler(func=lambda call: call.data == 'forge_craft_beyond')
+def handle_craft_beyond(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    shields = user_data.get("immunity", 0)
+    
+    # Проверяем, есть ли уже статус
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    if u_info.get("is_queer"):
+        try: bot.answer_callback_query(call.id, "❌ У вас уже есть максимальный статус BEYOND!", show_alert=True)
+        except: pass
+        return
+        
+    # ЦЕНА КРАФТА (Можно поменять под твою экономику)
+    CRAFT_POINTS = 3000
+    CRAFT_SHIELDS = 2
+    
+    if points < CRAFT_POINTS or shields < CRAFT_SHIELDS:
+        try: bot.answer_callback_query(call.id, f"❌ Не хватает ресурсов!\nНужно: {CRAFT_POINTS} очков и {CRAFT_SHIELDS} щита.", show_alert=True)
+        except: pass
+        return
+        
+    # Списываем ресы
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}})
+    # Выдаем статус
+    db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
+    
+    try: bot.edit_message_text("🔮 **КРАФТ УСПЕШЕН!**\n\nЭнергия щитов и очков слилась воедино...\nВы получили элитный статус **BEYOND (QUEER)**! 🏳️‍🌈\nТеперь вам доступны все закрытые функции сети.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data == 'forge_pawn_promo')
+def handle_pawn_promo(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    msg = bot.send_message(call.message.chat.id, "♻️ **Ломбард Промокодов**\n\nОтправьте мне любой рабочий промокод (например, на VIP или Рекламу), и я переплавлю его в **Осколки Джекпота**:")
+    bot.register_next_step_handler(msg, process_pawn_promo)
+
+def process_pawn_promo(message):
+    if message.text == '/start':
+        from handlers.start_menu import send_welcome
+        send_welcome(message)
+        return
+        
+    code = message.text.strip().upper()
+    uid = message.from_user.id
+    
+    promo = db['promocodes'].find_one({"_id": code, "is_active": True})
+    if not promo or promo.get("used_count", 0) >= promo.get("usage_limit", 1):
+        bot.send_message(message.chat.id, "❌ Промокод не найден, уже использован или сгорел.")
+        return
+        
+    # Уничтожаем код и даем осколки (VIP-код дает 10 осколков, обычный - 5)
+    shards_reward = 10 if promo.get("target") == "vip" else 5
+    
+    db['promocodes'].delete_one({"_id": code})
+    paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}}, upsert=True)
+    
+    bot.send_message(message.chat.id, f"♻️ **Успешная переплавка!**\n\nПромокод `{code}` уничтожен.\nВы получили: **+{shards_reward} Осколков рулетки** 🧩!", parse_mode="Markdown")

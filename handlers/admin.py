@@ -1730,3 +1730,206 @@ def ticket_sweeper_task():
 
 # Запускаем Санитара в отдельном фоновом потоке при старте файла
 threading.Thread(target=ticket_sweeper_task, daemon=True).start()
+
+# ================= ТЕЛЕГРАМ-ПАНЕЛЬ АДМИНИСТРАТОРА (v2.0) =================
+@bot.message_handler(commands=['panel', 'панель', 'п'])
+def admin_telegram_panel(message):
+    if message.from_user.id != OWNER_ID:
+        try:
+            staff = bot.get_chat_member(STAFF_GROUP_ID, message.from_user.id)
+            if staff.status not in ['administrator', 'creator']: return
+        except: return
+
+    bot.send_message(message.chat.id, "🎛 **ГЛАВНЫЙ ТЕРМИНАЛ СКАЙНЕТА**\nВыберите раздел:", reply_markup=get_main_panel_markup(), parse_mode="Markdown")
+
+def get_main_panel_markup():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("👮‍♂️ Модерация", callback_data="adm_menu_users"),
+        InlineKeyboardButton("💸 Экономика", callback_data="adm_menu_eco")
+    )
+    markup.add(
+        InlineKeyboardButton("🎟 Промокоды", callback_data="adm_menu_promo"),
+        InlineKeyboardButton("📈 Статистика", callback_data="adm_menu_stats")
+    )
+    markup.add(InlineKeyboardButton("❌ Закрыть терминал", callback_data="admin_panel_close"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_menu_'))
+def handle_panel_navigation(call):
+    menu = call.data.replace("adm_menu_", "")
+    markup = InlineKeyboardMarkup(row_width=2)
+    text = ""
+    
+    if menu == "main":
+        text = "🎛 **ГЛАВНЫЙ ТЕРМИНАЛ СКАЙНЕТА**\nВыберите раздел:"
+        markup = get_main_panel_markup()
+        
+    elif menu == "users":
+        text = "👮‍♂️ **Раздел: Модерация**\nВыберите действие:"
+        markup.add(
+            InlineKeyboardButton("🔨 Забанить / Разбанить", callback_data="admin_panel_manage"),
+            InlineKeyboardButton("🔇 Выдать Мут", callback_data="admin_panel_mute")
+        )
+        markup.add(
+            InlineKeyboardButton("🏷 Повесить ТЕГ", callback_data="admin_panel_tag"),
+            InlineKeyboardButton("📍 Сменить город", callback_data="admin_panel_city")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+        
+    elif menu == "eco":
+        text = "💸 **Раздел: Экономика**\nВыберите действие:"
+        markup.add(
+            InlineKeyboardButton("🧾 Выставить счет", callback_data="admin_panel_invoice"),
+            InlineKeyboardButton("🎁 Выдать Очки", callback_data="admin_panel_give_points")
+        )
+        markup.add(
+            InlineKeyboardButton("🧩 Выдать Осколки", callback_data="admin_panel_give_shards")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+        
+    elif menu == "promo":
+        text = "🎟 **Раздел: Промокоды и Аирдропы**\nЧто будем создавать?"
+        markup.add(
+            InlineKeyboardButton("👑 Код на VIP", callback_data="admin_panel_promo_vip"),
+            InlineKeyboardButton("📢 Код на Рекламу", callback_data="admin_panel_promo_ads")
+        )
+        markup.add(
+            InlineKeyboardButton("📦 Сбросить Аирдроп в чат", callback_data="admin_panel_do_airdrop")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+        
+    elif menu == "stats":
+        text = "📈 **Раздел: Аналитика**\nКакие данные нужны?"
+        markup.add(
+            InlineKeyboardButton("📊 Глобальная сводка", callback_data="admin_panel_stats"),
+            InlineKeyboardButton("🧾 Z-Отчет (Выручка)", callback_data="admin_panel_zreport")
+        )
+        markup.add(InlineKeyboardButton("🔗 CPA Статистика", callback_data="admin_panel_cpa"))
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
+
+# ================= ОБРАБОТЧИК КНОПОК ПАНЕЛИ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_panel_'))
+def handle_admin_panel_clicks(call):
+    action = call.data.replace("admin_panel_", "")
+    
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    if action == "close":
+        try: bot.delete_message(call.message.chat.id, call.message.message_id)
+        except: pass
+        
+    # --- АНАЛИТИКА ---
+    elif action == "stats":
+        call.message.from_user = call.from_user
+        call.message.text = "/stats"
+        # Вызываем уже существующую функцию статистики
+        try: global_bot_stats(call.message) 
+        except: pass
+        
+    # --- УПРАВЛЕНИЕ ЮЗЕРАМИ ---
+    elif action == "manage":
+        msg = bot.send_message(call.message.chat.id, "🔨 **Забанить/Разбанить**\nОтправьте ID пользователя:")
+        bot.register_next_step_handler(msg, process_admin_manage_user)
+        
+    elif action == "tag":
+        msg = bot.send_message(call.message.chat.id, "🏷 **Выдача ТЕГА**\nОтправьте ID и Текст тега через пробел (например: `12345 БОСС`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_set_tag)
+        
+    # --- ЭКОНОМИКА ---
+    elif action == "give_points":
+        msg = bot.send_message(call.message.chat.id, "🎁 **Выдача ОЧКОВ**\nОтправьте ID и сумму (например: `123456 500`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_give_points)
+
+    elif action == "give_shards":
+        msg = bot.send_message(call.message.chat.id, "🧩 **Выдача ОСКОЛКОВ**\nОтправьте ID и количество (например: `123456 10`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_give_shards)
+        
+    # --- ПРОМОКОДЫ И АИРДРОПЫ ---
+    elif action == "promo_vip":
+        code = f"VIP-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True})
+        bot.send_message(call.message.chat.id, f"👑 **Промокод на 100% VIP создан!**\n\nКод: `{code}`\n_Можно смело дарить юзерам!_", parse_mode="Markdown")
+
+    elif action == "promo_ads":
+        code = f"ADS-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "ads", "usage_limit": 1, "used_count": 0, "is_active": True})
+        bot.send_message(call.message.chat.id, f"📢 **Промокод на 100% Рекламу создан!**\n\nКод: `{code}`\n_Можно смело дарить юзерам!_", parse_mode="Markdown")
+
+    elif action == "do_airdrop":
+        # Магия! Вызываем функцию сброса контейнера из казино!
+        try:
+            from handlers.casino import trigger_random_airdrop 
+            trigger_random_airdrop()
+            bot.send_message(call.message.chat.id, "📦 🚨 **Аирдроп успешно сброшен!**\nПрямо сейчас в одном из чатов появилась кнопка с очками!", parse_mode="Markdown")
+        except Exception as e:
+            bot.send_message(call.message.chat.id, f"❌ Ошибка аирдропа: {e}")
+
+# ================= ФУНКЦИИ-ПОМОЩНИКИ ДЛЯ ПАНЕЛИ =================
+def process_admin_manage_user(message):
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ ID должен быть числом!")
+        return
+    uid = int(message.text)
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🔨 БАН ВО ВСЕХ ЧАТАХ", callback_data=f"adm_tg_ban_{uid}"),
+        InlineKeyboardButton("🕊 ГЛОБАЛЬНЫЙ РАЗБАН", callback_data=f"adm_tg_unban_{uid}")
+    )
+    bot.send_message(message.chat.id, f"👤 **Пользователь {uid}**\nВыберите действие:", reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tg_'))
+def handle_quick_manage(call):
+    parts = call.data.split('_')
+    action = parts[2]
+    uid = int(parts[3])
+    
+    if action == "ban":
+        db['banned'].insert_one({"_id": uid, "reason": "Бан из Панели Скайнета"})
+        try: bot.edit_message_text(f"✅ Пользователь {uid} **ЗАБАНЕН**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except: pass
+    elif action == "unban":
+        db['banned'].delete_one({"_id": uid})
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+        try: bot.edit_message_text(f"✅ Пользователь {uid} **РАЗБАНЕН**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except: pass
+
+def process_admin_give_points(message):
+    try:
+        parts = message.text.split()
+        uid = int(parts[0])
+        amount = int(parts[1])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Выдано **{amount} очков** пользователю `{uid}`.", parse_mode="Markdown")
+        try: bot.send_message(uid, f"🎁 Администрация начислила вам **{amount} очков**!")
+        except: pass
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА`")
+
+def process_admin_give_shards(message):
+    try:
+        parts = message.text.split()
+        uid = int(parts[0])
+        amount = int(parts[1])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Выдано **{amount} осколков** пользователю `{uid}`.", parse_mode="Markdown")
+        try: bot.send_message(uid, f"🧩 Администрация выдала вам **{amount} осколков Джекпота**!")
+        except: pass
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID КОЛИЧЕСТВО`")
+
+def process_admin_set_tag(message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        uid = int(parts[0])
+        tag = parts[1][:15] # Ограничиваем длину тега до 15 символов
+        db['custom_tags'].update_one({"_id": uid}, {"$set": {"tag": tag}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Тег `{tag}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ТЕГ`")

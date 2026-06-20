@@ -22,13 +22,18 @@ def send_welcome(message):
             bot.send_message(message.chat.id, shop_text, reply_markup=markup, parse_mode="Markdown")
             return
 
-        # Стандартное Главное Меню
-        markup = InlineKeyboardMarkup(row_width=1)
+       # Обновленное Главное Меню
+        markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
-            InlineKeyboardButton("💰 Купить рекламу / Сотрудничество", callback_data="btn_ads"),
-            InlineKeyboardButton("🆘 Разблокировка / Верификация", callback_data="btn_unban"),
-            InlineKeyboardButton("🛡 Кабинет Агента / Жалобы", callback_data="btn_report"),
-            InlineKeyboardButton("📜 Снять бан без вопросов (2000⭐️)", callback_data="buy_indulgence") # 🔥 Кнопка для Китов здесь!
+            InlineKeyboardButton("💰 Реклама", callback_data="btn_ads"),
+            InlineKeyboardButton("🆘 Поддержка", callback_data="btn_unban")
+        )
+        markup.add(
+            InlineKeyboardButton("🚨 Подать жалобу", callback_data="sec_submit_report"), # <-- Жалобы теперь тут!
+            InlineKeyboardButton("🎰 Игровой Кабинет", callback_data="btn_game_club")    # <-- Вход в Метавселенную
+        )
+        markup.add(
+            InlineKeyboardButton("📜 Снять бан без вопросов (2000⭐️)", callback_data="buy_indulgence")
         )
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
         
@@ -170,8 +175,8 @@ def handle_user_query(call):
 
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
-            InlineKeyboardButton("🚨 Подать жалобу", callback_data="sec_submit_report"),
-            InlineKeyboardButton(f"🏆 Кабинет Агента ({points} очков)", callback_data="sec_agent_cabinet"),
+            InlineKeyboardButton("🚨 Подать жалобу на нарушителя", callback_data="sec_submit_report"),
+            InlineKeyboardButton(f"🎰 Игровой Кабинет ({points} очков)", callback_data="btn_game_club"), # <--- Ведем в новый Хаб!
             InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main")
         )
         
