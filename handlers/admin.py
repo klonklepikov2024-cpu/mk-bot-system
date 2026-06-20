@@ -1865,11 +1865,91 @@ def handle_admin_panel_clicks(call):
         bot.register_next_step_handler(msg, process_admin_invoice)
 
     # --- ЗАГЛУШКИ ДЛЯ АНАЛИТИКИ (Если функционал еще не написан) ---
+    # --- АНАЛИТИКА Z-ОТЧЕТ И CPA (ДОСТУП ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА) ---
     elif action == "zreport":
-        bot.send_message(call.message.chat.id, "🚧 Функционал Z-Отчета находится в разработке...")
+        if call.from_user.id != 479938867:
+            try: bot.answer_callback_query(call.id, "❌ У вас нет прав на просмотр финансовой отчетности!", show_alert=True)
+            except: pass
+            return
+
+        try: bot.edit_message_text("⏳ Считаю кассу...", call.message.chat.id, call.message.message_id)
+        except: pass
+        
+        today_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        
+        # Считаем за всё время
+        all_time = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        all_dict = {item["_id"]: item["total"] for item in all_time}
+        
+        # Считаем за сегодня
+        today = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        today_dict = {item["_id"]: item["total"] for item in today}
+        
+        def format_money(d, key): return d.get(key, 0)
+        
+        text = (
+            "🧾 **Z-ОТЧЕТ (ВЫРУЧКА СКАЙНЕТА)**\n\n"
+            f"📅 **СЕГОДНЯ ({today_str}):**\n"
+            f"💰 Штрафы: **{format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')}⭐️**\n"
+            f"📜 Индульгенции: **{format_money(today_dict, 'indulgence')}⭐️**\n"
+            f"🛒 Магазин очков: **{format_money(today_dict, 'points_shop')}⭐️**\n"
+            f"💖 Донаты: **{format_money(today_dict, 'donation')}⭐️**\n"
+            f"🟢 **ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())}⭐️**\n\n"
+            f"🌍 **ЗА ВСЁ ВРЕМЯ:**\n"
+            f"💰 Штрафы: **{format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')}⭐️**\n"
+            f"📜 Индульгенции: **{format_money(all_dict, 'indulgence')}⭐️**\n"
+            f"🛒 Магазин очков: **{format_money(all_dict, 'points_shop')}⭐️**\n"
+            f"💖 Донаты: **{format_money(all_dict, 'donation')}⭐️**\n"
+            f"🏆 **ОБЩАЯ КАССА: {sum(all_dict.values())}⭐️**"
+        )
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
+        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        except: pass
 
     elif action == "cpa":
-        bot.send_message(call.message.chat.id, "🚧 CPA Статистика собирается... (Функционал в разработке)")
+        if call.from_user.id != 479938867:
+            try: bot.answer_callback_query(call.id, "❌ У вас нет прав на просмотр CPA статистики!", show_alert=True)
+            except: pass
+            return
+
+        try: bot.edit_message_text("⏳ Свожу трафик...", call.message.chat.id, call.message.message_id)
+        except: pass
+        
+        total_clicks = db['cpa_traffic'].count_documents({})
+        approved = db['cpa_traffic'].count_documents({"status": "approved"})
+        hold = db['cpa_traffic'].count_documents({"status": "hold"})
+        fraud = db['cpa_traffic'].count_documents({"status": "fraud"})
+        
+        # Топ-3 агента
+        pipeline = [
+            {"$match": {"status": "approved"}},
+            {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 3}
+        ]
+        top_agents = list(db['cpa_traffic'].aggregate(pipeline))
+        
+        text = (
+            "🔗 **CPA СТАТИСТИКА (ПАРТНЕРКА)**\n\n"
+            f"👁 Всего заявок (кликов): **{total_clicks}**\n"
+            f"⏳ На проверке (Холд): **{hold}**\n"
+            f"🚫 Забраковано (Боты): **{fraud}**\n"
+            f"✅ **ОДОБРЕНО (Лиды):** **{approved}**\n\n"
+            "🏆 **ТОП-3 АГЕНТА:**\n"
+        )
+        
+        if top_agents:
+            medals = ["🥇", "🥈", "🥉"]
+            for i, agent in enumerate(top_agents):
+                agent_id = agent["_id"]
+                count = agent["count"]
+                text += f"{medals[i]} `ID {agent_id}` — **{count}** лидов\n"
+        else:
+            text += "_Пока нет одобренных лидов._"
+            
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
+        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        except: pass
         
     # --- ПРОМОКОДЫ И АИРДРОПЫ ---
     elif action == "promo_vip":
