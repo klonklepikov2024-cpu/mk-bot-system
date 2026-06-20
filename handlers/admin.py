@@ -115,18 +115,21 @@ def handle_user_messages(message):
                         ai_file_id = p.file_id
                         break
                 
-                bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                # 👇 ИЗМЕНЕНИЕ 1: Сохраняем отправленное сообщение в sent_msg 👇
+                sent_msg = bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             else:
                 file_id = message.document.file_id
                 
                 # 🔥 ЕСЛИ ДОКУМЕНТ: Берем его превьюшку (она всегда легкая)
                 ai_file_id = message.document.thumb.file_id if message.document.thumb else file_id 
                 
-                bot.send_document(STAFF_GROUP_ID, file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                # 👇 ИЗМЕНЕНИЕ 1: Сохраняем отправленное сообщение в sent_msg 👇
+                sent_msg = bot.send_document(STAFF_GROUP_ID, file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             
+            # 👇 ИЗМЕНЕНИЕ 2: Передаем sent_msg.message_id в нейросеть! 👇
             threading.Thread(
                 target=analyze_document_vision, 
-                args=(ai_file_id, thread_id, uid) 
+                args=(ai_file_id, thread_id, uid, sent_msg.message_id) 
             ).start()
           
         # КРУЖКИ
@@ -1231,8 +1234,8 @@ def check_face_in_thumbnail(thumb_file_id):
     except Exception as e:
         return False
 
-def analyze_document_vision(file_id, thread_id, uid):
-    """Фоновая задача для анализа фото документов (Зрение ИИ)"""
+def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
+    """Фоновая задача для анализа фото документов (Зрение ИИ) + АВТОМАТИЗАЦИЯ"""
     if not GROQ_API_KEY: return
 
     try:
@@ -1248,7 +1251,6 @@ def analyze_document_vision(file_id, thread_id, uid):
         downloaded_file = bot.download_file(file_info.file_path)
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
         
-        # 🔥 ДИНАМИЧЕСКИЙ ФОРМАТ (Чтобы API не ругался на Invalid Base64)
         ext = file_info.file_path.split('.')[-1].lower()
         mime_type = "image/png" if ext == "png" else "image/jpeg"
 
@@ -1258,14 +1260,20 @@ def analyze_document_vision(file_id, thread_id, uid):
             "Content-Type": "application/json"
         }
         
+        # 🔥 НОВЫЙ ПРОМПТ: СТРОГАЯ ПАСПОРТИСТКА (С ЖЕСТКОЙ ПРОВЕРКОЙ НА 18+) 🔥
         prompt = (
-            "Ты строгий ИИ-помощник модератора. Это фотография документа для подтверждения возраста (паспорт, права и т.д.). "
-            "Ответь очень кратко по пунктам:\n"
-            "1. Похоже ли это на документ?\n"
-            "2. Видно ли лицо человека?\n"
+            "Ты — колоритная, строгая, уставшая, но очень дотошная паспортистка-таможенница (в стиле скетчей Comedy Woman). "
+            "Твоя задача — проверить фото документа пользователя для подтверждения возраста. Сейчас 2026 год.\n"
+            "Критерии проверки:\n"
+            "1. Похоже ли это на официальный документ (паспорт, права)?\n"
+            "2. Открыто ли лицо человека (не замазано, не закрыто пальцами)?\n"
             "3. Читаема ли дата рождения?\n"
-            "4. Итог: Годится ли фото или оно размыто/скрыто?\n"
-            "Отвечай коротко и по делу, на русском языке."
+            "4. МАТЕМАТИКА: Проверь дату рождения. Человеку уже точно есть 18 лет? (Он должен быть рожден в 2008 году или раньше).\n\n"
+            "ВНИМАНИЕ! Если ВСЕ 4 пункта идеальны (и ему точно есть 18), напиши СТРОГО в первой строке: РЕШЕНИЕ: ОДОБРЕНО.\n"
+            "Если хотя бы один пункт нарушен (засвечено, скрыто, не документ, ИЛИ ЕМУ МЕНЬШЕ 18 ЛЕТ), напиши СТРОГО в первой строке: РЕШЕНИЕ: ОТКЛОНЕНО.\n"
+            "Со второй строки напиши короткий, эмоциональный комментарий от лица строгой паспортистки, обращаясь к пользователю. "
+            "Если отказываешь из-за возраста (меньше 18), возмутись: 'Мальчик, иди уроки делай! Куда ты с таким годом рождения (укажи год) ко мне приперся? Тебе еще 18 нет, следующий!'. "
+            "Пример одобрения: 'Так, лицо ваше, 18 уже есть, дата сходится. Проходим, не задерживаем очередь!'"
         )
 
         data = {
@@ -1279,37 +1287,67 @@ def analyze_document_vision(file_id, thread_id, uid):
                     ]
                 }
             ],
-            "temperature": 0.2,
-            "max_tokens": 1024
+            "temperature": 0.4, # Чуть добавили креатива для эмоций паспортистки
+            "max_tokens": 200
         }
 
         response = requests.post(url, headers=headers, json=data)
 
         if response.status_code == 200:
-            ai_text = response.json()["choices"][0]["message"]["content"]
-            msg = f"👁 **Анализ документа (Vision AI):**\n\n{ai_text}"
+            ai_text = response.json()["choices"][0]["message"]["content"].strip()
             
-            vision_memory = f"Моя зрительная нейросеть только что изучила этот документ. Вот её отчет:\n{ai_text}\nЕсли пользователь спрашивает, всё ли в порядке — ответь ему на основе этого отчета."
+            vision_memory = f"Паспортистка проверила документ. Отчет:\n{ai_text}"
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": vision_memory}}})
 
-            try: bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-            except Exception: bot.send_message(STAFF_GROUP_ID, f"👁 Анализ документа:\n\n{ai_text}", message_thread_id=thread_id)
-        else:
-            # 👇 МАГИЯ ДЕБАГГИНГА 👇
-            error_details = response.text 
-            try:
-                bot.send_message(
-                    STAFF_GROUP_ID, 
-                    f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{error_details}`", 
-                    message_thread_id=thread_id, 
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                print(f"🔥 ТОЧНАЯ ОШИБКА GROQ: {error_details}")
+            # 🔥 ВЫТАСКИВАЕМ ЭМОЦИОНАЛЬНЫЙ КОММЕНТАРИЙ ПАСПОРТИСТКИ 🔥
+            # Берем всё, что ИИ написал после строчки "РЕШЕНИЕ: ..."
+            lines = ai_text.split('\n', 1)
+            ai_comment = lines[1].strip() if len(lines) > 1 else ""
 
-    # 👇 ЭТОТ БЛОК ТЫ СЛУЧАЙНО СТЕР В ПРОШЛЫЙ РАЗ 👇
+            # 🔥 ЛОГИКА АВТОМАТИЗАЦИИ 🔥
+            if "РЕШЕНИЕ: ОДОБРЕНО" in ai_text.upper():
+                if photo_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=photo_msg_id, reply_markup=None)
+                    except: pass
+                
+                code_words = ["ЯБЛОКО", "ТИГР", "СОЛНЦЕ", "МОРЕ", "СОКОЛ", "РАКЕТА", "ВЕТЕР", "МАЯК"]
+                secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
+                paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
+                
+                if not ai_comment: ai_comment = "Так, всё сходится. Проходим, следующий!"
+                
+                # 💬 ПИШЕМ ЮЗЕРУ ОТ ЛИЦА ПАСПОРТИСТКИ
+                text_to_user = f"🛂 **Таможня (ИИ):**\n💬 _«{ai_comment}»_\n\n✅ **Документ одобрен!**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*.\n\nУ вас есть 5 минут на отправку видео."
+                try: bot.send_message(uid, text_to_user, parse_mode="Markdown")
+                except: pass
+                
+                bot.send_message(STAFF_GROUP_ID, f"👁 **Паспортистка (ИИ):**\n{ai_text}\n\n✅ **АВТО-ОДОБРЕНО!** Выдан код: `{secret_code}`", message_thread_id=thread_id, parse_mode="Markdown")
+                
+            elif "РЕШЕНИЕ: ОТКЛОНЕНО" in ai_text.upper():
+                if photo_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=photo_msg_id, reply_markup=None)
+                    except: pass
+                
+                if not ai_comment: ai_comment = "Мужчина, я ничего не вижу! Размыто всё, идите переделывайте!"
+                
+                # 💬 ОТШИВАЕМ ЮЗЕРА ОТ ЛИЦА ПАСПОРТИСТКИ
+                text_to_user = f"🛂 **Таможня (ИИ):**\n💬 _«{ai_comment}»_\n\n❌ **Документ не принят.**\nПожалуйста, сделайте нормальное фото (без засветов, где видно лицо и дату рождения) и отправьте снова."
+                try: bot.send_message(uid, text_to_user, parse_mode="Markdown")
+                except: pass
+                
+                bot.send_message(STAFF_GROUP_ID, f"👁 **Паспортистка (ИИ):**\n{ai_text}\n\n❌ **АВТО-ОТКЛОНЕНО!** Юзер отправлен переделывать фото.", message_thread_id=thread_id, parse_mode="Markdown")
+                
+            else:
+                msg = f"👁 **Паспортистка (ИИ):**\n\n{ai_text}\n\n⚠️ **ИИ не уверен. Примите решение вручную кнопками выше 👆**"
+                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+
+        else:
+            error_details = response.text 
+            try: bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{error_details}`", message_thread_id=thread_id, parse_mode="Markdown")
+            except: pass
+
     except Exception as e:
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Паспортистки при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
         except: pass
 
 
@@ -1446,19 +1484,21 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 {dialogue_context}
 
 ПРАВИЛА ВЫБОРА ДЕЙСТВИЯ (СТРОГАЯ ИЕРАРХИЯ СВЕРХУ ВНИЗ):
-1. ОПЛАТА / АДМИН: Если юзер ГАРАНТИРОВАННО согласен на штраф, просит реквизиты, пишет "оплатил" или "зови админа" -> СТРОГО выбирай `transfer_to_human`.
-2. 🛡 АНТИ-ИДИОТ (ЭКОНОМИЯ ТОКЕНОВ): Если юзер продолжает спорить и ныть после твоего объяснения — НЕ ВСТУПАЙ В ДИСКУССИЮ! Сразу выбирай `transfer_to_human` с причиной "Юзер тупит".
+1. ВЫСТАВЛЕНИЕ СЧЕТА (АВТО-КАССИР): Если юзер ГАРАНТИРОВАННО согласен на штраф, просит реквизиты, пишет "готов оплатить", "давай счет" или "оплатил" -> СТРОГО выбирай `issue_fine` и обязательно укажи сумму штрафа в поле `fine_amount`. Саркастично похвали его за правильное решение в `response_text`.
+2. ПЕРЕВОД НА АДМИНА: Если юзер задает сложный нестандартный вопрос, требует руководство или ситуация зашла в тупик -> выбирай `transfer_to_human`.
+3. 🛡 АНТИ-ИДИОТ (ЭКОНОМИЯ ТОКЕНОВ): Если юзер продолжает спорить и ныть после твоего объяснения — НЕ ВСТУПАЙ В ДИСКУССИЮ! Сразу выбирай `transfer_to_human` с причиной "Юзер тупит".
 {behavior_rules}
 5. ПРОЧЕЕ ОБЩЕНИЕ: Если ни одно правило не подошло, выбирай `reply_text` и отвечай на вопрос пользователя.
 
 Выбери ОДНО действие из списка:
+- issue_fine (Автоматически выставить счет на оплату)
 - transfer_to_human (Перевести тикет на человека)
 - reply_text (Ответить свободным текстом)
 - tpl_verif (Шаблон запроса кружка)
 - tpl_18, tpl_nark, tpl_flood, tpl_mp, tpl_vip (Спец. шаблоны)
 
 Ответ строго в JSON:
-{{"action": "название_действия", "reason": "твоя логика", "response_text": "твой УНИКАЛЬНЫЙ ответ юзеру (заполнять ТОЛЬКО для reply_text)"}}"""
+{{"action": "название_действия", "reason": "твоя логика", "response_text": "твой УНИКАЛЬНЫЙ ответ юзеру", "fine_amount": 0}}"""
 
         # ================== 5. ЗАПУСК ИИ (ПУЛ КЛЮЧЕЙ) ==================
         try:
@@ -1516,6 +1556,49 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": text}}})
             bot.send_message(STAFF_GROUP_ID, f"🤖 АВТОПИЛОТ (Диалог):\nОтветил: {text}\nПричина: {reason}", message_thread_id=thread_id)
 
+        # 🔥 НОВЫЙ БЛОК: АВТО-КАССИР 🔥
+        elif action == "issue_fine":
+            amount = int(result.get("fine_amount", 0))
+            if amount < 1: amount = 650 # Страховка от галлюцинаций
+            
+            try:
+                # 1. Отправляем сопровождающий саркастичный текст от ИИ
+                ai_text = result.get("response_text", "")
+                if ai_text and ai_text != "твой УНИКАЛЬНЫЙ ответ юзеру":
+                    bot.send_message(uid, f"🤖 Консультант Скайнет:\n\n{ai_text}")
+                    paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": ai_text}}})
+
+                # 2. Генерируем реальную кассу!
+                user_data_pay = paid_collection.find_one({"uid": uid}) or {}
+                cb_balance = user_data_pay.get("cashback_balance", 0)
+                cost_in_rub = amount * 2
+                
+                url_usdt = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+                url_ton = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+                
+                markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+                
+                if cb_balance >= cost_in_rub:
+                    markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+                elif cb_balance > 0:
+                    remaining_stars = amount - (cb_balance // 2)
+                    markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+                else:
+                    markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+                
+                if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+                if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+                    
+                bot.send_message(uid, f"🧾 **Скайнет выставил вам счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
+                
+                # Пишем админам, что ИИ всё сделал сам
+                bot.send_message(STAFF_GROUP_ID, f"🤖 💸 **АВТО-КАССИР:** Скайнет САМ выставил счет на **{amount}⭐️**!\nПричина ИИ: {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+                paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": f"[Автоматически выставлен счет на {amount} звезд]"}}})
+                
+            except Exception as e:
+                logger.warning(f"Ошибка Авто-Кассира: {e}")
+                bot.send_message(STAFF_GROUP_ID, f"⚠️ Скайнет пытался выставить счет на {amount}⭐️, но произошла ошибка. Выдайте вручную.", message_thread_id=thread_id)
+
         elif action.startswith("tpl_"):
             db_tpl = db['bot_templates'].find_one({"_id": action})
             template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(action)
@@ -1525,7 +1608,6 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 
         else:  # transfer_to_human
             bot.send_message(STAFF_GROUP_ID, f"🤖 **ИИ передал тикет человеку**\nТип: {ban_type} | Причина: {reason}", message_thread_id=thread_id)
-            # Отвечаем юзеру, чтобы он не спамил дальше, ожидая ответа от ИИ
             wait_msg = "⏳ Запрос переведен на дежурного администратора. Пожалуйста, ожидайте, скоро в этот чат поступит ответ или счет на оплату."
             bot.send_message(uid, wait_msg)
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": wait_msg}}})
