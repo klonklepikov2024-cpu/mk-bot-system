@@ -275,9 +275,11 @@ def handle_reward_purchase(call):
         instruction = "📖 **Как применить:** В @Elitepost_bot при выставлении счета нажмите **«🎫 У меня есть промокод»**."
     
     db['promocodes'].insert_one({
-        "_id": promo_code, "type": "percent", "value": discount, "target": target,
-        "usage_limit": 1, "used_count": 0, "owner_uid": uid, "is_active": True
-    })
+            "_id": code, "type": "percent", "value": 100, "target": "vip",
+            "usage_limit": 1, "used_count": 0, "is_active": True,
+            "expires_at": datetime.datetime.now() + datetime.timedelta(hours=72), # ⏳ ТАЙМЕР СМЕРТИ
+            "owner_uid": uid # <--- ТЕПЕРЬ ОН ЗНАЕТ ХОЗЯИНА
+        })
     
     try:
         bot.edit_message_text(
