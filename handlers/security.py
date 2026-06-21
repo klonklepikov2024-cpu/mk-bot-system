@@ -112,6 +112,18 @@ def handle_forge_main(call):
     shards = user_data.get("jackpot_shards", 0)
     orders = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
     
+    # 🔥 1. ДОСТАЕМ ЛИЧНЫЕ ПРОМОКОДЫ ЮЗЕРА 🔥
+    user_promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
+    promo_text = ""
+    if user_promos:
+        promo_text = "\n\n🎟 **Ваши личные промокоды:**\n"
+        for p in user_promos:
+            t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Любую услугу"
+            val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
+            promo_text += f"• `{p['_id']}` — Скидка {val} на {t_name}\n"
+    else:
+        promo_text = "\n\n🎟 **Ваши личные промокоды:** _У вас нет активных купонов._"
+
     markup = InlineKeyboardMarkup(row_width=1)
     
     if shards >= 50:
@@ -119,7 +131,15 @@ def handle_forge_main(call):
     else:
         markup.add(InlineKeyboardButton(f"🧩 Копите осколки ({shards}/50)", callback_data="dummy_shards"))
         
-    markup.add(InlineKeyboardButton("✨ Скрафтить BEYOND-статус", callback_data="forge_craft_beyond"))
+    # 🔥 2. УМНАЯ КНОПКА КРАФТА 🔥
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    if not u_info.get("is_queer"):
+        markup.add(InlineKeyboardButton("✨ Скрафтить BEYOND-статус", callback_data="forge_craft_beyond"))
+    elif not u_info.get("is_vip"):
+        markup.add(InlineKeyboardButton("👑 Скрафтить VIP-статус", callback_data="forge_craft_beyond"))
+    else:
+        markup.add(InlineKeyboardButton("💸 Скрафтить 1000₽ (Кэшбек)", callback_data="forge_craft_beyond"))
+        
     markup.add(InlineKeyboardButton("♻️ Сдать промокод (Ломбард)", callback_data="forge_pawn_promo"))
     
     if shields > 0:
@@ -132,7 +152,8 @@ def handle_forge_main(call):
     text = (
         "⚒ **ИНВЕНТАРЬ И ТЕНЕВОЙ ЛОМБАРД**\n\n"
         f"🛡 Щиты Иммунитета: **{shields} шт.**\n"
-        f"🚓 Ордера на арест: **{orders} шт.**\n\n"
+        f"🚓 Ордера на арест: **{orders} шт.**"
+        f"{promo_text}\n\n"
         "Здесь вы можете использовать свои артефакты, переплавить ненужные промокоды обратно в ресурсы или скрафтить элитный статус."
     )
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -145,13 +166,10 @@ def handle_craft_beyond(call):
     points = user_data.get("bounty_points", 0)
     shields = user_data.get("immunity", 0)
     
-    # Проверяем, есть ли уже статус
     u_info = db['users'].find_one({"_id": uid}) or {}
-    if u_info.get("is_queer"):
-        try: bot.answer_callback_query(call.id, "❌ У вас уже есть максимальный статус BEYOND!", show_alert=True)
-        except: pass
-        return
-        
+    has_beyond = u_info.get("is_queer", False)
+    has_vip = u_info.get("is_vip", False)
+    
     # ЦЕНА КРАФТА: 3000 очков и 2 щита
     CRAFT_POINTS = 3000
     CRAFT_SHIELDS = 2
@@ -161,10 +179,23 @@ def handle_craft_beyond(call):
         except: pass
         return
         
+    # Списываем ресы в любом случае
     paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}})
-    db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
     
-    try: bot.edit_message_text("🔮 **КРАФТ УСПЕШЕН!**\n\nЭнергия щитов и очков слилась воедино...\nВы получили элитный статус **BEYOND (QUEER)**! 🏳️‍🌈\nТеперь вам доступны все закрытые функции сети.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В инвентарь", callback_data="forge_main"))
+    
+    # 🔥 3. ЛОГИКА ЭВОЛЮЦИИ КРАФТА 🔥
+    if not has_beyond:
+        db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
+        msg = "🔮 **КРАФТ УСПЕШЕН!**\n\nЭнергия щитов и очков слилась воедино...\nВы получили элитный статус **BEYOND (QUEER)**! 🏳️‍🌈\nТеперь вам доступны все закрытые функции сети."
+    elif not has_vip:
+        db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
+        msg = "👑 **КРАФТ УСПЕШЕН!**\n\nСтатус BEYOND у вас уже есть, поэтому кузница выковала вам **ПОЖИЗНЕННЫЙ VIP-СТАТУС**! 💎"
+    else:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 1000}})
+        msg = "💸 **КРАФТ УСПЕШЕН!**\n\nТак как у вас уже есть статусы BEYOND и VIP, кузница переплавила ресурсы в чистые деньги!\nВы получили **1000 рублей кэшбэка** на баланс! 💰\n\n_Их можно вывести на карту или потратить на оплату._"
+    
+    try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
     except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data == 'forge_pawn_promo')

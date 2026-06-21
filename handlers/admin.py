@@ -1826,10 +1826,33 @@ def handle_admin_panel_clicks(call):
         
     # --- АНАЛИТИКА ---
     elif action == "stats":
-        call.message.from_user = call.from_user
-        call.message.text = "/stats"
-        # Вызываем уже существующую функцию статистики
-        try: global_bot_stats(call.message) 
+        try: bot.edit_message_text("⏳ Скайнет собирает данные со всех узлов...", call.message.chat.id, call.message.message_id)
+        except: pass
+        
+        # Собираем реальную стату из БД
+        total_users = db['users'].count_documents({})
+        total_banned = db['banned'].count_documents({})
+        
+        # Считаем сумму очков и кэшбека у населения
+        pipeline = [{"$group": {"_id": None, "total_points": {"$sum": "$bounty_points"}, "total_cb": {"$sum": "$cashback_balance"}}}]
+        wealth = list(paid_collection.aggregate(pipeline))
+        total_points = wealth[0]["total_points"] if wealth else 0
+        total_cb = wealth[0]["total_cb"] if wealth else 0
+        
+        active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
+        active_airdrops = db['active_airdrops'].count_documents({"claimed_count": {"$lt": 5}})
+        
+        text = (
+            "📊 **ГЛОБАЛЬНАЯ СВОДКА СКАЙНЕТА**\n\n"
+            f"👥 Всего пользователей в базе: **{total_users}**\n"
+            f"🚷 В глобальном бане: **{total_banned}**\n\n"
+            f"💰 Очков на руках: **{total_points} ⭐️**\n"
+            f"💸 Кэшбека на руках: **{total_cb} ₽**\n\n"
+            f"🎟 Неиспользованных промокодов: **{active_promos}**\n"
+            f"📦 Активных аирдропов в чатах: **{active_airdrops}**"
+        )
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
+        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
         except: pass
         
     # --- УПРАВЛЕНИЕ ЮЗЕРАМИ ---
