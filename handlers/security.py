@@ -275,11 +275,9 @@ def handle_reward_purchase(call):
         instruction = "📖 **Как применить:** В @Elitepost_bot при выставлении счета нажмите **«🎫 У меня есть промокод»**."
     
     db['promocodes'].insert_one({
-            "_id": code, "type": "percent", "value": 100, "target": "vip",
-            "usage_limit": 1, "used_count": 0, "is_active": True,
-            "expires_at": datetime.datetime.now() + datetime.timedelta(hours=72), # ⏳ ТАЙМЕР СМЕРТИ
-            "owner_uid": uid # <--- ТЕПЕРЬ ОН ЗНАЕТ ХОЗЯИНА
-        })
+        "_id": promo_code, "type": "percent", "value": discount, "target": target,
+        "usage_limit": 1, "used_count": 0, "owner_uid": uid, "is_active": True
+    })
     
     try:
         bot.edit_message_text(
@@ -507,7 +505,8 @@ def handle_shards_exchange(call):
         db['promocodes'].insert_one({
             "_id": code, "type": "percent", "value": 100, "target": "vip",
             "usage_limit": 1, "used_count": 0, "is_active": True,
-            "expires_at": datetime.datetime.now() + datetime.timedelta(hours=72) # ⏳ ТАЙМЕР СМЕРТИ
+            "expires_at": datetime.datetime.now() + datetime.timedelta(hours=72), # ⏳ ТАЙМЕР СМЕРТИ
+            "owner_uid": uid # <--- ТЕПЕРЬ ОН ЗНАЕТ ХОЗЯИНА
         })
         msg = f"🎉 **ПОЗДРАВЛЯЕМ!** 🎉\n\nВы собрали из осколков **Золотой Билет (VIP-доступ)**!\nВаш промокод: `{code}`\n\n⏳ _Внимание! Код сгорит ровно через 72 часа, успейте использовать или подарить его!_"
         
@@ -895,6 +894,34 @@ def handle_inv_angel(call):
     msg = bot.send_message(call.message.chat.id, "👼 **Ангел-Хранитель**\n\nНапишите ID пользователя (друга), с которого нужно снять все блокировки и страйки за счет вашего Щита:")
     bot.register_next_step_handler(msg, process_angel_id)
 
+# 🔥 ФИКС ЗАЛИПАНИЯ КНОПКИ ОСКОЛКОВ 🔥
+@bot.callback_query_handler(func=lambda call: call.data == 'dummy_shards')
+def handle_dummy_shards(call):
+    try: bot.answer_callback_query(call.id, "🧩 Крутите рулетку, чтобы собрать 50 осколков для джекпота!", show_alert=True)
+    except: pass
+
+# 🔥 ФИКС ЗАЛИПАНИЯ КНОПКИ ОРДЕРА 🔥
+@bot.callback_query_handler(func=lambda call: call.data == 'inv_use_arrest')
+def handle_inv_use_arrest(call):
+    uid = call.from_user.id
+    promo = db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+    
+    if not promo:
+        try: bot.answer_callback_query(call.id, "❌ У вас нет активных Ордеров на арест!", show_alert=True)
+        except: pass
+        return
+        
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    code = promo["_id"]
+    try:
+        msg = bot.send_message(call.message.chat.id, f"🚓 **Использование Ордера: {code}**\n\nНапишите @username или ID пользователя, которого нужно отправить в мут на 1 час (и укажите причину):", parse_mode="Markdown")
+        # Импортируем функцию из админки, чтобы не дублировать код
+        from handlers.admin import process_arrest_claim
+        bot.register_next_step_handler(msg, process_arrest_claim, code=code)
+    except Exception as e: logger.debug(f"Ошибка при вызове ордера: {e}")
+
 def process_angel_id(message):
     uid = message.from_user.id
     if not message.text.isdigit():
@@ -917,69 +944,6 @@ def process_angel_id(message):
     except: pass
 
 # ================= ⚒ ТЕНЕВОЙ ЛОМБАРД И КУЗНИЦА =================
-@bot.callback_query_handler(func=lambda call: call.data == 'forge_main')
-def handle_forge_main(call):
-    uid = call.from_user.id
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    points = user_data.get("bounty_points", 0)
-    shields = user_data.get("immunity", 0)
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton("✨ Скрафтить BEYOND-статус", callback_data="forge_craft_beyond"),
-        InlineKeyboardButton("♻️ Сдать промокод (Ломбард)", callback_data="forge_pawn_promo"),
-        InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")
-    )
-    
-    text = (
-        "⚒ **ТЕНЕВОЙ ЛОМБАРД СКАЙНЕТА**\n\n"
-        "Здесь вы можете переплавить ненужные вещи в полезные ресурсы или создать элитный статус.\n\n"
-        f"📦 **Ваши ресурсы:**\n"
-        f"💰 Очки: **{points}**\n"
-        f"🛡 Щиты: **{shields}**\n\n"
-        "Выберите действие:"
-    )
-    try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
-    
-@bot.callback_query_handler(func=lambda call: call.data == 'forge_craft_beyond')
-def handle_craft_beyond(call):
-    uid = call.from_user.id
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    points = user_data.get("bounty_points", 0)
-    shields = user_data.get("immunity", 0)
-    
-    # Проверяем, есть ли уже статус
-    u_info = db['users'].find_one({"_id": uid}) or {}
-    if u_info.get("is_queer"):
-        try: bot.answer_callback_query(call.id, "❌ У вас уже есть максимальный статус BEYOND!", show_alert=True)
-        except: pass
-        return
-        
-    # ЦЕНА КРАФТА (Можно поменять под твою экономику)
-    CRAFT_POINTS = 3000
-    CRAFT_SHIELDS = 2
-    
-    if points < CRAFT_POINTS or shields < CRAFT_SHIELDS:
-        try: bot.answer_callback_query(call.id, f"❌ Не хватает ресурсов!\nНужно: {CRAFT_POINTS} очков и {CRAFT_SHIELDS} щита.", show_alert=True)
-        except: pass
-        return
-        
-    # Списываем ресы
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}})
-    # Выдаем статус
-    db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
-    
-    try: bot.edit_message_text("🔮 **КРАФТ УСПЕШЕН!**\n\nЭнергия щитов и очков слилась воедино...\nВы получили элитный статус **BEYOND (QUEER)**! 🏳️‍🌈\nТеперь вам доступны все закрытые функции сети.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    except: pass
-
-@bot.callback_query_handler(func=lambda call: call.data == 'forge_pawn_promo')
-def handle_pawn_promo(call):
-    try: bot.answer_callback_query(call.id)
-    except: pass
-    msg = bot.send_message(call.message.chat.id, "♻️ **Ломбард Промокодов**\n\nОтправьте мне любой рабочий промокод (например, на VIP или Рекламу), и я переплавлю его в **Осколки Джекпота**:")
-    bot.register_next_step_handler(msg, process_pawn_promo)
-
 def process_pawn_promo(message):
     if message.text == '/start':
         from handlers.start_menu import send_welcome
