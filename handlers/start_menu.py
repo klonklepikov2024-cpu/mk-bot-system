@@ -9,6 +9,10 @@ from utils.logger import logger, notify_admin_on_error
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     try:
+        # 🔥 ЖУЧОК ДЛЯ ЮЗЕРНЕЙМОВ 🔥
+        if message.from_user.username:
+            db['users'].update_one({"_id": message.from_user.id}, {"$set": {"username": f"@{message.from_user.username}".lower()}}, upsert=True)
+            
         # Обработка диплинк-ссылки на магазин (например, /start shop)
         if len(message.text.split()) > 1 and message.text.split()[1] == "shop":
             markup = InlineKeyboardMarkup(row_width=1)
@@ -58,6 +62,10 @@ def handle_user_query(call):
     
     uid = call.from_user.id
     
+    # 🔥 ЖУЧОК ДЛЯ ЮЗЕРНЕЙМОВ 🔥
+    if call.from_user.username:
+        db['users'].update_one({"_id": uid}, {"$set": {"username": f"@{call.from_user.username}".lower()}}, upsert=True)
+          
     # ЗАЩИТА ОТ "НЕВИДИМОК"
     name = call.from_user.first_name
     if not name or name == '\u3164' or name == 'ㅤ':
