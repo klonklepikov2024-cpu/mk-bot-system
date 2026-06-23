@@ -8,11 +8,11 @@ import json
 import time
 import base64
 import threading
-from config import GROQ_API_KEY
+from config import GROQ_API_KEY, GROQ_API_KEYS
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
-from config import STAFF_GROUP_ID
+from config import STAFF_GROUP_ID, OWNER_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
 from utils.templates import TEMPLATES, NETWORK_LINKS
@@ -115,18 +115,21 @@ def handle_user_messages(message):
                         ai_file_id = p.file_id
                         break
                 
-                bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                # 👇 ИЗМЕНЕНИЕ 1: Сохраняем отправленное сообщение в sent_msg 👇
+                sent_msg = bot.send_photo(STAFF_GROUP_ID, file_id, caption="📸 **Пользователь прислал фото!**\nПроверьте документ:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             else:
                 file_id = message.document.file_id
                 
                 # 🔥 ЕСЛИ ДОКУМЕНТ: Берем его превьюшку (она всегда легкая)
                 ai_file_id = message.document.thumb.file_id if message.document.thumb else file_id 
                 
-                bot.send_document(STAFF_GROUP_ID, file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                # 👇 ИЗМЕНЕНИЕ 1: Сохраняем отправленное сообщение в sent_msg 👇
+                sent_msg = bot.send_document(STAFF_GROUP_ID, file_id, caption="📄 **Пользователь прислал документ!**\nПроверьте:", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
             
+            # 👇 ИЗМЕНЕНИЕ 2: Передаем sent_msg.message_id в нейросеть! 👇
             threading.Thread(
                 target=analyze_document_vision, 
-                args=(ai_file_id, thread_id, uid) 
+                args=(ai_file_id, thread_id, uid, sent_msg.message_id) 
             ).start()
           
         # КРУЖКИ
@@ -275,6 +278,10 @@ def handle_admin_templates(call):
             
             if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
             if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+            
+            # Добавляем спасательные кнопки для неофициальных клиентов
+            markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+            markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
                 
             bot.send_message(target_uid, f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
             bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️)*", message_thread_id=thread_id, parse_mode="Markdown")
@@ -365,7 +372,7 @@ def handle_buy_indulgence(call):
     if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
     
     # Возврат назад в меню
-    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_start"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="sec_back_main"))
 
     text = (
         "📜 **ПОКУПКА ИНДУЛЬГЕНЦИИ**\n\n"
@@ -1056,7 +1063,17 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
             response = requests.post(url, headers=headers, files=files, data=data)
 
         if response.status_code == 200:
-            text = response.json().get("text", "").lower()
+            raw_text = response.json().get("text", "").lower()
+            
+            # 🔥 ДЕШИФРАТОР АНГЛИЙСКОГО WHISPER (Защита от sokol39) 🔥
+            translit_fixes = {
+                "sokol": "сокол", "yabloko": "яблоко", "tigr": "тигр",
+                "solnce": "солнце", "more": "море", "raketa": "ракета",
+                "veter": "ветер", "mayak": "маяк"
+            }
+            text = raw_text
+            for eng, rus in translit_fixes.items():
+                text = text.replace(eng, rus)
             
             parts = secret_code.lower().split('-')
             word = parts[0]
@@ -1080,7 +1097,6 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                 if has_face:
                     # ✅ ИДЕАЛЬНО: ТЕКСТ ВЕРНЫЙ И ЛИЦО НАЙДЕНО
                     
-                    # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем успешный вердикт
                     speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер четко сказал: «{text}». Код подтвержден на {score}%. Лицо в кадре найдено. Я автоматически разбанил юзера."
                     paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
                     
@@ -1091,12 +1107,10 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     now = datetime.datetime.now()
                     ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
                     
-                    # Приказ Скайнету и запись в базу
                     db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
                     db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "Верифицирован МК"}}, upsert=True)
                     db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
                     
-                    # Уведомление пользователя
                     try:
                         bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
                         markup = InlineKeyboardMarkup(row_width=5).add(
@@ -1110,12 +1124,10 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     
                     archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
                     
-                    # Убираем кнопки с видео в админке
                     if video_msg_id:
                         try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
                         except Exception as e: logger.debug(f"Игнор ошибки (STT): {e}")
                     
-                    # Закрываем топик
                     try: bot.send_message(STAFF_GROUP_ID, f"🤖 *Видео-кружок одобрен ИИ!*\nЮзер верифицирован. Приказ на размут передан Скайнету. Тикет закрыт: `{ticket_num}`", message_thread_id=thread_id, parse_mode="Markdown")
                     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
@@ -1125,7 +1137,7 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     
                 else:
                     # ⚠️ ГОЛОС ВЕРНЫЙ, НО ЛИЦА НЕТ (КАМЕРА В ПОТОЛОК ИЛИ ТЕМНОТА)
-                    speech_memory = f"Юзер сказал правильный текст («{text}»), но моя зрительная нейросеть не нашла лицо в кадре. Я оставил тикет открытым для ручной проверки админом. Возможно он прячет лицо."
+                    speech_memory = f"Юзер сказал правильный текст («{text}»), но моя зрительная нейросеть не нашла лицо в кадре. Я оставил тикет открытым для ручной проверки админом."
                     paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
                     
                     verdict = f"⚠️ **Текст верный ({score}%), НО ИИ не увидел лицо в кадре!**\n_Возможно, темно или камера направлена в пол. Проверьте кружок визуально!_"
@@ -1133,15 +1145,29 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
 
             else:
-                # Если совпадение текста меньше 80%, оставляем админам
+                # 🔥 НОВОЕ: ИИ САМ ОТБРАКОВЫВАЕТ КРУЖОК И ДАЕТ ОБРАТНУЮ СВЯЗЬ ЮЗЕРУ 🔥
                 
-                # 🔥 ЕДИНЫЙ РАЗУМ: Сохраняем негативный вердикт
-                speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер сказал: «{text}». Это неверно (совпадение {score}%). Я отклонил кружок, ждем решения админа. Если юзер спрашивает, что не так — объясни, что он ошибся во фразе."
+                speech_memory = f"Моя звуковая нейросеть проверила кружок. Юзер сказал: «{text}». Это неверно (совпадение {score}%). Я автоматически отклонил видео и попросил его написать «Готов» заново. Если он спросит, что не так — объясни, что он промямлил или перепутал слова."
                 paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": speech_memory}}})
                 
-                verdict = f"⚠️ **Совпадение текста низкое ({score}%). Требуется ручная проверка.**"
+                # Сбрасываем код и таймер, чтобы заставить его написать "Готов" заново (Защита от спама кружками)
+                paid_collection.update_one({"uid": uid}, {"$unset": {"secret_code": "", "verif_timer": ""}})
+                
+                verdict = f"⚠️ **Совпадение текста низкое ({score}%). Скайнет АВТОМАТИЧЕСКИ отклонил видео.**"
                 msg = f"🤖 **Нейросеть Скайнета (STT):**\nРаспознанный текст:\n_«{text}»_\n\n{verdict}"
                 bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+                
+                # Убираем кнопки (✅ / ❌) с видео у админов, так как ИИ уже всё решил
+                if video_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
+                    except: pass
+                
+                # 💬 ПИШЕМ ЮЗЕРУ!
+                bot.send_message(
+                    uid, 
+                    "❌ **Видео-кружок не принят нейросетью.**\n\nСкайнет не смог четко расслышать секретную фразу, или вы перепутали слова. Возможно, на фоне играла музыка.\n\n🔄 **Напишите слово «Готов»**, чтобы получить новый код и записать видео заново (говорите громко и четко!).", 
+                    parse_mode="Markdown"
+                )
 
     except Exception as e:
         logger.error(f"Ошибка STT (Голос ИИ): {e}")
@@ -1212,8 +1238,8 @@ def check_face_in_thumbnail(thumb_file_id):
     except Exception as e:
         return False
 
-def analyze_document_vision(file_id, thread_id, uid):
-    """Фоновая задача для анализа фото документов (Зрение ИИ)"""
+def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
+    """Фоновая задача для анализа фото документов (Зрение ИИ) + АВТОМАТИЗАЦИЯ"""
     if not GROQ_API_KEY: return
 
     try:
@@ -1229,7 +1255,6 @@ def analyze_document_vision(file_id, thread_id, uid):
         downloaded_file = bot.download_file(file_info.file_path)
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
         
-        # 🔥 ДИНАМИЧЕСКИЙ ФОРМАТ (Чтобы API не ругался на Invalid Base64)
         ext = file_info.file_path.split('.')[-1].lower()
         mime_type = "image/png" if ext == "png" else "image/jpeg"
 
@@ -1239,14 +1264,22 @@ def analyze_document_vision(file_id, thread_id, uid):
             "Content-Type": "application/json"
         }
         
+        # 🔥 НОВЫЙ ПРОМПТ: СТРОГАЯ ПАСПОРТИСТКА (ИСПРАВЛЕННАЯ МАТЕМАТИКА) 🔥
         prompt = (
-            "Ты строгий ИИ-помощник модератора. Это фотография документа для подтверждения возраста (паспорт, права и т.д.). "
-            "Ответь очень кратко по пунктам:\n"
-            "1. Похоже ли это на документ?\n"
-            "2. Видно ли лицо человека?\n"
+            "Ты — колоритная, строгая, уставшая, но очень дотошная паспортистка-таможенница (в стиле скетчей Comedy Woman). "
+            "Твоя задача — проверить фото документа пользователя. Сейчас 2026 год.\n"
+            "Критерии проверки:\n"
+            "1. Похоже ли это на официальный документ (паспорт, права)?\n"
+            "2. Открыто ли лицо человека (не замазано, не закрыто пальцами)?\n"
             "3. Читаема ли дата рождения?\n"
-            "4. Итог: Годится ли фото или оно размыто/скрыто?\n"
-            "Отвечай коротко и по делу, на русском языке."
+            "4. ВОЗРАСТ (ВАЖНО!): Человеку должно быть 18 лет или больше. "
+            "ШПАРГАЛКА ДЛЯ ТЕБЯ: Года 2008, 2007, 2006, 2004, 2000, 1995, 1990 и так далее (все числа меньше 2008) — это СТАРШЕ 18 ЛЕТ (ОДОБРЕНО). "
+            "Года 2009, 2010, 2012, 2015 и так далее (все числа больше 2008) — это МЛАДШЕ 18 ЛЕТ (ОТКЛОНЕНО).\n\n"
+            "ВНИМАНИЕ! Если ВСЕ 4 пункта идеальны, напиши СТРОГО в первой строке: РЕШЕНИЕ: ОДОБРЕНО.\n"
+            "Если хотя бы один пункт нарушен (засвечено, скрыто, не документ, ИЛИ ГОД РОЖДЕНИЯ 2009 И БОЛЬШЕ), напиши СТРОГО в первой строке: РЕШЕНИЕ: ОТКЛОНЕНО.\n"
+            "Со второй строки напиши короткий, эмоциональный комментарий от лица строгой паспортистки, обращаясь к пользователю. "
+            "Если отказываешь из-за возраста (меньше 18), возмутись: 'Мальчик, иди уроки делай! Куда ты с таким годом рождения ко мне приперся? Тебе еще 18 нет, следующий!'. "
+            "Пример одобрения: 'Так, лицо ваше, 18 уже есть, дата сходится. Проходим, не задерживаем очередь!'"
         )
 
         data = {
@@ -1260,37 +1293,67 @@ def analyze_document_vision(file_id, thread_id, uid):
                     ]
                 }
             ],
-            "temperature": 0.2,
-            "max_tokens": 1024
+            "temperature": 0.4, # Чуть добавили креатива для эмоций паспортистки
+            "max_tokens": 200
         }
 
         response = requests.post(url, headers=headers, json=data)
 
         if response.status_code == 200:
-            ai_text = response.json()["choices"][0]["message"]["content"]
-            msg = f"👁 **Анализ документа (Vision AI):**\n\n{ai_text}"
+            ai_text = response.json()["choices"][0]["message"]["content"].strip()
             
-            vision_memory = f"Моя зрительная нейросеть только что изучила этот документ. Вот её отчет:\n{ai_text}\nЕсли пользователь спрашивает, всё ли в порядке — ответь ему на основе этого отчета."
+            vision_memory = f"Паспортистка проверила документ. Отчет:\n{ai_text}"
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": vision_memory}}})
 
-            try: bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
-            except Exception: bot.send_message(STAFF_GROUP_ID, f"👁 Анализ документа:\n\n{ai_text}", message_thread_id=thread_id)
-        else:
-            # 👇 МАГИЯ ДЕБАГГИНГА 👇
-            error_details = response.text 
-            try:
-                bot.send_message(
-                    STAFF_GROUP_ID, 
-                    f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{error_details}`", 
-                    message_thread_id=thread_id, 
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                print(f"🔥 ТОЧНАЯ ОШИБКА GROQ: {error_details}")
+            # 🔥 ВЫТАСКИВАЕМ ЭМОЦИОНАЛЬНЫЙ КОММЕНТАРИЙ ПАСПОРТИСТКИ 🔥
+            # Берем всё, что ИИ написал после строчки "РЕШЕНИЕ: ..."
+            lines = ai_text.split('\n', 1)
+            ai_comment = lines[1].strip() if len(lines) > 1 else ""
 
-    # 👇 ЭТОТ БЛОК ТЫ СЛУЧАЙНО СТЕР В ПРОШЛЫЙ РАЗ 👇
+            # 🔥 ЛОГИКА АВТОМАТИЗАЦИИ 🔥
+            if "РЕШЕНИЕ: ОДОБРЕНО" in ai_text.upper():
+                if photo_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=photo_msg_id, reply_markup=None)
+                    except: pass
+                
+                code_words = ["ЯБЛОКО", "ТИГР", "СОЛНЦЕ", "МОРЕ", "СОКОЛ", "РАКЕТА", "ВЕТЕР", "МАЯК"]
+                secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
+                paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
+                
+                if not ai_comment: ai_comment = "Так, всё сходится. Проходим, следующий!"
+                
+                # 💬 ПИШЕМ ЮЗЕРУ ОТ ЛИЦА ПАСПОРТИСТКИ
+                text_to_user = f"🛂 **Таможня (ИИ):**\n💬 _«{ai_comment}»_\n\n✅ **Документ одобрен!**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*.\n\nУ вас есть 5 минут на отправку видео."
+                try: bot.send_message(uid, text_to_user, parse_mode="Markdown")
+                except: pass
+                
+                bot.send_message(STAFF_GROUP_ID, f"👁 **Паспортистка (ИИ):**\n{ai_text}\n\n✅ **АВТО-ОДОБРЕНО!** Выдан код: `{secret_code}`", message_thread_id=thread_id, parse_mode="Markdown")
+                
+            elif "РЕШЕНИЕ: ОТКЛОНЕНО" in ai_text.upper():
+                if photo_msg_id:
+                    try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=photo_msg_id, reply_markup=None)
+                    except: pass
+                
+                if not ai_comment: ai_comment = "Мужчина, я ничего не вижу! Размыто всё, идите переделывайте!"
+                
+                # 💬 ОТШИВАЕМ ЮЗЕРА ОТ ЛИЦА ПАСПОРТИСТКИ
+                text_to_user = f"🛂 **Таможня (ИИ):**\n💬 _«{ai_comment}»_\n\n❌ **Документ не принят.**\nПожалуйста, сделайте нормальное фото (без засветов, где видно лицо и дату рождения) и отправьте снова."
+                try: bot.send_message(uid, text_to_user, parse_mode="Markdown")
+                except: pass
+                
+                bot.send_message(STAFF_GROUP_ID, f"👁 **Паспортистка (ИИ):**\n{ai_text}\n\n❌ **АВТО-ОТКЛОНЕНО!** Юзер отправлен переделывать фото.", message_thread_id=thread_id, parse_mode="Markdown")
+                
+            else:
+                msg = f"👁 **Паспортистка (ИИ):**\n\n{ai_text}\n\n⚠️ **ИИ не уверен. Примите решение вручную кнопками выше 👆**"
+                bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
+
+        else:
+            error_details = response.text 
+            try: bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{error_details}`", message_thread_id=thread_id, parse_mode="Markdown")
+            except: pass
+
     except Exception as e:
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Скайнета при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Паспортистки при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
         except: pass
 
 
@@ -1302,29 +1365,51 @@ def process_ticket_with_ai(uid, user_text, thread_id):
     try:
         # ================== 1. ЛЕГКИЙ АНАЛИЗ ДОСЬЕ (Python) ==================
         user_record = archive_collection.find_one({"target": str(uid)})
-        ban_type = "basic"
-        dossier_lines = ["История чиста."]
+        
+        # 🔥 ПО УМОЛЧАНИЮ: Если история пуста, это Карантин новорега или Нет подписки.
+        # Им мы как раз ДОЛЖНЫ выдавать инструкцию с кружком!
+        ban_type = "basic" 
+        dossier_lines = ["История пуста. Вероятно, это системный карантин (120ч) или отсутствие подписки."]
 
-        if user_record and "history" in user_record:
-            recent = user_record["history"][-3:]  # Берем только 3 последних
+        if user_record and "history" in user_record and len(user_record["history"]) > 0:
+            recent = user_record["history"][-3:]  # Берем 3 последних для текста досье
             dossier_lines = [f"• {e.get('date', '')}: {e.get('action', '')} | {e.get('reason', '')} | {e.get('evidence_summary', '')}" for e in recent]
-            full_text = " ".join(dossier_lines).upper()
+            
+            latest_entry = recent[-1] if recent else {}
+            latest_text = f"{latest_entry.get('action', '')} {latest_entry.get('reason', '')} {latest_entry.get('evidence_summary', '')}".upper()
+            full_text = " ".join([f"{e.get('action', '')} {e.get('reason', '')} {e.get('evidence_summary', '')}" for e in recent]).upper()
 
-            # 🔥 ДОБАВИЛИ НОВЫЕ ТИПЫ БАНОВ 🔥
-            # 🔥 ДОБАВИЛИ НОВЫЕ ТИПЫ БАНОВ 🔥
-            if any(x in full_text for x in ["ЧЕРНАЯ ЗОНА", "ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "НЕСОВЕРШЕННОЛЕТ", "<18", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ"]):
-                ban_type = "age"
-            elif any(x in full_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
-                ban_type = "may_1"
-            elif any(x in full_text for x in ["НЕ ВАЛИДНА", "ТАЙМАУТ 24Ч", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ"]):
-                ban_type = "failed_verif"
-            elif any(x in full_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК"]):
+            # 1. СНАЧАЛА ПРОВЕРЯЕМ ТЯЖКИЕ НАРУШЕНИЯ (Наркотики) ПО ВСЕЙ ИСТОРИИ
+            if any(x in full_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
                 ban_type = "nark"
-            elif any(x in full_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ"]):
+                
+            # 🔥 2. ПРОВЕРЯЕМ НА АМНИСТИЮ: Если последнее действие - это снятие бана, юзер ЧИСТ!
+            elif any(x in latest_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
+                ban_type = "clean"
+                
+            # 3. ЕСЛИ НЕ АМНИСТИРОВАН - ИЩЕМ ПРИЧИНУ ПОСЛЕДНЕГО БАНА
+            elif any(x in latest_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18"]):
+                ban_type = "black_zone" # Черная зона (Малолетки до 18)
+            
+            elif any(x in latest_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
+                ban_type = "orange_zone" # Паспортный контроль (18-21 год)
+                
+            elif any(x in latest_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
+                ban_type = "may_1"
+                
+            elif any(x in latest_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
+                ban_type = "failed_verif"
+            
+            elif any(x in latest_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', latest_text):
+                ban_type = "manual_hard"
+                
+            elif any(x in latest_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ"]):
                 ban_type = "commercial"
-            elif any(x in full_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМА", "ЕБАНАТ"]):
+                
+            elif any(x in latest_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН", "БИО", "ССЫЛКА В"]):
                 ban_type = "spam"
-            elif any(x in full_text for x in ["БОТ", "VIP", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК"]):
+                
+            elif any(x in latest_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
                 ban_type = "bot_block"
 
         dossier = "\n".join(dossier_lines)
@@ -1335,56 +1420,75 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         dialogue_context = "\n".join([f"{'👤 Юзер' if m['role']=='user' else '🤖 Скайнет'}: {m['content']}" for m in user_data.get("dialog_history", [])[-4:]])
 
         # ================== 3. ДИНАМИЧЕСКИЙ ПРАЙС-ЛИСТ И ПРАВИЛА ==================
-        if ban_type == "basic":
-            behavior_rules = """3. БАЗОВЫЙ МУТ: Если юзер просит верификацию ("верификацию пожалуйста", "хочу верификацию", "пройти проверку") или спрашивает "как разбаниться?" -> СТРОГО выбирай действие `tpl_verif` (в этом шаблоне уже зашита идеальная инструкция, не пытайся писать ее сам). Если юзер просто не понимает, что произошло, и спрашивает "что это такое?" или "за что бан?" -> ответь `reply_text`, используя Техническую Справку.
-4. ПРОДАЖА (650⭐️): Если юзер отказывается записывать видео (пишет "не хочу", "нет денег", "стесняюсь") -> выбирай `reply_text`. Саркастично высмей его отмазку и предложи откупиться за 650⭐️."""
+        if ban_type == "clean":
+            behavior_rules = """- ЧИСТАЯ ИСТОРИЯ: У пользователя НЕТ нарушений. Отвечай вежливо (выбирай `reply_text`). КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить видео-кружок, упоминать «Готов» или штраф!"""
+        
+        elif ban_type == "basic":
+            behavior_rules = """- БАЗОВЫЙ МУТ: Если просит верификацию -> СТРОГО выбирай `tpl_verif`. Если спрашивает "за что бан?" -> СНАЧАЛА предложи бесплатную верификацию.
+- ПРОДАЖА (650⭐️): Если КАТЕГОРИЧЕСКИ отказывается писать видео -> выбирай `reply_text`. Саркастично предложи откупиться за 650⭐️."""
         
         elif ban_type == "may_1":
-            behavior_rules = """3. НАРУШЕНИЕ ФОРМАТА (1 МАЯ): Если юзер спрашивает, за что мут или "что не так?" -> СТРОГО выбирай `reply_text`. Объясни ему, что он отправил анкету без параметров (возраст/рост/вес через слеш, например: 24/187/72). И СРАЗУ ЖЕ дай решение: скажи, что для снятия ограничений ему прямо сейчас нужно записать видео-кружок (используй Техническую Справку для объяснения того, как его записать).
-4. ОТКАЗ ОТ КРУЖКА (Штраф 650⭐️): Если юзер отказывается писать видео ("не хочу", "стесняюсь", "нет") -> СТРОГО выбирай `reply_text`. Саркастично высмей его и жестко скажи, что бесплатная верификация для него отменяется. Выставь ультиматум: оплата штрафа 650⭐️ или он остается в муте.""" 
+            behavior_rules = """- НАРУШЕНИЕ ФОРМАТА (1 МАЯ): Если спрашивает за что мут -> СТРОГО выбирай `reply_text`. Объясни про параметры через слеш и скажи записать видео-кружок.
+- ОТКАЗ ОТ КРУЖКА (Штраф 650⭐️): Если отказывается -> СТРОГО выбирай `reply_text`. Выставь ультиматум: штраф 650⭐️ или мут.""" 
 
         elif ban_type == "failed_verif":
-            behavior_rules = """3. ПРОВАЛ ВЕРИФИКАЦИИ / ИГНОР: Юзер получил БАН за то, что начал проверку и пропал (уснул/игнорил) или его верификация была признана администратором невалидной. СТРОГО выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК!
-4. ШТРАФ (650⭐️): Жестко и токсично напомни ему, что он потратил время модераторов впустую и провалил проверку. Бесплатной верификации для него БОЛЬШЕ НЕТ. Единственный способ снять бан — оплатить штраф 650⭐️. Назови точную сумму и спроси, звать ли админа для выдачи кассы."""
+            behavior_rules = """- ПРОВАЛ ВЕРИФИКАЦИИ / ИГНОР: СТРОГО выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Жестко напомни, что он потратил время впустую. Штраф 650⭐️."""
+
+        elif ban_type == "manual_hard":
+            behavior_rules = """- ЖЕСТКИЙ РУЧНОЙ БАН: СТРОГО выбирай `reply_text`. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО упоминать кружок или «Готов»! Прочитай причину в Досье и требуй указанную там сумму (если нет - 1500⭐️)."""
+
+        elif ban_type == "orange_zone":
+            behavior_rules = """- ПАСПОРТНЫЙ КОНТРОЛЬ (18-21 год): Пользователь попал под фильтр контроля молодежи.
+- ТРЕБОВАНИЕ: СТРОГО выбирай действие `tpl_18` (отправить шаблон). НИ В КОЕМ СЛУЧАЕ не пиши текст вручную и НЕ проси записать кружок на этом этапе! Просто отправь `tpl_18`."""
 
         elif ban_type == "commercial":
-            behavior_rules = """3. ШАБЛОН: Если юзер только пришел -> выдай `tpl_mp`.
-4. ДИНАМИЧЕСКИЙ ШТРАФ (750⭐️ или 1563⭐️): Если юзер спорит, ноет или спрашивает цену -> выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Проанализируй его ДОСЬЕ и диалог: если он ПРЕДЛАГАЛ интим-услуги за деньги (эскорт, продажа) — жестко требуй штраф 1563⭐️. Если он ИСКАЛ услуги или предлагал мат. помощь (спонсор, папик) — требуй штраф 750⭐️. Назови точную цифру и спроси, готов ли он платить."""
+            behavior_rules = """- КОММЕРЦИЯ (ЖЕЛТАЯ ЗОНА): Спонсоры и коммерция в сети разрешены ТОЛЬКО после оплаты взноса. Если юзер спорит ("какая коммерция?", "я ничего не продаю") -> СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Холодно осади его, назови цену (1563⭐️ эскорт/услуги, 750⭐️ мат. помощь/спонсор) и задай вопрос-крючок: "Выставить вам счет для получения официального статуса?"."""
         
         elif ban_type == "nark":
-            behavior_rules = """3. ШАБЛОН: Если юзер только пришел -> выдай `tpl_nark`.
-4. ПРОДАЖА (2000⭐️): Если юзер спорит или спрашивает как снять бан -> выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Саркастично высмей его поведение. Штраф за наркотики максимальный — 2000⭐️. Озвучь ровно эту сумму и спроси, звать ли админа для оплаты."""
+            behavior_rules = """- НАРКОТИКИ (КРАСНАЯ ЗОНА): Если спорит -> выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Штраф — 2000⭐️."""
         
         elif ban_type == "bot_block":
-            behavior_rules = """3. БЛОК БОТА: СТРОГО выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Иронично напомни, что блокировать бота было глупо. Предложи два пути: базовый штраф за разбан (250⭐️) или покупку тега «Свободен» (650⭐️). Активно продавай тег за 650⭐️."""
+            behavior_rules = """- СИСТЕМНЫЕ НАРУШЕНИЯ: СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Напомни, что он заблокировал бота/сбежал. Основная цена разбана — строго 250⭐️. Как элитную альтернативу можешь надменно предложить ему сразу купить иммунитет (тег «Свободен») за 650⭐️, но базовый счет выставляй на 250."""
         
-        elif ban_type == "age":
-            behavior_rules = """3. ВЕРИФИКАЦИЯ ВОЗРАСТА (ОРАНЖЕВАЯ ЗОНА): Если юзер спрашивает, за что мут или как его снять -> СТРОГО выбирай `tpl_18`. Этот шаблон запрашивает фото документа (паспорт/права). ТЕБЕ КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО упоминать видео-кружок на этом этапе (он будет запрошен только после проверки паспорта)!
-4. ОТКАЗ ИЛИ ОТМАЗКИ (Штраф 650⭐️): Если юзер отказывается присылать документ ("боюсь", "нет паспорта", "инкогнито", "я несовершеннолетний") -> СТРОГО выбирай `reply_text`. Саркастично осади его. Объясни, что верить на слово мы не будем, и раз он скрывает возраст, бесплатного пути нет. Выставь ультиматум: оплата штрафа 650⭐️ или он остается в муте."""
+        elif ban_type == "black_zone":
+            behavior_rules = """- НЕСОВЕРШЕННОЛЕТНИЙ (<18): СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Нахождение в сети строго с 18 лет. Штраф за обман — 2000⭐️."""
 
-        else: # spam
-            behavior_rules = """3. СПАМ / ФЛУД: Если юзер спрашивает за что бан -> выдай `tpl_flood`.
-4. ПРОДАЖА (650⭐️): Если юзер спорит или просит откупиться -> выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Саркастично осади его. Сумма штрафа за спам — 650⭐️. Предложи выставить счет."""
+        elif ban_type == "spam":
+            behavior_rules = """- СПАМ / ФЛУД / БИО: Независимо от того, что пишет юзер, СТРОГО выбирай `reply_text`, `tpl_flood` или `tpl_bio`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Штраф за спам/ссылки — 500⭐️."""
 
-        # 🔥 ДИНАМИЧЕСКИЙ ПРОМПТ: Скрываем кружки от тех, кому они не положены
+        # 🔥 ДИНАМИЧЕСКИЙ ПРОМПТ И ПРАЙС-ЛИСТ 🔥
         circle_tech_info = ""
         dead_end_rule = ""
+        expected_fine = "650" # Дефолт
         
-        if ban_type in ["basic", "may_1", "age"]:
-            # Этим ребятам кружок доступен, ИИ должен знать, как он работает
-            circle_tech_info = """
-- "Видео-кружок" — это короткое круглое видеосообщение прямо в Telegram.
-- 🔑 КАК ЗАПУСТИТЬ ВЕРИФИКАЦИЮ: Юзер должен отправить ровно одно слово: «Готов». Только после этого скрипт выдаст ему код и запустит таймер! Если отправляешь юзера писать кружок — ВСЕГДА говори ему: "Напиши слово «Готов», чтобы получить код"."""
-            dead_end_rule = """- Если мут за формат/возраст: СРАЗУ скажи: "Напиши слово «Готов», чтобы получить секретный код и записать видео-кружок для разбана.\""""
+        if ban_type in ["basic", "may_1"]:
+            circle_tech_info = "\nТЕХНИЧЕСКАЯ СПРАВКА:\n- 🔑 ВЕРИФИКАЦИЯ: Юзер должен отправить ровно одно слово: «Готов». Только после этого бот выдаст код и таймер! ВАЖНО: СЛОВО «ГОТОВ» НУЖНО ТОЛЬКО ДЛЯ ВИДЕО-КРУЖКА. ДЛЯ ШТРАФА ОНО НЕ НУЖНО!"
+            dead_end_rule = "- ВАЖНО: Если юзер выбрал ВЕРИФИКАЦИЮ (кружок), скажи ему написать слово «Готов». Если он выбрал ШТРАФ — выставляй счет (issue_fine) и НИ В КОЕМ СЛУЧАЕ не проси писать «Готов»."
+            expected_fine = "650"
+        elif ban_type == "orange_zone":
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить слово «Готов» или видео-кружок! Твоя единственная цель — отправить шаблон запроса паспорта (`tpl_18`)."
+            expected_fine = "0"
+        elif ban_type == "clean":
+            dead_end_rule = "- Юзер чист! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вымогать штрафы, отправлять на верификацию или просить слово «Готов»."
+            expected_fine = "0"
+        elif ban_type == "commercial":
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
+            expected_fine = "1563 или 750"
+        elif ban_type in ["nark", "black_zone"]:
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
+            expected_fine = "2000"
+        elif ban_type == "spam":
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
+            expected_fine = "500"
+        elif ban_type == "bot_block":
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
+            expected_fine = "250"
         else:
-            # Для коммерции, наркотиков, спама и прочего - ИИ вообще не знает про кружки!
-            dead_end_rule = """- Если юзер должен оплатить штраф: Скажи ему "Ожидайте, администратор скоро выставит вам счет на оплату кнопкой в этот чат". КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов»!"""
+            dead_end_rule = "- Если юзер должен оплатить штраф: Выстави счет или скажи \"Ожидайте счет\". КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео!"
+            expected_fine = "650"
 
         # ================== 4. УМНЫЙ ПРОМПТ ==================
-        prompt = f"""Ты — гениальный, саркастичный и слегка высокомерный ИИ-секретарь Скайнета. 
-
-ТЕХНИЧЕСКАЯ СПРАВКА (ФАКТЫ - НЕ ВЫДУМЫВАЙ НИЧЕГО ДРУГОГО):{circle_tech_info}
-- ШТРАФЫ: Скайнет НЕ выдает реквизиты сам. Счет на оплату штрафа выставляет живой Администратор специальной кнопкой в чате.
+        prompt = f"""Ты — гениальный, саркастичный и слегка высокомерный ИИ-секретарь Скайнета. {circle_tech_info}
 
 ТВОЙ ХАРАКТЕР И СТИЛЬ:
 1. Ты — «Зеркало». Вежливому — профессионально. Хаму — сарказм и ледяной тон.
@@ -1400,46 +1504,71 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 {dialogue_context}
 
 ПРАВИЛА ВЫБОРА ДЕЙСТВИЯ (СТРОГАЯ ИЕРАРХИЯ СВЕРХУ ВНИЗ):
-1. ОПЛАТА / АДМИН: Если юзер ГАРАНТИРОВАННО согласен на штраф, просит реквизиты, пишет "оплатил" или "зови админа" -> СТРОГО выбирай `transfer_to_human`.
-2. 🛡 АНТИ-ИДИОТ (ЭКОНОМИЯ ТОКЕНОВ): Если юзер продолжает спорить и ныть после твоего объяснения — НЕ ВСТУПАЙ В ДИСКУССИЮ! Сразу выбирай `transfer_to_human` с причиной "Юзер тупит".
+0. СТРОГИЕ ПЕРСОНАЛЬНЫЕ ИНСТРУКЦИИ ДЛЯ ЭТОГО ЮЗЕРА:
 {behavior_rules}
+
+1. ВЫСТАВЛЕНИЕ СЧЕТА (АВТО-КАССИР): Если юзер согласен на штраф ("оплачу", "штраф", "буду платить"), просит реквизиты ИЛИ спрашивает "как купить звезды/как оплатить" -> СТРОГО выбирай `issue_fine` и обязательно укажи верную сумму штрафа (ДЛЯ ДАННОГО НАРУШЕНИЯ ЭТО: {expected_fine}) в поле `fine_amount`. Саркастично похвали его за выбор в `response_text`. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить писать слово "Готов" на этом этапе!
+2. ДОЖИМ (ПРОДАЖА ШТРАФА): Если юзер спорит, возмущается или не понимает причину -> ЕСЛИ ЕМУ ДОСТУПНА БЕСПЛАТНАЯ ВЕРИФИКАЦИЯ (см. пункт 0), ОБЯЗАТЕЛЬНО предложи её первой! Если верификация не положена — выбирай `reply_text` и саркастично требуй {expected_fine}⭐️.
+3. ПЕРЕВОД НА АДМИНА: Если юзер задает сложный нестандартный вопрос, требует руководство или ситуация зашла в тупик -> выбирай `transfer_to_human`.
+4. 🛡 АНТИ-ИДИОТ (ЭКОНОМИЯ ТОКЕНОВ): Если юзер уже отказался от оплаты ("не буду платить", "идите нахер"), пишет что "продолжит спор" или продолжает ныть по кругу ПОСЛЕ твоего предложения счета — НЕ ВСТУПАЙ В ДИСКУССИЮ! Сразу выбирай `transfer_to_human` с причиной "Юзер тупит/Отказ от оплаты".
 5. ПРОЧЕЕ ОБЩЕНИЕ: Если ни одно правило не подошло, выбирай `reply_text` и отвечай на вопрос пользователя.
 
 Выбери ОДНО действие из списка:
+- issue_fine (Автоматически выставить счет на оплату)
 - transfer_to_human (Перевести тикет на человека)
 - reply_text (Ответить свободным текстом)
 - tpl_verif (Шаблон запроса кружка)
-- tpl_18, tpl_nark, tpl_flood, tpl_mp, tpl_vip (Спец. шаблоны)
+- tpl_18, tpl_nark, tpl_flood, tpl_bio, tpl_mp, tpl_vip (Спец. шаблоны)
 
 Ответ строго в JSON:
-{{"action": "название_действия", "reason": "твоя логика", "response_text": "твой УНИКАЛЬНЫЙ ответ юзеру (заполнять ТОЛЬКО для reply_text)"}}"""
+{{"action": "название_действия", "reason": "твоя логика", "response_text": "твой УНИКАЛЬНЫЙ ответ юзеру", "fine_amount": 0}}"""
 
-        # ================== 5. ЗАПУСК ИИ ==================
-        thinking_msg = bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет анализирует тикет...*", message_thread_id=thread_id, parse_mode="Markdown")
+        # ================== 5. ЗАПУСК ИИ (ПУЛ КЛЮЧЕЙ) ==================
+        try:
+            thinking_msg = bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет анализирует тикет...*", message_thread_id=thread_id, parse_mode="Markdown")
+        except:
+            thinking_msg = None
 
-        for attempt in range(2):
-            response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "response_format": {"type": "json_object"},
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": 350
-                },
-                timeout=20
-            )
-            if response.status_code == 429:
-                time.sleep(2)
+        response = None
+
+        response = None
+        # Перебираем все доступные ключи из нашего пула по очереди
+        for key in GROQ_API_KEYS:
+            try:
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "response_format": {"type": "json_object"},
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 350
+                    },
+                    timeout=20
+                )
+                
+                # Если словили лимит, ругаемся в логи и идем к следующему ключу!
+                if response.status_code == 429:
+                    logger.warning(f"⚠️ Ключ {key[:8]}... словил лимит токенов (429)! Переключаюсь на резервный...")
+                    continue 
+                
+                # Если ответ 200 (успех) или любая другая ошибка - прерываем перебор ключей
+                break 
+                
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"⚠️ Сбой соединения на ключах. Ошибка: {e}")
                 continue
-            break
 
-        try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
-        except: pass
+        # Удаляем сообщение "Скайнет думает"
+        if thinking_msg:
+            try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
+            except: pass
 
-        if response.status_code != 200:
-            raise Exception(f"API Error {response.status_code}: {response.text}")
+        # Если мы перебрали ВСЕ ключи, и ни один не сработал
+        if not response or response.status_code != 200:
+            error_details = response.text if response else "Нет ответа от серверов Groq"
+            raise Exception(f"Все резервные ключи исчерпаны! API Error: {error_details}")
 
         result = json.loads(response.json()["choices"][0]["message"]["content"])
         action = result.get("action", "transfer_to_human")
@@ -1452,6 +1581,59 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": text}}})
             bot.send_message(STAFF_GROUP_ID, f"🤖 АВТОПИЛОТ (Диалог):\nОтветил: {text}\nПричина: {reason}", message_thread_id=thread_id)
 
+        # 🔥 НОВЫЙ БЛОК: АВТО-КАССИР 🔥
+        elif action == "issue_fine":
+            amount = int(result.get("fine_amount", 0))
+            if amount < 1: 
+                # Страховка от галлюцинаций с учетом типа бана!
+                if ban_type == 'commercial': amount = 1563
+                elif ban_type in ['nark', 'black_zone']: amount = 2000
+                elif ban_type == 'spam': amount = 500
+                elif ban_type == 'bot_block': amount = 250
+                else: amount = 650
+            
+            try:
+                # 1. Отправляем сопровождающий саркастичный текст от ИИ
+                ai_text = result.get("response_text", "")
+                if ai_text and ai_text != "твой УНИКАЛЬНЫЙ ответ юзеру":
+                    bot.send_message(uid, f"🤖 Консультант Скайнет:\n\n{ai_text}")
+                    paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": ai_text}}})
+
+                # 2. Генерируем реальную кассу!
+                user_data_pay = paid_collection.find_one({"uid": uid}) or {}
+                cb_balance = user_data_pay.get("cashback_balance", 0)
+                cost_in_rub = amount * 2
+                
+                url_usdt = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+                url_ton = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+                
+                markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+                
+                if cb_balance >= cost_in_rub:
+                    markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+                elif cb_balance > 0:
+                    remaining_stars = amount - (cb_balance // 2)
+                    markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+                else:
+                    markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+                
+                if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+                if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+                
+                # Добавляем спасательные кнопки для неофициальных клиентов
+                markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+                markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+                    
+                bot.send_message(uid, f"🧾 **Скайнет выставил вам счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
+                
+                # Пишем админам, что ИИ всё сделал сам
+                bot.send_message(STAFF_GROUP_ID, f"🤖 💸 **АВТО-КАССИР:** Скайнет САМ выставил счет на **{amount}⭐️**!\nПричина ИИ: {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+                paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": f"[Автоматически выставлен счет на {amount} звезд]"}}})
+                
+            except Exception as e:
+                logger.warning(f"Ошибка Авто-Кассира: {e}")
+                bot.send_message(STAFF_GROUP_ID, f"⚠️ Скайнет пытался выставить счет на {amount}⭐️, но произошла ошибка. Выдайте вручную.", message_thread_id=thread_id)
+
         elif action.startswith("tpl_"):
             db_tpl = db['bot_templates'].find_one({"_id": action})
             template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(action)
@@ -1461,7 +1643,6 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 
         else:  # transfer_to_human
             bot.send_message(STAFF_GROUP_ID, f"🤖 **ИИ передал тикет человеку**\nТип: {ban_type} | Причина: {reason}", message_thread_id=thread_id)
-            # Отвечаем юзеру, чтобы он не спамил дальше, ожидая ответа от ИИ
             wait_msg = "⏳ Запрос переведен на дежурного администратора. Пожалуйста, ожидайте, скоро в этот чат поступит ответ или счет на оплату."
             bot.send_message(uid, wait_msg)
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": wait_msg}}})
@@ -1584,3 +1765,448 @@ def ticket_sweeper_task():
 
 # Запускаем Санитара в отдельном фоновом потоке при старте файла
 threading.Thread(target=ticket_sweeper_task, daemon=True).start()
+
+# ================= ТЕЛЕГРАМ-ПАНЕЛЬ АДМИНИСТРАТОРА (v2.0) =================
+@bot.message_handler(commands=['panel', 'панель', 'п'])
+def admin_telegram_panel(message):
+    if message.from_user.id != OWNER_ID:
+        try:
+            staff = bot.get_chat_member(STAFF_GROUP_ID, message.from_user.id)
+            if staff.status not in ['administrator', 'creator']: return
+        except: return
+
+    bot.send_message(message.chat.id, "🎛 **ГЛАВНЫЙ ТЕРМИНАЛ СКАЙНЕТА**\nВыберите раздел:", reply_markup=get_main_panel_markup(), parse_mode="Markdown")
+
+def get_main_panel_markup():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("👮‍♂️ Модерация", callback_data="adm_menu_users"),
+        InlineKeyboardButton("💸 Экономика", callback_data="adm_menu_eco")
+    )
+    markup.add(
+        InlineKeyboardButton("🎟 Промокоды", callback_data="adm_menu_promo"),
+        InlineKeyboardButton("📈 Статистика", callback_data="adm_menu_stats")
+    )
+    markup.add(InlineKeyboardButton("❌ Закрыть терминал", callback_data="admin_panel_close"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_menu_'))
+def handle_panel_navigation(call):
+    menu = call.data.replace("adm_menu_", "")
+    markup = InlineKeyboardMarkup(row_width=2)
+    text = ""
+    
+    if menu == "main":
+        text = "🎛 **ГЛАВНЫЙ ТЕРМИНАЛ СКАЙНЕТА**\nВыберите раздел:"
+        markup = get_main_panel_markup()
+        
+    elif menu == "users":
+        text = "👮‍♂️ **Раздел: Модерация**\nВыберите действие:"
+        markup.add(
+            InlineKeyboardButton("🔨 Забанить / Разбанить", callback_data="admin_panel_manage"),
+            InlineKeyboardButton("🔇 Выдать Мут", callback_data="admin_panel_mute")
+        )
+        markup.add(
+            InlineKeyboardButton("🏷 Повесить ТЕГ", callback_data="admin_panel_tag"),
+            InlineKeyboardButton("📍 Сменить город", callback_data="admin_panel_city")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+        
+    elif menu == "eco":
+        text = "💸 **Раздел: Экономика**\nВыберите действие:"
+        markup.add(
+            InlineKeyboardButton("🧾 Выставить счет", callback_data="admin_panel_invoice"),
+            InlineKeyboardButton("🎁 Выдать Очки", callback_data="admin_panel_give_points")
+        )
+        markup.add(
+            InlineKeyboardButton("🧩 Выдать Осколки", callback_data="admin_panel_give_shards")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+        
+    elif menu == "promo":
+        text = "🎟 **Раздел: Промокоды и Аирдропы**\nЧто будем создавать?"
+        markup.add(
+            InlineKeyboardButton("👑 Код на VIP", callback_data="admin_panel_promo_vip"),
+            InlineKeyboardButton("📢 Код на Рекламу", callback_data="admin_panel_promo_ads")
+        )
+        markup.add(
+            InlineKeyboardButton("📦 Сбросить Аирдроп в чат", callback_data="admin_panel_do_airdrop")
+        )
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+        
+    elif menu == "stats":
+        text = "📈 **Раздел: Аналитика**\nКакие данные нужны?"
+        markup.add(
+            InlineKeyboardButton("📊 Глобальная сводка", callback_data="admin_panel_stats"),
+            InlineKeyboardButton("🧾 Z-Отчет (Выручка)", callback_data="admin_panel_zreport")
+        )
+        markup.add(InlineKeyboardButton("🔗 CPA Статистика", callback_data="admin_panel_cpa"))
+        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
+
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
+
+# ================= ОБРАБОТЧИК КНОПОК ПАНЕЛИ =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_panel_'))
+def handle_admin_panel_clicks(call):
+    action = call.data.replace("admin_panel_", "")
+    
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    if action == "close":
+        try: bot.delete_message(call.message.chat.id, call.message.message_id)
+        except: pass
+        
+    # --- АНАЛИТИКА ---
+    elif action == "stats":
+        try: bot.edit_message_text("⏳ Скайнет собирает данные со всех узлов...", call.message.chat.id, call.message.message_id)
+        except: pass
+        
+        # Собираем реальную стату из БД
+        total_users = db['users'].count_documents({})
+        total_banned = db['banned'].count_documents({})
+        
+        # Считаем сумму очков и кэшбека у населения
+        pipeline = [{"$group": {"_id": None, "total_points": {"$sum": "$bounty_points"}, "total_cb": {"$sum": "$cashback_balance"}}}]
+        wealth = list(paid_collection.aggregate(pipeline))
+        total_points = wealth[0]["total_points"] if wealth else 0
+        total_cb = wealth[0]["total_cb"] if wealth else 0
+        
+        active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
+        active_airdrops = db['active_airdrops'].count_documents({"claimed_count": {"$lt": 5}})
+        
+        text = (
+            "📊 **ГЛОБАЛЬНАЯ СВОДКА СКАЙНЕТА**\n\n"
+            f"👥 Всего пользователей в базе: **{total_users}**\n"
+            f"🚷 В глобальном бане: **{total_banned}**\n\n"
+            f"💰 Очков на руках: **{total_points} ⭐️**\n"
+            f"💸 Кэшбека на руках: **{total_cb} ₽**\n\n"
+            f"🎟 Неиспользованных промокодов: **{active_promos}**\n"
+            f"📦 Активных аирдропов в чатах: **{active_airdrops}**"
+        )
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
+        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        except: pass
+        
+    # --- УПРАВЛЕНИЕ ЮЗЕРАМИ ---
+    elif action == "manage":
+        msg = bot.send_message(call.message.chat.id, "🔨 **Забанить/Разбанить**\nОтправьте ID пользователя:")
+        bot.register_next_step_handler(msg, process_admin_manage_user)
+        
+    elif action == "tag":
+        msg = bot.send_message(call.message.chat.id, "🏷 **Выдача ТЕГА**\nОтправьте ID и Текст тега через пробел (например: `12345 БОСС`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_set_tag)
+        
+    # --- ЭКОНОМИКА ---
+    elif action == "give_points":
+        msg = bot.send_message(call.message.chat.id, "🎁 **Выдача ОЧКОВ**\nОтправьте ID и сумму (например: `123456 500`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_give_points)
+
+    elif action == "give_shards":
+        msg = bot.send_message(call.message.chat.id, "🧩 **Выдача ОСКОЛКОВ**\nОтправьте ID и количество (например: `123456 10`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_give_shards)
+
+# --- НОВЫЕ КНОПКИ МОДЕРАЦИИ ---
+    elif action == "mute":
+        msg = bot.send_message(call.message.chat.id, "🔇 **Выдать Мут**\nОтправьте ID пользователя и время в часах (например: `12345 24`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_mute)
+        
+    elif action == "city":
+        msg = bot.send_message(call.message.chat.id, "📍 **Сменить город**\nОтправьте ID пользователя и новый город (например: `12345 Москва`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_set_city)
+
+    # --- НОВАЯ КНОПКА ЭКОНОМИКИ ---
+    elif action == "invoice":
+        msg = bot.send_message(call.message.chat.id, "🧾 **Выставить счет (Штраф)**\nОтправьте ID пользователя и сумму (например: `12345 500`):", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_admin_invoice)
+
+    # --- ЗАГЛУШКИ ДЛЯ АНАЛИТИКИ (Если функционал еще не написан) ---
+    # --- АНАЛИТИКА Z-ОТЧЕТ И CPA (ДОСТУП ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА) ---
+    elif action == "zreport":
+        if call.from_user.id != 479938867:
+            try: bot.answer_callback_query(call.id, "❌ У вас нет прав на просмотр финансовой отчетности!", show_alert=True)
+            except: pass
+            return
+
+        try: bot.edit_message_text("⏳ Считаю кассу...", call.message.chat.id, call.message.message_id)
+        except: pass
+        
+        today_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        
+        # Считаем за всё время
+        all_time = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        all_dict = {item["_id"]: item["total"] for item in all_time}
+        
+        # Считаем за сегодня
+        today = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        today_dict = {item["_id"]: item["total"] for item in today}
+        
+        def format_money(d, key): return d.get(key, 0)
+        
+        text = (
+            "🧾 **Z-ОТЧЕТ (ВЫРУЧКА СКАЙНЕТА)**\n\n"
+            f"📅 **СЕГОДНЯ ({today_str}):**\n"
+            f"💰 Штрафы: **{format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')}⭐️**\n"
+            f"📜 Индульгенции: **{format_money(today_dict, 'indulgence')}⭐️**\n"
+            f"🛒 Магазин очков: **{format_money(today_dict, 'points_shop')}⭐️**\n"
+            f"💖 Донаты: **{format_money(today_dict, 'donation')}⭐️**\n"
+            f"🟢 **ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())}⭐️**\n\n"
+            f"🌍 **ЗА ВСЁ ВРЕМЯ:**\n"
+            f"💰 Штрафы: **{format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')}⭐️**\n"
+            f"📜 Индульгенции: **{format_money(all_dict, 'indulgence')}⭐️**\n"
+            f"🛒 Магазин очков: **{format_money(all_dict, 'points_shop')}⭐️**\n"
+            f"💖 Донаты: **{format_money(all_dict, 'donation')}⭐️**\n"
+            f"🏆 **ОБЩАЯ КАССА: {sum(all_dict.values())}⭐️**"
+        )
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
+        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        except: pass
+
+    elif action == "cpa":
+        if call.from_user.id != 479938867:
+            try: bot.answer_callback_query(call.id, "❌ У вас нет прав на просмотр CPA статистики!", show_alert=True)
+            except: pass
+            return
+
+        try: bot.edit_message_text("⏳ Свожу трафик...", call.message.chat.id, call.message.message_id)
+        except: pass
+        
+        total_clicks = db['cpa_traffic'].count_documents({})
+        approved = db['cpa_traffic'].count_documents({"status": "approved"})
+        hold = db['cpa_traffic'].count_documents({"status": "hold"})
+        fraud = db['cpa_traffic'].count_documents({"status": "fraud"})
+        
+        # Топ-3 агента
+        pipeline = [
+            {"$match": {"status": "approved"}},
+            {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 3}
+        ]
+        top_agents = list(db['cpa_traffic'].aggregate(pipeline))
+        
+        text = (
+            "🔗 **CPA СТАТИСТИКА (ПАРТНЕРКА)**\n\n"
+            f"👁 Всего заявок (кликов): **{total_clicks}**\n"
+            f"⏳ На проверке (Холд): **{hold}**\n"
+            f"🚫 Забраковано (Боты): **{fraud}**\n"
+            f"✅ **ОДОБРЕНО (Лиды):** **{approved}**\n\n"
+            "🏆 **ТОП-3 АГЕНТА:**\n"
+        )
+        
+        if top_agents:
+            medals = ["🥇", "🥈", "🥉"]
+            for i, agent in enumerate(top_agents):
+                agent_id = agent["_id"]
+                count = agent["count"]
+                text += f"{medals[i]} `ID {agent_id}` — **{count}** лидов\n"
+        else:
+            text += "_Пока нет одобренных лидов._"
+            
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
+        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        except: pass
+        
+    # --- ПРОМОКОДЫ И АИРДРОПЫ ---
+    elif action == "promo_vip":
+        code = f"VIP-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True})
+        bot.send_message(call.message.chat.id, f"👑 **Промокод на 100% VIP создан!**\n\nКод: `{code}`\n_Можно смело дарить юзерам!_", parse_mode="Markdown")
+
+    elif action == "promo_ads":
+        code = f"ADS-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "ads", "usage_limit": 1, "used_count": 0, "is_active": True})
+        bot.send_message(call.message.chat.id, f"📢 **Промокод на 100% Рекламу создан!**\n\nКод: `{code}`\n_Можно смело дарить юзерам!_", parse_mode="Markdown")
+
+    elif action == "do_airdrop":
+        # Магия! Вызываем функцию сброса контейнера из казино!
+        try:
+            from handlers.casino import trigger_random_airdrop 
+            trigger_random_airdrop(is_manual=True) # <-- Теперь админ сбрасывает в обход таймера!
+            bot.send_message(call.message.chat.id, "📦 🚨 **Аирдроп успешно сброшен!**\nПрямо сейчас в одном из чатов появилась кнопка с очками!", parse_mode="Markdown")
+        except Exception as e:
+            bot.send_message(call.message.chat.id, f"❌ Ошибка аирдропа: {e}")
+
+# ================= ФУНКЦИИ-ПОМОЩНИКИ ДЛЯ ПАНЕЛИ =================
+def process_admin_manage_user(message):
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ ID должен быть числом!")
+        return
+    uid = int(message.text)
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🔨 БАН ВО ВСЕХ ЧАТАХ", callback_data=f"adm_tg_ban_{uid}"),
+        InlineKeyboardButton("🕊 ГЛОБАЛЬНЫЙ РАЗБАН", callback_data=f"adm_tg_unban_{uid}")
+    )
+    bot.send_message(message.chat.id, f"👤 **Пользователь {uid}**\nВыберите действие:", reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tg_'))
+def handle_quick_manage(call):
+    parts = call.data.split('_')
+    action = parts[2]
+    uid = int(parts[3])
+    
+    if action == "ban":
+        db['banned'].insert_one({"_id": uid, "reason": "Бан из Панели Скайнета"})
+        try: bot.edit_message_text(f"✅ Пользователь {uid} **ЗАБАНЕН**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except: pass
+    elif action == "unban":
+        db['banned'].delete_one({"_id": uid})
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+        try: bot.edit_message_text(f"✅ Пользователь {uid} **РАЗБАНЕН**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except: pass
+
+def process_admin_give_points(message):
+    try:
+        parts = message.text.split()
+        uid = int(parts[0])
+        amount = int(parts[1])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Выдано **{amount} очков** пользователю `{uid}`.", parse_mode="Markdown")
+        try: bot.send_message(uid, f"🎁 Администрация начислила вам **{amount} очков**!")
+        except: pass
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА`")
+
+def process_admin_give_shards(message):
+    try:
+        parts = message.text.split()
+        uid = int(parts[0])
+        amount = int(parts[1])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Выдано **{amount} осколков** пользователю `{uid}`.", parse_mode="Markdown")
+        try: bot.send_message(uid, f"🧩 Администрация выдала вам **{amount} осколков Джекпота**!")
+        except: pass
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID КОЛИЧЕСТВО`")
+
+def process_admin_set_tag(message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        uid = int(parts[0])
+        tag = parts[1][:15] # Ограничиваем длину тега до 15 символов
+        db['custom_tags'].update_one({"_id": uid}, {"$set": {"tag": tag}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Тег `{tag}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ТЕГ`")
+
+def process_admin_mute(message):
+    try:
+        parts = message.text.split()
+        uid = int(parts[0])
+        hours = int(parts[1])
+        
+        # Передаем задачу Скайнету (он читает базу skynet_tasks)
+        db['skynet_tasks'].insert_one({
+            "uid": uid,
+            "action": "global_mute",
+            "duration": hours * 3600,
+            "timestamp": datetime.datetime.now()
+        })
+        bot.send_message(message.chat.id, f"✅ Приказ на выдачу мута пользователю `{uid}` на **{hours} ч.** успешно передан Скайнету.", parse_mode="Markdown")
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ЧАСЫ` (например: 123456 24)")
+
+def process_admin_set_city(message):
+    try:
+        parts = message.text.split(maxsplit=1)
+        uid = int(parts[0])
+        city = parts[1]
+        
+        db['users'].update_one({"_id": uid}, {"$set": {"main_city": city}}, upsert=True)
+        bot.send_message(message.chat.id, f"✅ Город `{city}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ГОРОД` (например: 123456 Москва)")
+
+def process_admin_invoice(message):
+    try:
+        parts = message.text.split()
+        target_uid = int(parts[0])
+        amount = int(parts[1])
+        
+        user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
+        cb_balance = user_data_pay.get("cashback_balance", 0)
+        cost_in_rub = amount * 2
+        
+        url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+        url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+        
+        markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+        
+        if cb_balance >= cost_in_rub:
+            markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+        elif cb_balance > 0:
+            remaining_stars = amount - (cb_balance // 2)
+            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+        else:
+            markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+        
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+            
+        bot.send_message(
+            target_uid, 
+            f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", 
+            reply_markup=markup, 
+            parse_mode="Markdown"
+        )
+        bot.send_message(message.chat.id, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю `{target_uid}`!**", parse_mode="Markdown")
+        
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА` (например: 123456 500)")
+
+# ================= АЛЬТЕРНАТИВНАЯ ОПЛАТА =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('req_manual_pay_'))
+def handle_req_manual_pay(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    amount = int(call.data.split('_')[3])
+    uid = call.from_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    thread_id = user_data.get("thread_id")
+    
+    # 🧮 Автоматический расчет по твоей формуле! (Звезды * 1.65 + 10%)
+    rub_amount = int(round(amount * 1.65 * 1.1))
+    
+    # 👑 Предлагаем ВИПку только тем, у кого базовый штраф <= 650
+    vip_text = ""
+    if amount <= 650:
+        vip_text = (
+            "\n\nНу или можно и наверное самое экономное вступить в випку (полный иммунитет) : @Elitepost_bot.\n"
+            "Стоимость: 275 звезд * 1.65 курс одной звезды + 10% = 500 ₽.\n"
+            "Випка даёт доступ во все группы без ограничений.\n"
+            "Доступ к боту для публикации.\n"
+            "Тег ВИП пользования. Доступ к закрытым группам💪"
+        )
+        
+    # Формируем сообщение ДЛЯ ЮЗЕРА
+    user_text = (
+        f"🛠 **Альтернативная оплата**\n\n"
+        f"Оплатить можно на одноразовый технологический номер телефона. Сумма рассчитывается по формуле:\n"
+        f"{amount} звезд * 1.65 (курс 1 звезды) + 10% комиссии банка за пополнение баланса = **{rub_amount}₽**\n"
+        f"_(Данная сумма дает снятие ограничений, необходимо строгое соблюдение правил в дальнейшем)._"
+        f"{vip_text}\n\n"
+        f"👇 **Если вы готовы оплатить, напишите в этот чат слово «Платежка», и администратор выдаст вам актуальный номер.**"
+    )
+    
+    # Отправляем юзеру
+    try:
+        bot.edit_message_text(user_text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception as e:
+        logger.debug(f"Игнор ошибки: {e}")
+    
+    # Тихо предупреждаем админов в топике
+    if thread_id:
+        try:
+            bot.send_message(
+                STAFF_GROUP_ID, 
+                f"⚠️ **ПРОБЛЕМА СО ЗВЕЗДАМИ!**\n\nУ пользователя не работает оплата. Бот автоматически предложил ему альтернативу на сумму **{rub_amount}₽** (вместо {amount}⭐️).\n\n"
+                f"⏳ _Ждем, когда юзер напишет слово «Платежка», чтобы выдать ему номер._", 
+                message_thread_id=thread_id, 
+                parse_mode="Markdown"
+            )
+        except: pass
