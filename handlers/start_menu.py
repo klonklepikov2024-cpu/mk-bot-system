@@ -112,12 +112,18 @@ def handle_user_query(call):
                     bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                     paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
                 except ApiTelegramException as e:
-                    logger.warning(f"Топик {thread_id} мертв, создаем новый: {e}")
-                    topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
-                    thread_id = topic.message_thread_id
-                    paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}, "$unset": {"dialog_history": ""}}, upsert=True)
-                    caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡) [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
-                    bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
+                    if "not closed" in e.description.lower() or "not modified" in e.description.lower():
+                        # Топик и так открыт, просто пишем в него!
+                        caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
+                        bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
+                        paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
+                    else:
+                        logger.warning(f"Топик {thread_id} мертв, создаем новый: {e}")
+                        topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
+                        thread_id = topic.message_thread_id
+                        paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}, "$unset": {"dialog_history": ""}}, upsert=True)
+                        caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡) [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
+                        bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
             else:
                 try:
                     topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
@@ -159,11 +165,15 @@ def handle_user_query(call):
                 bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
                 paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
             except ApiTelegramException as e: 
-                logger.warning(f"Топик рекламы {thread_id} мертв, создаем новый: {e}")
-                topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
-                thread_id = topic.message_thread_id
-                paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
-                bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                if "not closed" in e.description.lower() or "not modified" in e.description.lower():
+                    bot.send_message(STAFF_GROUP_ID, f"🔄 **Повторный запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
+                    paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "ads"}})
+                else:
+                    logger.warning(f"Топик рекламы {thread_id} мертв, создаем новый: {e}")
+                    topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
+                    thread_id = topic.message_thread_id
+                    paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "ads"}}, upsert=True)
+                    bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         else:
             topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"💰 РЕКЛАМА | {name}")
             thread_id = topic.message_thread_id

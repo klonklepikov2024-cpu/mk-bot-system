@@ -96,6 +96,10 @@ def handle_shop_rewards_menu(call):
     markup.add(
         InlineKeyboardButton("👑 VIP-билет БЕСПЛАТНО (300)", callback_data="buy_reward_vip100_300")
     )
+    # 🔥 НОВЫЙ ЛОТ: СЕКРЕТНЫЙ СУНДУК
+    markup.add(
+        InlineKeyboardButton("📦 Секретный Сундук (1000 очков)", callback_data="buy_secret_chest")
+    )
     markup.add(InlineKeyboardButton("💳 Купить очки за ⭐️", callback_data="shop_points_menu"))
     markup.add(InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_gift_code"))
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
@@ -965,3 +969,63 @@ def process_pawn_promo(message):
     paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}}, upsert=True)
     
     bot.send_message(message.chat.id, f"♻️ **Успешная переплавка!**\n\nПромокод `{code}` уничтожен.\nВы получили: **+{shards_reward} Осколков рулетки** 🧩!", parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'buy_secret_chest')
+def handle_buy_chest(call):
+    try: bot.answer_callback_query(call.id, "Открываем сундук со скрипом...")
+    except: pass
+    
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    
+    PRICE = 1000
+    
+    if points < PRICE:
+        try: bot.answer_callback_query(call.id, f"❌ Не хватает очков! Сундук стоит {PRICE}, а у вас {points}.", show_alert=True)
+        except: pass
+        return
+        
+    # 1. Списываем базовую цену сундука
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
+    remaining_points = points - PRICE
+    
+    # 2. ГАЧА-РАНДОМ!
+    chance = random.randint(1, 100)
+    
+    if chance <= 45: 
+        # 🐈‍⬛ 45% ШАНС: КОТ-ВОРИШКА! 
+        # Он крадет от 10% до 25% от ОСТАВШЕГОСЯ баланса!
+        steal_percent = random.uniform(0.10, 0.25)
+        stolen = int(remaining_points * steal_percent)
+        
+        if stolen > 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+            
+        msg = (
+            f"🐈‍⬛ **МЯУ! ЭТО КОТ В МЕШКЕ!**\n\n"
+            f"Вы с трудом открыли сундук, но оттуда выскочил дикий уличный котяра! "
+            f"Он не только сожрал ваши {PRICE} очков за сам сундук, но и расцарапал вам карманы, "
+            f"украв еще **{stolen} очков**, пока убегал!\n\n"
+            f"_Надо было слушать маму и не играть в азартные игры..._"
+        )
+        
+    elif chance <= 80: 
+        # 🧩 35% ШАНС: Утешительные осколки
+        shards = random.randint(1, 4)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
+        msg = f"📦 **Секретный Сундук открыт!**\n\nНа дне сундука лежало немного пыли и **+{shards} Осколка рулетки** 🧩.\n_Ну, хотя бы не кот..._"
+        
+    elif chance <= 95: 
+        # 🛡 15% ШАНС: Щит иммунитета
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+        msg = f"🛡 **ОТЛИЧНЫЙ ДРОП!**\n\nВы нашли в сундуке **Щит Иммунитета**!\nОн защитит вас от одного случайного бана или мута."
+        
+    else: 
+        # 💎 5% ШАНС: ДЖЕКПОТ (Кэшбек 500 руб)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+        msg = f"💎 **О БОЖЕ, ЭТО ДЖЕКПОТ!!!** 💎\n\nСундук оказался набит деньгами! Вы получили **500 рублей кэшбэка** на внутренний баланс! 💰"
+        
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В магазин", callback_data="shop_rewards_menu"))
+    try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+    except: pass

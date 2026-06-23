@@ -363,9 +363,24 @@ def handle_guardian_angel(message):
 
 # ================= 🎁 ВНЕЗАПНЫЕ АИРДРОПЫ В ЧАТАХ =================
 
-def trigger_random_airdrop():
+def trigger_random_airdrop(is_manual=False):
     """Фоновая задача: Скайнет сбрасывает контейнер в случайный чат"""
     try:
+        import time
+        now = time.time()
+        
+        # 🔥 ГЛОБАЛЬНЫЙ ПРЕДОХРАНИТЕЛЬ: ЗАЩИТА ОТ РАЗДВОЕНИЯ ПОТОКОВ 🔥
+        if not is_manual:
+            timer_data = db['settings'].find_one({"_id": "airdrop_timer"})
+            
+            # Жесткий кулдаун: минимум 2.5 часа (9000 секунд) между автоматическими сбросами
+            # Если прошло меньше 2.5 часов — молча отменяем сброс!
+            if timer_data and (now - timer_data.get("last_time", 0) < 9000):
+                return 
+                
+        # Синхронизируем время последнего сброса для всех потоков сервера
+        db['settings'].update_one({"_id": "airdrop_timer"}, {"$set": {"last_time": now}}, upsert=True)
+
         # 1. Собираем все чаты Империи в один список
         all_chats = []
         all_chats.extend(chat_ids_mk.values())
@@ -382,6 +397,11 @@ def trigger_random_airdrop():
         drop_id = f"drop_{random.randint(10000, 99999)}"
         points_inside = random.randint(10, 100)
         
+        # 🔥 УДАЛЯЕМ ПРОТУХШИЕ КОНТЕЙНЕРЫ (Старше 24 часов) 🔥
+        import datetime
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        db['active_airdrops'].delete_many({"created_at": {"$lt": yesterday}})
+
         # 4. Сохраняем инфу о контейнере в базу (Теперь на 5 человек!)
         db['active_airdrops'].insert_one({
             "_id": drop_id,
@@ -443,12 +463,30 @@ def handle_claim_airdrop(call):
         except: pass
         return
 
-    # ВЫДАЕМ НАГРАДУ
+    # 🔥 КОТ-ВОРИШКА В КОНТЕЙНЕРЕ 🔥
     points = drop_data["points"]
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": points}}, upsert=True)
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    current_points = user_data.get("bounty_points", 0)
     
-    try: bot.answer_callback_query(call.id, f"🎉 Вы урвали {points} очков!", show_alert=True)
-    except: pass
+    chance = random.randint(1, 100)
+    
+    # 20% шанс, что вместо припасов выскочит кот (работает только если у юзера есть что красть)
+    if chance <= 20 and current_points > 20:
+        # Кот крадет от 10% до 20% текущего баланса лудомана!
+        steal_percent = random.uniform(0.10, 0.20)
+        stolen = int(current_points * steal_percent)
+        if stolen < 10: stolen = 10
+        
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+        
+        alert_msg = f"🐈‍⬛ МЯУ! ВЫ СХВАТИЛИ ДИКОГО КОТА!\n\nВместо припасов из ящика выпрыгнул кот! Он расцарапал вам руки и украл {stolen} ваших очков, пока убегал! 🩸"
+        try: bot.answer_callback_query(call.id, alert_msg, show_alert=True)
+        except: pass
+    else:
+        # ВЫДАЕМ ОБЫЧНУЮ НАГРАДУ
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": points}}, upsert=True)
+        try: bot.answer_callback_query(call.id, f"🎉 Вы урвали {points} очков!", show_alert=True)
+        except: pass
     
     # МЕНЯЕМ СООБЩЕНИЕ В ЧАТЕ
     new_count = drop_data.get("claimed_count", 0) + 1
@@ -457,7 +495,7 @@ def handle_claim_airdrop(call):
         if new_count >= 5:
             # Если забрали последнее - убираем кнопку и пишем итог
             bot.edit_message_text(
-                f"📦 **Контейнер полностью разграблен (5/5)!**\n\nКаждый из 5 счастливчиков забрал по **{points} очков** 💰.\n\n_Ждите следующих сбросов от Скайнета..._",
+                f"📦 **Контейнер полностью разграблен (5/5)!**\n\nКто-то из счастливчиков забрал свои **{points} очков** 💰, а кто-то наткнулся на дикого кота-воришку 🐈‍⬛!\n\n_Ждите следующих сбросов от Скайнета..._",
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 parse_mode="Markdown"
