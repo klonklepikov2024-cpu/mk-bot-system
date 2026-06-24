@@ -30,7 +30,7 @@ def send_welcome(message):
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
             InlineKeyboardButton("💰 Реклама", callback_data="btn_ads"),
-            InlineKeyboardButton("🆘 Поддержка", callback_data="btn_unban")
+            InlineKeyboardButton("🆘 СНЯТЬ БЛОК/ОПЕРАТОРЫ/ПОДДЕЖКА", callback_data="btn_unban")
         )
         markup.add(
             InlineKeyboardButton("🚨 Подать жалобу на нарушителя", callback_data="sec_submit_report"), # <-- Жалобы теперь тут!
