@@ -334,6 +334,10 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         
         if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
         if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+        
+        # 👇 ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ 👇
+        markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
             
         bot.send_message(target_uid, f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
         bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️) по вашему поручению.*", message_thread_id=thread_id, parse_mode="Markdown")
@@ -516,6 +520,10 @@ def handle_rejections(call):
                 
                 if url_usdt: fine_markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
                 if url_ton: fine_markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+                
+                # 🔥 ТЕ САМЫЕ ДВЕ КНОПКИ ДЛЯ ТАЙМЕРА 🔥
+                fine_markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+                fine_markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
                     
                 bot.send_message(target_uid, f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=fine_markup, parse_mode="Markdown")
                 bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет автоматически выставил штраф {amount}⭐️ за просроченный таймер.*", message_thread_id=thread_id, parse_mode="Markdown")
@@ -788,6 +796,10 @@ def handle_manual_bill(message):
         
         if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
         if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+            
+        # 👇 ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ 👇
+        markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
             
         # Отправляем юзеру счет
         bot.send_message(
@@ -1387,23 +1399,30 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             elif any(x in latest_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
                 ban_type = "clean"
                 
-            # 3. ЕСЛИ НЕ АМНИСТИРОВАН - ИЩЕМ ПРИЧИНУ ПОСЛЕДНЕГО БАНА
-            elif any(x in latest_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18"]):
-                ban_type = "black_zone" # Черная зона (Малолетки до 18)
+            # 3. ЕСЛИ НЕ АМНИСТИРОВАН - ИЩЕМ ПРИЧИНУ ПОСЛЕДНЕГО БАНА (ПО ВСЕЙ НЕДАВНЕЙ ИСТОРИИ)
+            elif any(x in full_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
+                # Ловим лайки на малолеток
+                if any(r in full_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): 
+                    ban_type = "minor_react" 
+                else: 
+                    ban_type = "black_zone" # Черная зона (Сами малолетки)
             
-            elif any(x in latest_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
-                ban_type = "orange_zone" # Паспортный контроль (18-21 год)
+            elif any(x in full_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
+                ban_type = "orange_zone"
                 
-            elif any(x in latest_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
+            elif any(x in full_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
                 ban_type = "may_1"
                 
-            elif any(x in latest_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
+            elif any(x in full_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
                 ban_type = "failed_verif"
             
-            elif any(x in latest_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', latest_text):
+            elif any(x in full_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', full_text):
                 ban_type = "manual_hard"
                 
-            elif any(x in latest_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ"]):
+            # 🔥 УМНОЕ РАЗДЕЛЕНИЕ КОММЕРЦИИ ПО УЛИКАМ 🔥
+            elif any(x in full_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
+                ban_type = "sponsor"
+            elif any(x in full_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
                 ban_type = "commercial"
                 
             elif any(x in latest_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН", "БИО", "ССЫЛКА В"]):
@@ -1421,16 +1440,19 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         dialogue_context = "\n".join([f"{'👤 Юзер' if m['role']=='user' else '🤖 Скайнет'}: {m['content']}" for m in user_data.get("dialog_history", [])[-8:]])
 
         # ================== 3. ДИНАМИЧЕСКИЙ ПРАЙС-ЛИСТ И ПРАВИЛА ==================
-        if ban_type == "clean":
-            behavior_rules = """- ЧИСТАЯ ИСТОРИЯ: У пользователя НЕТ нарушений. Отвечай вежливо (выбирай `reply_text`). КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить видео-кружок, упоминать «Готов» или штраф!"""
+        expected_fine = 650 # Дефолт
         
-        elif ban_type == "basic":
-            behavior_rules = """- БАЗОВЫЙ МУТ: Если просит верификацию -> СТРОГО выбирай `tpl_verif`. Если спрашивает "за что бан?" -> СНАЧАЛА предложи бесплатную верификацию через видео-кружок.
-- АГРЕССИВНЫЕ ПРОДАЖИ (ШТРАФ 650⭐️): Если юзер пишет ЛЮБОЙ отказ или сомнение ("а без кружка?", "я не хочу светить лицо", "только деанон?", "нет") -> СТРОГО выбирай `reply_text`. ХОЛОДНО ответь, что без верификации лица бот вас не пропустит. Альтернатива только одна — оплата штрафа 650⭐️. Задай вопрос: "Вы будете записывать видео или выставить счет?"."""
-        
-        elif ban_type == "may_1":
-            behavior_rules = """- НАРУШЕНИЕ ФОРМАТА (1 МАЯ): Если спрашивает "За что мут?" или "Как разблокировать?" -> СТРОГО выбирай `reply_text`. Объясни про параметры через слеш и скажи, что разблокировка БЕСПЛАТНА, нужно только записать видео-кружок и прислать слово "Готов".
-- АГРЕССИВНЫЕ ПРОДАЖИ (ШТРАФ 650⭐️): Если юзер пишет ЛЮБОЙ отказ или сомнение ("а без кружка?", "я не хочу светить лицо", "только деанон?", "нет", "не буду") -> СТРОГО выбирай `reply_text`. ХОЛОДНО ответь, что кружок — это базовое требование безопасности. Если он боится камеры, то единственный альтернативный путь — покупка иммунитета за 650⭐️ (штраф). Выстави ультиматум: "Вы готовы записать кружок или мне выставить вам счет на 650⭐️?".""" 
+        if ban_type in ["clean", "basic", "may_1"]:
+            expected_fine = 650
+            behavior_rules = """- СТАТУС: БАЗОВАЯ ПРОВЕРКА (Карантин, чистая история или ошибка в анкете).
+- ТВОЯ ЗАДАЧА: Работать как элитный, вежливый консьерж. Внимательно посмотри в Досье:
+  а) Если история ПУСТАЯ — вежливо объясни, что это автоматический карантин для новых аккаунтов (защита от ботов).
+  б) Если нарушение "1 МАЯ" — вежливо объясни, что параметры в анкете нужно писать строго через слеш (например: 24/180/75).
+  в) Если юзер УЖЕ РАЗБАНЕН (недавняя амнистия) — просто вежливо ответь на его текущий вопрос.
+- ПУТИ РЕШЕНИЯ (Если юзеру нужно снять ограничения): Предложи ему ДВА варианта на выбор:
+  1. Быстрый и БЕСПЛАТНЫЙ: Записать небольшое видео (кружок) для подтверждения личности. Скажи, что для этого нужно написать слово «Готов».
+  2. Альтернативный (БЕЗ ЛИЦА): Приобрести статус 'Свободен' (иммунитет) за 650⭐️, который снимает все лимиты без записи видео.
+- ДЕЙСТВИЕ: Выбирай `reply_text`, чтобы красиво и эмпатично расписать эти варианты и узнать, какой путь он выбирает."""
 
         elif ban_type == "failed_verif":
             behavior_rules = """- ПРОВАЛ ВЕРИФИКАЦИИ / ИГНОР: СТРОГО выбирай `reply_text`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Жестко напомни, что он потратил время впустую. Штраф 650⭐️."""
@@ -1454,8 +1476,54 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         elif ban_type == "black_zone":
             behavior_rules = """- НЕСОВЕРШЕННОЛЕТНИЙ (<18): СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Нахождение в сети строго с 18 лет. Штраф за обман — 2000⭐️."""
 
+        elif ban_type == "bio":
+            expected_fine = 250
+            behavior_rules = """- СТАТУС: ССЫЛКА В ПРОФИЛЕ. Выбери `tpl_bio` и объясни, что нужно удалить ссылку и оплатить 250⭐️."""
+
         elif ban_type == "spam":
-            behavior_rules = """- СПАМ / ФЛУД / БИО: Независимо от того, что пишет юзер, СТРОГО выбирай `reply_text`, `tpl_flood` или `tpl_bio`. НИ В КОЕМ СЛУЧАЕ НЕ УПОМИНАЙ ВИДЕО-КРУЖОК! Штраф за спам/ссылки — 500⭐️."""
+            expected_fine = 500
+            behavior_rules = """- СТАТУС: ФЛУД В ЧАТАХ. Выбери `tpl_flood` и предложи досрочно снять мут за 500⭐️."""
+
+        # 🔥 ДИНАМИЧЕСКИЙ ПРОМПТ И ПРАЙС-ЛИСТ 🔥
+        circle_tech_info = ""
+        dead_end_rule = ""
+        expected_fine = "650" # Дефолт
+        
+        if ban_type in ["basic", "may_1"]:
+            circle_tech_info = "\nТЕХНИЧЕСКАЯ СПРАВКА:\n- 🔑 ВЕРИФИКАЦИЯ: Юзер должен отправить ровно одно слово: «Готов». Только после этого бот выдаст код и таймер! ВАЖНО: СЛОВО «ГОТОВ» НУЖНО ТОЛЬКО ДЛЯ ВИДЕО-КРУЖКА. ДЛЯ ШТРАФА ОНО НЕ НУЖНО!"
+            dead_end_rule = "- ВАЖНО: Если юзер выбрал ВЕРИФИКАЦИЮ (кружок), скажи ему написать слово «Готов». Если он выбрал ШТРАФ — выставляй счет (issue_fine) и НИ В КОЕМ СЛУЧАЕ не проси писать «Готов»."
+            expected_fine = "650"
+        elif ban_type == "orange_zone":
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить слово «Готов» или видео-кружок! Твоя единственная цель — отправить шаблон запроса паспорта (`tpl_18`)."
+            expected_fine = "0"
+        elif ban_type == "clean":
+            dead_end_rule = "- Юзер чист! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вымогать штрафы, отправлять на верификацию или просить слово «Готов»."
+            expected_fine = "0"
+        elif ban_type == "commercial":
+            behavior_rules = """- КОММЕРЦИЯ (ЭРА/УСЛУГИ): СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Холодно осади его, назови цену за нарушения правил коммерции (1563⭐️) и задай вопрос-крючок: "Выставить счет?"."""
+            
+        elif ban_type == "sponsor":
+            behavior_rules = """- СПОНСОРСТВО (ПАПИК): СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Объясни, что поиск содержания разрешен только после оплаты взноса (750⭐️). Предложи счет."""
+        
+        elif ban_type == "nark":
+            behavior_rules = """- НАРКОТИКИ (КРАСНАЯ ЗОНА): Если спорит -> выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Штраф — 2000⭐️."""
+            
+        elif ban_type in ["nark_react", "minor_react"]:
+            behavior_rules = """- РЕАКЦИИ (ЛАЙК / РУЧКА НА ЗАПРЕЩЕНКУ ИЛИ ДЕТЕЙ): СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Объясни, что за поддержку (лайки/реакции) запрещенного контента предусмотрен штраф 1563⭐️."""
+        
+        elif ban_type == "bot_block":
+            behavior_rules = """- СИСТЕМНЫЕ НАРУШЕНИЯ: СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Напомни, что он заблокировал бота/сбежал. Основная цена разбана — строго 250⭐️. Как элитную альтернативу можешь надменно предложить ему сразу купить иммунитет (тег «Свободен») за 650⭐️, но базовый счет выставляй на 250."""
+        
+        elif ban_type == "black_zone":
+            behavior_rules = """- НЕСОВЕРШЕННОЛЕТНИЙ (<18): СТРОГО выбирай `reply_text`. НЕ УПОМИНАЙ КРУЖОК! Нахождение в сети строго с 18 лет. Штраф за обман — 2000⭐️."""
+
+        elif ban_type == "bio":
+            expected_fine = 250
+            behavior_rules = """- СТАТУС: ССЫЛКА В ПРОФИЛЕ. Выбери `tpl_bio` и объясни, что нужно удалить ссылку и оплатить 250⭐️."""
+
+        elif ban_type == "spam":
+            expected_fine = 500
+            behavior_rules = """- СТАТУС: ФЛУД В ЧАТАХ. Выбери `tpl_flood` и предложи досрочно снять мут за 500⭐️."""
 
         # 🔥 ДИНАМИЧЕСКИЙ ПРОМПТ И ПРАЙС-ЛИСТ 🔥
         circle_tech_info = ""
@@ -1474,7 +1542,13 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             expected_fine = "0"
         elif ban_type == "commercial":
             dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
-            expected_fine = "1563 или 750"
+            expected_fine = "1563"
+        elif ban_type == "sponsor":
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
+            expected_fine = "750"
+        elif ban_type in ["nark_react", "minor_react"]:
+            dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
+            expected_fine = "1563"
         elif ban_type in ["nark", "black_zone"]:
             dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
             expected_fine = "2000"
@@ -1483,7 +1557,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             expected_fine = "500"
         elif ban_type == "bot_block":
             dead_end_rule = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео! Выставляй счет (issue_fine)."
-            expected_fine = "250 (или 650, если юзер сам выбрал покупку иммунитета)"
+            expected_fine = "250"
         else:
             dead_end_rule = "- Если юзер должен оплатить штраф: Выстави счет или скажи \"Ожидайте счет\". КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просить юзера писать слово «Готов» или записывать видео!"
             expected_fine = "650"
@@ -1595,10 +1669,11 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             amount = int(result.get("fine_amount", 0))
             if amount < 1: 
                 # Страховка от галлюцинаций с учетом типа бана!
-                if ban_type == 'commercial': amount = 1563
+                if ban_type in ['commercial', 'nark_react', 'minor_react']: amount = 1563
                 elif ban_type in ['nark', 'black_zone']: amount = 2000
+                elif ban_type == 'sponsor': amount = 750
                 elif ban_type == 'spam': amount = 500
-                elif ban_type == 'bot_block': amount = 250
+                elif ban_type in ['bot_block', 'bio']: amount = 250
                 else: amount = 650
             
             try:
@@ -2155,6 +2230,10 @@ def process_admin_invoice(message):
         
         if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
         if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+            
+        # 👇 ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ 👇
+        markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
             
         bot.send_message(
             target_uid, 
