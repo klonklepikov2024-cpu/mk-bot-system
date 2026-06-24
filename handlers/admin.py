@@ -1399,37 +1399,39 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             elif any(x in latest_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
                 ban_type = "clean"
                 
-            # 3. ЕСЛИ НЕ АМНИСТИРОВАН - ИЩЕМ ПРИЧИНУ ПОСЛЕДНЕГО БАНА (ПО ВСЕЙ НЕДАВНЕЙ ИСТОРИИ)
+            # 3. ИЕРАРХИЯ НАКАЗАНИЙ (СВЕРХУ ВНИЗ ПО ТЯЖЕСТИ ПО ВСЕЙ ИСТОРИИ)
             elif any(x in full_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
-                # Ловим лайки на малолеток
-                if any(r in full_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): 
-                    ban_type = "minor_react" 
-                else: 
-                    ban_type = "black_zone" # Черная зона (Сами малолетки)
+                if any(r in full_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): ban_type = "minor_react" 
+                else: ban_type = "black_zone"
             
             elif any(x in full_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
                 ban_type = "orange_zone"
                 
-            elif any(x in full_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
-                ban_type = "may_1"
-                
-            elif any(x in full_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
-                ban_type = "failed_verif"
-            
-            elif any(x in full_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', full_text):
-                ban_type = "manual_hard"
-                
-            # 🔥 УМНОЕ РАЗДЕЛЕНИЕ КОММЕРЦИИ ПО УЛИКАМ 🔥
             elif any(x in full_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
                 ban_type = "sponsor"
+                
             elif any(x in full_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
                 ban_type = "commercial"
                 
-            elif any(x in latest_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН", "БИО", "ССЫЛКА В"]):
+            elif any(x in full_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', full_text):
+                ban_type = "manual_hard"
+                
+            # 🔥 ПРОВАЛ ВЕРИФИКАЦИИ ТЕПЕРЬ ВЫШЕ, ЧЕМ 1 МАЯ! 🔥
+            elif any(x in full_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
+                ban_type = "failed_verif"
+                
+            elif any(x in full_text for x in ["БИО", "ССЫЛКА В"]):
+                ban_type = "bio"
+                
+            elif any(x in full_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН"]):
                 ban_type = "spam"
                 
-            elif any(x in latest_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
+            elif any(x in full_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
                 ban_type = "bot_block"
+
+            # 🔥 "1 МАЯ" В САМОМ НИЗУ! (Срабатывает только если нет других грехов) 🔥
+            elif any(x in full_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
+                ban_type = "may_1"
 
         dossier = "\n".join(dossier_lines)
 
