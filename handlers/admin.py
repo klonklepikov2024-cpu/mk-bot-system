@@ -1389,48 +1389,56 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             
             latest_entry = recent[-1] if recent else {}
             latest_text = f"{latest_entry.get('action', '')} {latest_entry.get('reason', '')} {latest_entry.get('evidence_summary', '')}".upper()
-            full_text = " ".join([f"{e.get('action', '')} {e.get('reason', '')} {e.get('evidence_summary', '')}" for e in recent]).upper()
-
-            # 1. СНАЧАЛА ПРОВЕРЯЕМ ТЯЖКИЕ НАРУШЕНИЯ (Наркотики) ПО ВСЕЙ ИСТОРИИ
-            if any(x in full_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
-                ban_type = "nark"
+            
+            # 🔥 ИЩЕМ ПОСЛЕДНЕЕ РЕАЛЬНОЕ СОБЫТИЕ (Пропускаем системный мусор) 🔥
+            meaningful_text = ""
+            for entry in reversed(recent):
+                text = f"{entry.get('action', '')} {entry.get('reason', '')} {entry.get('evidence_summary', '')}".upper()
+                if any(garbage in text for garbage in ["ОБРАЩЕНИЕ ЗАКРЫТО", "ТИКЕТ ЗАКРЫТ", "ВОПРОС РЕШЕН АДМИНОМ", "БЕЗ РАЗБАНА"]):
+                    continue
+                meaningful_text = text
+                break
                 
-            # 🔥 2. ПРОВЕРЯЕМ НА АМНИСТИЮ: Если последнее действие - это снятие бана, юзер ЧИСТ!
-            elif any(x in latest_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
+            if not meaningful_text:
+                meaningful_text = latest_text
+
+            # 🔥 ТЕПЕРЬ АНАЛИЗИРУЕМ ТОЛЬКО meaningful_text 🔥
+            if any(x in meaningful_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
+                if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК", "ОТРЕАГИРОВ"]): ban_type = "nark_react" 
+                else: ban_type = "nark" 
+
+            elif any(x in meaningful_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
                 ban_type = "clean"
                 
-            # 3. ИЕРАРХИЯ НАКАЗАНИЙ (СВЕРХУ ВНИЗ ПО ТЯЖЕСТИ ПО ВСЕЙ ИСТОРИИ)
-            elif any(x in full_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
-                if any(r in full_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): ban_type = "minor_react" 
+            elif any(x in meaningful_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
+                if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): ban_type = "minor_react" 
                 else: ban_type = "black_zone"
             
-            elif any(x in full_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
+            elif any(x in meaningful_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
                 ban_type = "orange_zone"
                 
-            elif any(x in full_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
+            elif any(x in meaningful_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
                 ban_type = "sponsor"
                 
-            elif any(x in full_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
+            elif any(x in meaningful_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
                 ban_type = "commercial"
                 
-            elif any(x in full_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', full_text):
+            elif any(x in meaningful_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', meaningful_text):
                 ban_type = "manual_hard"
                 
-            # 🔥 ПРОВАЛ ВЕРИФИКАЦИИ ТЕПЕРЬ ВЫШЕ, ЧЕМ 1 МАЯ! 🔥
-            elif any(x in full_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
+            elif any(x in meaningful_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
                 ban_type = "failed_verif"
                 
-            elif any(x in full_text for x in ["БИО", "ССЫЛКА В"]):
+            elif any(x in meaningful_text for x in ["БИО", "ССЫЛКА В"]):
                 ban_type = "bio"
                 
-            elif any(x in full_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН"]):
+            elif any(x in meaningful_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН"]):
                 ban_type = "spam"
                 
-            elif any(x in full_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
+            elif any(x in meaningful_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
                 ban_type = "bot_block"
 
-            # 🔥 "1 МАЯ" В САМОМ НИЗУ! (Срабатывает только если нет других грехов) 🔥
-            elif any(x in full_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
+            elif any(x in meaningful_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
                 ban_type = "may_1"
 
         dossier = "\n".join(dossier_lines)
@@ -1446,10 +1454,10 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         
         if ban_type in ["clean", "basic", "may_1"]:
             expected_fine = 650
-            behavior_rules = """- СТАТУС: БАЗОВАЯ ПРОВЕРКА (Карантин, чистая история или ошибка в анкете).
-- ТВОЯ ЗАДАЧА: Работать как элитный, вежливый консьерж. Внимательно посмотри в Досье:
+            behavior_rules = """- СТАТУС: БАЗОВАЯ ПРОВЕРКА (Карантин, чистая история или ошибка формата).
+- ТВОЯ ЗАДАЧА: Вежливо объяснить причину ТОЛЬКО САМОЙ ПОСЛЕДНЕЙ блокировки из досье. КАТЕГОРИЧЕСКИ ИГНОРИРУЙ СТАРЫЕ НАРУШЕНИЯ (даже если там было порно или наркотики, они уже неактуальны)!
   а) Если история ПУСТАЯ — вежливо объясни, что это автоматический карантин для новых аккаунтов (защита от ботов).
-  б) Если нарушение "1 МАЯ" — вежливо объясни, что параметры в анкете нужно писать строго через слеш (например: 24/180/75).
+  б) Если последнее нарушение "1 МАЯ" — вежливо объясни, что параметры в анкете нужно писать строго через слеш (например: 24/180/75).
   в) Если юзер УЖЕ РАЗБАНЕН (недавняя амнистия) — просто вежливо ответь на его текущий вопрос.
 - ПУТИ РЕШЕНИЯ (Если юзеру нужно снять ограничения): Предложи ему ДВА варианта на выбор:
   1. Быстрый и БЕСПЛАТНЫЙ: Записать небольшое видео (кружок) для подтверждения личности. Скажи, что для этого нужно написать слово «Готов».
@@ -2266,7 +2274,7 @@ def handle_req_manual_pay(call):
     vip_text = ""
     if amount <= 650:
         vip_text = (
-            "\n\nНу или можно и наверное самое экономное вступить в випку (полный иммунитет) : @Elitepost_bot.\n"
+            "\n\nНу или можно и наверное самое экономное вступить в випку (полный иммунитет): [Elitepost VIP](https://t.me/Elitepost_bot).\n"
             "Стоимость: 275 звезд * 1.65 курс одной звезды + 10% = 500 ₽.\n"
             "Випка даёт доступ во все группы без ограничений.\n"
             "Доступ к боту для публикации.\n"
