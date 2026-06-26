@@ -156,8 +156,30 @@ def handle_user_query(call):
             if new_strikes >= 3:
                 bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.\n\nДля разблокировки доступа напишите в службу поддержки: @FAQMKBOT")
             else:
-                warning_text = f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 50 звезд.\n\nПопытка {new_strikes} из 3. После 3-й попытки бот вас заблокирует."
-                bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True)
+                cost_stars = 50
+                cost_points = cost_stars * 5
+                cost_rub = cost_stars * 2
+                
+                user_rub = user_data.get("cashback_balance", 0)
+                user_points = user_data.get("bounty_points", 0)
+                
+                markup = InlineKeyboardMarkup(row_width=1)
+                
+                # Кнопка РУБЛЕЙ
+                if user_rub >= cost_rub:
+                    markup.add(InlineKeyboardButton(f"💳 Оплатить с баланса ({cost_rub}₽)", callback_data=f"support_rub_{cost_rub}"))
+                elif user_rub > 0:
+                    markup.add(InlineKeyboardButton(f"💳 Баланс: {user_rub}₽ (Надо {cost_rub}₽)", callback_data="insufficient_funds"))
+                
+                # Кнопка ОЧКОВ
+                if user_points >= cost_points:
+                    markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_points} очк.)", callback_data=f"support_pts_{cost_points}"))
+                else:
+                    missing = cost_points - user_points
+                    markup.add(InlineKeyboardButton(f"🎰 Не хватает {missing} Очков (Играть)", callback_data="btn_game_club"))
+                
+                warning_text = f"⚠️ **Внимание!** Бесплатные обращения закончились.\n\nВы можете оплатить создание тикета поддержки ({cost_stars}⭐️) внутренним балансом казино, или задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 60 звезд.\n\n_Попытка {new_strikes} из 3. После 3-й ошибки бот заблокирует вас._"
+                bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=markup)
         return
 
     # ================= ЛОГИКА КНОПКИ РЕКЛАМЫ =================
@@ -189,3 +211,42 @@ def handle_user_query(call):
             bot.send_message(STAFF_GROUP_ID, f"🆕 **Новый запрос на РЕКЛАМУ:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\nЕсли он просит разбан, жмите кнопку ниже 👇", message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup)
         
         return
+
+# 👇 НОВЫЕ ОБРАБОТЧИКИ ОПЛАТЫ ПОДДЕРЖКИ 👇
+@bot.callback_query_handler(func=lambda call: call.data.startswith('support_rub_') or call.data.startswith('support_pts_'))
+def handle_support_payment(call):
+    try: bot.answer_callback_query(call.id)
+    except: pass
+
+    is_points = call.data.startswith('support_pts_')
+    cost = int(call.data.split('_')[2])
+    uid = call.from_user.id
+
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+
+    if is_points:
+        if user_data.get("bounty_points", 0) < cost:
+            bot.send_message(call.message.chat.id, "❌ Недостаточно очков!")
+            return
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -cost}, "$set": {"status": 1}})
+        currency = "очков"
+    else:
+        if user_data.get("cashback_balance", 0) < cost:
+            bot.send_message(call.message.chat.id, "❌ Недостаточно рублей!")
+            return
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -cost}, "$set": {"status": 1}})
+        currency = "₽"
+
+    try: bot.delete_message(call.message.chat.id, call.message.message_id)
+    except: pass
+
+    bot.send_message(
+        call.message.chat.id,
+        f"✅ **Оплата прошла успешно!** (Списано {cost} {currency})\nДоступ к поддержке открыт.\n\n👇 Нажмите кнопку ниже, чтобы написать обращение.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🆘 НАПИСАТЬ ОБРАЩЕНИЕ", callback_data="btn_unban"))
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "insufficient_funds")
+def handle_insufficient_funds_start(call):
+    bot.answer_callback_query(call.id, "На вашем счету не хватает средств! 😔 Поиграйте в Гача-Рулетку.", show_alert=True)

@@ -261,7 +261,9 @@ def handle_admin_templates(call):
         try:
             user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
             cb_balance = user_data_pay.get("cashback_balance", 0)
+            pts_balance = user_data_pay.get("bounty_points", 0)
             cost_in_rub = amount * 2
+            cost_pts = amount * 5
             
             url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
             url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -278,18 +280,28 @@ def handle_admin_templates(call):
             
             if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
             if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+
+            btn_pts = InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}")
+            btn_no_pts = InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT")
             
-            # Добавляем спасательные кнопки для неофициальных клиентов
+            try:
+                if pts_balance >= cost_pts: markup.add(btn_pts)
+                else: markup.add(btn_no_pts)
+            except NameError:
+                if pts_balance >= cost_pts: fine_markup.add(btn_pts)
+                else: fine_markup.add(btn_no_pts)
+            
             markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
             markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
                 
             bot.send_message(target_uid, f"🧾 **Вам выставлен счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
             bot.send_message(STAFF_GROUP_ID, f"🟢 *Скайнет отправил кассу на штраф ({amount}⭐️)*", message_thread_id=thread_id, parse_mode="Markdown")
+        
         except Exception as e:
             logger.warning(f"Ошибка выставления штрафа: {e}")
         return
 
-    # Сначала ищем шаблон в облаке Mongo, если нет - берем из файла
+    # Сначала ищем шаблон в облаке Mongo...
     db_tpl = db['bot_templates'].find_one({"_id": call.data})
     template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(call.data)
     
@@ -317,7 +329,9 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
     try:
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
+        pts_balance = user_data_pay.get("bounty_points", 0)
         cost_in_rub = amount * 2
+        cost_pts = amount * 5
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -334,8 +348,17 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         
         if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
         if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+
+        btn_pts = InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}")
+        btn_no_pts = InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT")
         
-        # 👇 ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ 👇
+        try:
+            if pts_balance >= cost_pts: markup.add(btn_pts)
+            else: markup.add(btn_no_pts)
+        except NameError:
+            if pts_balance >= cost_pts: fine_markup.add(btn_pts)
+            else: fine_markup.add(btn_no_pts)
+            
         markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
         markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
             
@@ -353,17 +376,16 @@ def handle_buy_indulgence(call):
     amount = 2000
     cost_in_rub = amount * 2
     
-    # Проверяем кэшбэк-баланс юзера (как при штрафах)
     user_data_pay = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data_pay.get("cashback_balance", 0)
+    pts_balance = user_data_pay.get("bounty_points", 0)
+    cost_pts = amount * 5
     
-    # Генерируем ссылки CryptoBot
     url_usdt = get_crypto_pay_url(f"indulgence_{uid}", amount, "Покупка Индульгенции (Снятие бана)", asset="USDT")
     url_ton = get_crypto_pay_url(f"indulgence_{uid}", amount, "Покупка Индульгенции (Снятие бана)", asset="TON")
     
     markup = InlineKeyboardMarkup(row_width=1)
     
-    # Кнопки оплаты
     if cb_balance >= cost_in_rub:
         markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_indulgence_{amount}"))
     elif cb_balance > 0:
@@ -375,7 +397,11 @@ def handle_buy_indulgence(call):
     if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
     if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
     
-    # Возврат назад в меню
+    if pts_balance >= cost_pts: 
+        markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_indulgence_{amount}"))
+    else: 
+        markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+    
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="sec_back_main"))
 
     text = (
@@ -503,7 +529,9 @@ def handle_rejections(call):
             try:
                 user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
+                pts_balance = user_data_pay.get("bounty_points", 0)
                 cost_in_rub = amount * 2
+                cost_pts = amount * 5
                 
                 url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
                 url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -521,7 +549,11 @@ def handle_rejections(call):
                 if url_usdt: fine_markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
                 if url_ton: fine_markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
                 
-                # 🔥 ТЕ САМЫЕ ДВЕ КНОПКИ ДЛЯ ТАЙМЕРА 🔥
+                if pts_balance >= cost_pts: 
+                    fine_markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}"))
+                else: 
+                    fine_markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+
                 fine_markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
                 fine_markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
                     
@@ -739,21 +771,16 @@ def handle_force_unban(call):
 # ================= РУЧНОЕ ВЫСТАВЛЕНИЕ СЧЕТА (КОМАНДА /bill) =================
 @bot.message_handler(commands=['bill', 'invoice', 'счет'])
 def handle_manual_bill(message):
-    # Команда работает только в группе админов
-    if str(message.chat.id) != str(STAFF_GROUP_ID): 
-        return
-    
-    # Проверяем, что команда написана внутри конкретного топика юзера
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
     if not message.is_topic_message:
         try: bot.reply_to(message, "❌ Эту команду нужно использовать внутри топика конкретного пользователя.")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        except: pass
         return
 
-    # Парсим сумму из команды
     args = message.text.split()
     if len(args) != 2 or not args[1].isdigit():
-        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/bill [сумма]`\n\n*Пример:* `/bill 750`", parse_mode="Markdown")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/bill [сумма]`", parse_mode="Markdown")
+        except: pass
         return
         
     amount = int(args[1])
@@ -763,27 +790,24 @@ def handle_manual_bill(message):
         return
 
     thread_id = message.message_thread_id
-    
-    # Ищем, кому принадлежит этот топик
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data:
-        try: bot.reply_to(message, "❌ Не удалось найти пользователя, привязанного к этому топику (возможно, он уже закрыт).")
+        try: bot.reply_to(message, "❌ Не удалось найти пользователя.")
         except: pass
         return
         
     target_uid = user_data["uid"]
 
     try:
-        # Проверяем баланс кэшбека юзера, как при обычных штрафах
-        cb_balance = user_data.get("cashback_balance", 0)
+        user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
+        cb_balance = user_data_pay.get("cashback_balance", 0)
+        pts_balance = user_data_pay.get("bounty_points", 0)
         cost_in_rub = amount * 2
+        cost_pts = amount * 5
         
-        # Генерируем ссылки CryptoBot (так как мы вызываем это из админки)
-        # Убедись, что get_crypto_pay_url импортирован в начале файла!
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
         
-        # Собираем такую же клавиатуру, как в handle_admin_templates (fine_custom)
         markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
         
         if cb_balance >= cost_in_rub:
@@ -796,26 +820,64 @@ def handle_manual_bill(message):
         
         if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
         if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
-            
-        # 👇 ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ 👇
+
+        if pts_balance >= cost_pts: 
+            markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}"))
+        else: 
+            markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+
         markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
         markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
             
-        # Отправляем юзеру счет
-        bot.send_message(
-            target_uid, 
-            f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", 
-            reply_markup=markup, 
-            parse_mode="Markdown"
-        )
-        
-        # Подтверждаем в админке
+        bot.send_message(target_uid, f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
         bot.reply_to(message, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю!**", parse_mode="Markdown")
         
     except Exception as e:
-        logger.warning(f"Ошибка при ручном выставлении счета через команду: {e}")
-        try: bot.reply_to(message, f"❌ Произошла ошибка при отправке счета: {e}")
+        logger.warning(f"Ошибка при ручном выставлении счета: {e}")
+        try: bot.reply_to(message, f"❌ Произошла ошибка: {e}")
         except: pass
+
+def process_admin_invoice(message):
+    try:
+        parts = message.text.split()
+        target_uid = int(parts[0])
+        amount = int(parts[1])
+        
+        user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
+        cb_balance = user_data_pay.get("cashback_balance", 0)
+        pts_balance = user_data_pay.get("bounty_points", 0)
+        cost_in_rub = amount * 2
+        cost_pts = amount * 5
+        
+        url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+        url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
+        
+        markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
+        
+        if cb_balance >= cost_in_rub:
+            markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
+        elif cb_balance > 0:
+            remaining_stars = amount - (cb_balance // 2)
+            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
+        else:
+            markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+        
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
+
+        if pts_balance >= cost_pts: 
+            markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}"))
+        else: 
+            markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+
+        markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
+        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+            
+        bot.send_message(target_uid, f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю `{target_uid}`!**", parse_mode="Markdown")
+        
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА` (например: 123456 500)")
 
 @bot.message_handler(func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
 def handle_admin_replies(message):
@@ -1696,7 +1758,9 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 # 2. Генерируем реальную кассу!
                 user_data_pay = paid_collection.find_one({"uid": uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
+                pts_balance = user_data_pay.get("bounty_points", 0)
                 cost_in_rub = amount * 2
+                cost_pts = amount * 5
                 
                 url_usdt = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
                 url_ton = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -1714,7 +1778,11 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
                 if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
                 
-                # Добавляем спасательные кнопки для неофициальных клиентов
+                if pts_balance >= cost_pts: 
+                    markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}"))
+                else: 
+                    markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+
                 markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
                 markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
                     
@@ -2223,7 +2291,9 @@ def process_admin_invoice(message):
         
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
+        pts_balance = user_data_pay.get("bounty_points", 0)
         cost_in_rub = amount * 2
+        cost_pts = amount * 5
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -2240,17 +2310,16 @@ def process_admin_invoice(message):
         
         if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
         if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
-            
-        # 👇 ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ 👇
+
+        if pts_balance >= cost_pts: 
+            markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}"))
+        else: 
+            markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+
         markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
         markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
             
-        bot.send_message(
-            target_uid, 
-            f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", 
-            reply_markup=markup, 
-            parse_mode="Markdown"
-        )
+        bot.send_message(target_uid, f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
         bot.send_message(message.chat.id, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю `{target_uid}`!**", parse_mode="Markdown")
         
     except Exception:

@@ -92,6 +92,37 @@ def handle_checkout(call):
         paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+
+    # 5. Оплата полностью ОЧКАМИ РУЛЕТКИ (НОВОЕ!)
+    elif action == "points":
+        cost_points = original_amount * 5
+        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
+        current_balance = user_data.get("bounty_points", 0)
+        
+        if current_balance < cost_points:
+            try: bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {cost_points}, а у вас {current_balance}.", show_alert=True)
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+            return
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"bounty_points": -cost_points}})
+        try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+        
+        now = datetime.datetime.now()
+        ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
+        db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата ОЧКАМИ"}}}, upsert=True)
+        
+        user_data_full = paid_collection.find_one({"uid": call.from_user.id})
+        if user_data_full and "thread_id" in user_data_full:
+            try: bot.send_message(STAFF_GROUP_ID, f"🎰 **ЮЗЕР ОПЛАТИЛ ШТРАФ ОЧКАМИ ({cost_points} очк.)!**\nСкайнет получил приказ на разбан. Тикет закрыт: `{ticket_num}`", message_thread_id=user_data_full["thread_id"], parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+            try: bot.close_forum_topic(STAFF_GROUP_ID, user_data_full["thread_id"])
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+            
+        paid_collection.update_one({"uid": call.from_user.id}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        try: bot.send_message(call.message.chat.id, f"✅ **Оплата Очками прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
+        except Exception as e: logger.error(f"Не удалось отправить юзеру сообщение о разбане за очки: {e}")
         
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
