@@ -154,32 +154,66 @@ def handle_user_query(call):
             paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
             
             if new_strikes >= 3:
-                bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.\n\nДля разблокировки доступа напишите в службу поддержки: @FAQMKBOT")
-            else:
-                cost_stars = 50
-                cost_points = cost_stars * 5
-                cost_rub = cost_stars * 2
+                cost_fine = 111 # Штраф за спам - 111 Звезд
+                cost_rub_fine = cost_fine * 2
+                cost_pts_fine = cost_fine * 5
                 
                 user_rub = user_data.get("cashback_balance", 0)
                 user_points = user_data.get("bounty_points", 0)
                 
                 markup = InlineKeyboardMarkup(row_width=1)
                 
-                # Кнопка РУБЛЕЙ
-                if user_rub >= cost_rub:
-                    markup.add(InlineKeyboardButton(f"💳 Оплатить с баланса ({cost_rub}₽)", callback_data=f"support_rub_{cost_rub}"))
-                elif user_rub > 0:
-                    markup.add(InlineKeyboardButton(f"💳 Баланс: {user_rub}₽ (Надо {cost_rub}₽)", callback_data="insufficient_funds"))
+                # Кнопка штрафа Звездами
+                markup.add(InlineKeyboardButton(f"⭐️ Штраф за спам ({cost_fine}⭐️)", callback_data=f"checkout_pay_support_{cost_fine}"))
                 
-                # Кнопка ОЧКОВ
-                if user_points >= cost_points:
-                    markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_points} очк.)", callback_data=f"support_pts_{cost_points}"))
-                else:
-                    missing = cost_points - user_points
-                    markup.add(InlineKeyboardButton(f"🎰 Не хватает {missing} Очков (Играть)", callback_data="btn_game_club"))
+                # Если хватает Рублей или Очков - даем оплатить из заначки казино
+                if user_rub >= cost_rub_fine:
+                    markup.add(InlineKeyboardButton(f"💳 Оплатить штраф с баланса ({cost_rub_fine}₽)", callback_data=f"support_rub_{cost_rub_fine}"))
+                if user_points >= cost_pts_fine:
+                    markup.add(InlineKeyboardButton(f"🎰 Оплатить штраф очками ({cost_pts_fine} очк.)", callback_data=f"support_pts_{cost_pts_fine}"))
+                    
+                # Всегда предлагаем купить Индульгенцию
+                markup.add(InlineKeyboardButton("📜 Купить Индульгенцию (2000⭐️)", callback_data="buy_indulgence"))
                 
-                warning_text = f"⚠️ **Внимание!** Бесплатные обращения закончились.\n\nВы можете оплатить создание тикета поддержки ({cost_stars}⭐️) внутренним балансом казино, или задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 60 звезд.\n\n_Попытка {new_strikes} из 3. После 3-й ошибки бот заблокирует вас._"
-                bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=markup)
+                bot.send_message(
+                    call.message.chat.id, 
+                    "⛔️ **Вы заблокированы за спам кнопками.**\n\nЛимит ошибок исчерпан, и вы попали в системный карантин.\n\nДля восстановления доступа необходимо оплатить штраф или приобрести полную Индульгенцию.", 
+                    parse_mode="Markdown", 
+                    reply_markup=markup
+                )
+            else:
+                    cost_stars = 50
+                    cost_points = cost_stars * 5
+                    cost_rub = cost_stars * 2
+                    
+                    user_rub = user_data.get("cashback_balance", 0)
+                    user_points = user_data.get("bounty_points", 0)
+                    
+                    markup = InlineKeyboardMarkup(row_width=1)
+                    
+                    # 👇 КНОПКА ПРЯМОЙ ОПЛАТЫ ЗВЕЗДАМИ В БОТЕ 👇
+                    markup.add(InlineKeyboardButton(f"⭐️ Оплатить {cost_stars}⭐️ (Telegram)", callback_data=f"checkout_pay_support_{cost_stars}"))
+                    
+                    # Кнопка РУБЛЕЙ
+                    if user_rub >= cost_rub:
+                        markup.add(InlineKeyboardButton(f"💳 Списать с баланса ({cost_rub}₽)", callback_data=f"support_rub_{cost_rub}"))
+                    else:
+                        markup.add(InlineKeyboardButton(f"💳 Баланс: {user_rub}₽ (Надо {cost_rub}₽)", callback_data="insufficient_funds"))
+                    
+                    # Кнопка ОЧКОВ
+                    if user_points >= cost_points:
+                        markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_points} очк.)", callback_data=f"support_pts_{cost_points}"))
+                    else:
+                        missing = cost_points - user_points
+                        markup.add(InlineKeyboardButton(f"🎰 Не хватает {missing} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+                    
+                    # 👇 ВЕРНУЛИ ТВОЙ ТЕКСТ ДЛЯ "НЕ УМНЫХ", НО ДОБАВИЛИ ЛАЙФХАК 👇
+                    warning_text = (
+                        f"⚠️ **Внимание!** Сначала необходимо задать вопрос в платной группе [СЛУЖБЫ ПОДДЕРЖКИ](https://t.me/MK_MensClubSUPPORT) и оплатить 60 звезд.\n\n"
+                        f"💡 **ИЛИ:** Вы можете не переходить в группу, а оплатить обращение прямо здесь (Звездами, кэшбеком или очками казино)!\n\n"
+                        f"_Попытка {new_strikes} из 3. После 3-й ошибки бот заблокирует вас._"
+                    )
+                    bot.send_message(call.message.chat.id, warning_text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=markup)
         return
 
     # ================= ЛОГИКА КНОПКИ РЕКЛАМЫ =================
@@ -228,13 +262,15 @@ def handle_support_payment(call):
         if user_data.get("bounty_points", 0) < cost:
             bot.send_message(call.message.chat.id, "❌ Недостаточно очков!")
             return
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -cost}, "$set": {"status": 1}})
+        # 👇 ДОБАВЛЯЕМ "strikes": 0 ВОТ СЮДА 👇
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -cost}, "$set": {"status": 1, "strikes": 0}})
         currency = "очков"
     else:
         if user_data.get("cashback_balance", 0) < cost:
             bot.send_message(call.message.chat.id, "❌ Недостаточно рублей!")
             return
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -cost}, "$set": {"status": 1}})
+        # 👇 И ВОТ СЮДА 👇
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -cost}, "$set": {"status": 1, "strikes": 0}})
         currency = "₽"
 
     try: bot.delete_message(call.message.chat.id, call.message.message_id)

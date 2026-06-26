@@ -219,6 +219,24 @@ def successful_payment(message):
         except Exception as e:
             logger.warning(f"Ошибка отправки благодарности за донат: {e}")
 
+    # 1.5 ОПЛАТА ПОДДЕРЖКИ (САППОРТ)
+    elif payload.startswith("support_payment_"):
+        db['daily_revenue'].insert_one({"type": "support", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
+        # Выдаем доступ к написанию тикета
+        paid_collection.update_one({"uid": uid}, {"$set": {"status": 1, "strikes": 0}})
+        
+        try:
+            bot.send_message(
+                uid, 
+                f"✅ **Оплата ({amount}⭐️) успешно получена!**\nДоступ к поддержке открыт.\n\n👇 Нажмите кнопку ниже, чтобы написать обращение.", 
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🆘 НАПИСАТЬ ОБРАЩЕНИЕ", callback_data="btn_unban"))
+            )
+            bot.send_message(STAFF_GROUP_ID, f"💸 **САППОРТ!** Пользователь `{uid}` оплатил обращение напрямую через бота: **{amount}⭐️**!", parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Ошибка отправки подтверждения саппорта: {e}")
+
     # 2. ШТРАФ (Авторазбан)
     elif payload.startswith("fine_payment_"):
         db['daily_revenue'].insert_one({"type": "fine", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
