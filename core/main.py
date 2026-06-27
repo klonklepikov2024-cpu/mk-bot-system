@@ -1,8 +1,9 @@
 import os
 import time
 import telebot
-from flask import Flask, request
 import threading
+import requests
+from flask import Flask, request
 
 from config import APP_URL, PORT
 from core.bot import bot
@@ -18,12 +19,12 @@ import handlers.start_menu # <--- ГЛАВНОЕ МЕНЮ ВСЕГДА В САМ
 
 app = Flask(__name__)
 
-# Флаг для одноразового запуска внутри воркера Gunicorn
 is_setup_done = False
 
 def setup():
     """Настройка бота (выполняется внутри воркера)"""
-    start_scheduler() # Моторчик запустится там, где нужно!
+    start_scheduler() 
+    time.sleep(3) # Даем серверу продышаться перед запросами
     
     try:
         if not APP_URL:
@@ -31,21 +32,21 @@ def setup():
             return
 
         target_url = f"{APP_URL.rstrip('/')}/webhook"
-        current_webhook = bot.get_webhook_info().url
+        bot_token = os.getenv('BOT_TOKEN')
         
-        # 🔥 УМНАЯ УСТАНОВКА: Меняем вебхук ТОЛЬКО если он слетел
-        if current_webhook != target_url:
-            logger.info(f"🔄 Обновляем вебхук: {current_webhook} -> {target_url}")
-            bot.remove_webhook()
-            time.sleep(1) # Защита от лимитов Телеграма
-            bot.set_webhook(url=target_url)
-            logger.info(f"✅ Вебхук успешно установлен!")
+        # 🔥 Жестко сбрасываем и ставим вебхук напрямую через API Telegram (без telebot)
+        requests.get(f"https://api.telegram.org/bot{bot_token}/deleteWebhook?drop_pending_updates=True", timeout=10)
+        time.sleep(1)
+        res = requests.get(f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}", timeout=10)
+        
+        if res.status_code == 200:
+            logger.info(f"✅ Вебхук жестко установлен: {target_url}")
         else:
-            logger.info(f"✅ Вебхук уже настроен правильно, пропускаем установку.")
+            logger.error(f"❌ Ошибка от Telegram: {res.text}")
     except Exception as e:
-        logger.error(f"❌ Ошибка установки вебхука: {e}")
+        logger.error(f"❌ Сбой вебхука: {e}")
 
-# 🔥 ГЛАВНАЯ МАГИЯ ЗДЕСЬ 🔥
+# 🔥 Запускаем настройку в фоне, чтобы сервер мгновенно отвечал Render-у
 @app.before_request
 def initialize_worker():
     global is_setup_done
@@ -53,31 +54,24 @@ def initialize_worker():
         is_setup_done = True 
         threading.Thread(target=setup, daemon=True).start()
 
-# 👇 МАРШРУТ-ЗАГЛУШКА ДЛЯ ЗДОРОВЬЯ СЕРВЕРА (ЧТОБЫ НЕ БЫЛО ОШИБОК 404/500) 👇
 @app.route('/')
 def index():
     return "Secretary Bot is Online and Healthy!", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Прием обновлений от серверов Telegram"""
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return 'ok', 200
-    else:
-        return 'error', 403
+    # 🔥 Бронебойный прием без проверки заголовков
+    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    bot.process_new_updates([update])
+    return 'ok', 200
 
 @app.route('/ping')
 def ping():
-    """Линия жизни для мониторинга (UptimeRobot)"""
     return "I am alive!", 200
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db
-    import time
     while True:
         try:
             db['settings'].update_one({"_id": "bot_status"}, {"$set": {"sec_last_seen": time.time()}}, upsert=True)
