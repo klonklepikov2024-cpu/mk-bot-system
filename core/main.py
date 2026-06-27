@@ -56,6 +56,20 @@ def ping():
     """Линия жизни для мониторинга (UptimeRobot)"""
     return "I am alive!", 200
 
+# === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
+def heartbeat_sec():
+    from database.mongo import db
+    import time
+    while True:
+        try:
+            db['settings'].update_one({"_id": "bot_status"}, {"$set": {"sec_last_seen": time.time()}}, upsert=True)
+        except: pass
+        time.sleep(60)
+
+import threading
+threading.Thread(target=heartbeat_sec, daemon=True).start()
+# ===============================
+
 if __name__ == '__main__':
     # Этот блок теперь используется только для локального тестирования
     logger.info("🚀 Бот Секретарь запускается локально...")
