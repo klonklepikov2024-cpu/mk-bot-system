@@ -1,12 +1,13 @@
 import os
+import time
 import telebot
 from flask import Flask, request
+import threading
 
 from config import APP_URL, PORT
 from core.bot import bot
 from core.scheduler import start_scheduler
 from utils.logger import logger
-import threading # Убедитесь, что импорт есть в файле
 
 # Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
 import handlers.security
@@ -25,9 +26,22 @@ def setup():
     start_scheduler() # Моторчик запустится там, где нужно!
     
     try:
-        bot.remove_webhook()
-        bot.set_webhook(url=f"{APP_URL}/webhook")
-        logger.info(f"✅ Вебхук успешно установлен на: {APP_URL}/webhook")
+        if not APP_URL:
+            logger.error("❌ ВНИМАНИЕ: APP_URL не задан!")
+            return
+
+        target_url = f"{APP_URL.rstrip('/')}/webhook"
+        current_webhook = bot.get_webhook_info().url
+        
+        # 🔥 УМНАЯ УСТАНОВКА: Меняем вебхук ТОЛЬКО если он слетел
+        if current_webhook != target_url:
+            logger.info(f"🔄 Обновляем вебхук: {current_webhook} -> {target_url}")
+            bot.remove_webhook()
+            time.sleep(1) # Защита от лимитов Телеграма
+            bot.set_webhook(url=target_url)
+            logger.info(f"✅ Вебхук успешно установлен!")
+        else:
+            logger.info(f"✅ Вебхук уже настроен правильно, пропускаем установку.")
     except Exception as e:
         logger.error(f"❌ Ошибка установки вебхука: {e}")
 
@@ -36,9 +50,13 @@ def setup():
 def initialize_worker():
     global is_setup_done
     if not is_setup_done:
-        is_setup_done = True # Сразу ставим флаг, чтобы не дублировать
-        # Запускаем тяжелую связку с Telegram в фоновом потоке, чтобы не вешать сервер!
+        is_setup_done = True 
         threading.Thread(target=setup, daemon=True).start()
+
+# 👇 МАРШРУТ-ЗАГЛУШКА ДЛЯ ЗДОРОВЬЯ СЕРВЕРА (ЧТОБЫ НЕ БЫЛО ОШИБОК 404/500) 👇
+@app.route('/')
+def index():
+    return "Secretary Bot is Online and Healthy!", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -66,12 +84,8 @@ def heartbeat_sec():
         except: pass
         time.sleep(60)
 
-import threading
 threading.Thread(target=heartbeat_sec, daemon=True).start()
 # ===============================
 
 if __name__ == '__main__':
-    # Этот блок теперь используется только для локального тестирования
-    logger.info("🚀 Бот Секретарь запускается локально...")
-    setup()
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host="0.0.0.0", port=PORT)
