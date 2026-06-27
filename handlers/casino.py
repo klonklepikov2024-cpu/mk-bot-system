@@ -513,7 +513,7 @@ def handle_claim_airdrop(call):
         logger.debug(f"Игнор ошибки обновления кнопки аирдропа: {e}")
 
 # 🔥 ЗАПУСКАЕМ ТАЙМЕР АИРДРОПОВ (Например, каждые 3 часа)
-scheduler.add_job(trigger_random_airdrop, 'interval', hours=3)
+scheduler.add_job(trigger_random_airdrop, 'interval', hours=3, id='airdrop_timer', replace_existing=True)
 
 # ================= КНОПКИ РУЛЕТКИ ИЗ КАБИНЕТА =================
 @bot.callback_query_handler(func=lambda call: call.data == 'show_prizes_btn')
