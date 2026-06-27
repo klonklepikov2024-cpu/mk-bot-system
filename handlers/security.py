@@ -268,15 +268,15 @@ def handle_reward_purchase(call):
     elif reward_type == "vip50": 
         target, discount = "vip", 50
         item_name = "Скидку 50% на VIP"
-        instruction = "📖 **Как применить:** В @Elitepost_bot при выставлении счета нажмите **«🎫 У меня есть промокод»**."
+        instruction = "📖 **Как применить:** В [@Elitepost_bot](https://t.me/Elitepost_bot) при выставлении счета нажмите **«🎫 У меня есть промокод»**."
     elif reward_type == "ads50": 
         target, discount = "ads", 50
         item_name = "Скидку 50% на Рекламу"
-        instruction = "📖 **Как применить:** В @PostGoldBot_bot в меню выбора тарифов нажмите **«🎫 У меня есть промокод»**."
+        instruction = "📖 **Как применить:** В [@PostGoldBot_bot](https://t.me/PostGoldBot_bot) в меню выбора тарифов нажмите **«🎫 У меня есть промокод»**."
     elif reward_type == "vip100": 
         target, discount = "vip", 100
         item_name = "Бесплатный VIP-доступ (100%)"
-        instruction = "📖 **Как применить:** В @Elitepost_bot при выставлении счета нажмите **«🎫 У меня есть промокод»**."
+        instruction = "📖 **Как применить:** В [@Elitepost_bot](https://t.me/Elitepost_bot) при выставлении счета нажмите **«🎫 У меня есть промокод»**."
     
     db['promocodes'].insert_one({
         "_id": promo_code, "type": "percent", "value": discount, "target": target,
