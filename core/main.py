@@ -6,6 +6,7 @@ from config import APP_URL, PORT
 from core.bot import bot
 from core.scheduler import start_scheduler
 from utils.logger import logger
+import threading # Убедитесь, что импорт есть в файле
 
 # Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
 import handlers.security
@@ -31,14 +32,13 @@ def setup():
         logger.error(f"❌ Ошибка установки вебхука: {e}")
 
 # 🔥 ГЛАВНАЯ МАГИЯ ЗДЕСЬ 🔥
-# Запускаем setup() только в момент первого пинга от сервера.
-# Теперь планировщик будет жить внутри рабочего процесса!
 @app.before_request
 def initialize_worker():
     global is_setup_done
     if not is_setup_done:
-        setup()
-        is_setup_done = True
+        is_setup_done = True # Сразу ставим флаг, чтобы не дублировать
+        # Запускаем тяжелую связку с Telegram в фоновом потоке, чтобы не вешать сервер!
+        threading.Thread(target=setup, daemon=True).start()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
