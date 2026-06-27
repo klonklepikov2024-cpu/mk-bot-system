@@ -22,37 +22,40 @@ app = Flask(__name__)
 is_setup_done = False
 
 def setup():
-    """Настройка бота (выполняется внутри воркера)"""
+    """Настройка бота"""
+    global is_setup_done
     start_scheduler() 
-    time.sleep(3) # Даем серверу продышаться перед запросами
+    time.sleep(2)
     
     try:
         if not APP_URL:
-            logger.error("❌ ВНИМАНИЕ: APP_URL не задан!")
+            logger.error("❌ APP_URL не задан!")
             return
 
         target_url = f"{APP_URL.rstrip('/')}/webhook"
         bot_token = os.getenv('BOT_TOKEN')
         
-        # 🔥 Жестко сбрасываем и ставим вебхук напрямую через API Telegram (без telebot)
-        requests.get(f"https://api.telegram.org/bot{bot_token}/deleteWebhook?drop_pending_updates=True", timeout=10)
+        logger.info(f"🔄 Устанавливаем вебхук: {target_url}")
+        
+        # Упрощённый вариант
+        requests.get(
+            f"https://api.telegram.org/bot{bot_token}/deleteWebhook?drop_pending_updates=True",
+            timeout=8
+        )
         time.sleep(1)
-        res = requests.get(f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}", timeout=10)
+        
+        res = requests.get(
+            f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}&drop_pending_updates=True",
+            timeout=15
+        )
         
         if res.status_code == 200:
-            logger.info(f"✅ Вебхук жестко установлен: {target_url}")
+            logger.info("✅ Вебхук успешно установлен!")
         else:
-            logger.error(f"❌ Ошибка от Telegram: {res.text}")
+            logger.error(f"❌ Telegram ответил: {res.text}")
+            
     except Exception as e:
         logger.error(f"❌ Сбой вебхука: {e}")
-
-# 🔥 Запускаем настройку в фоне, чтобы сервер мгновенно отвечал Render-у
-@app.before_request
-def initialize_worker():
-    global is_setup_done
-    if not is_setup_done:
-        is_setup_done = True 
-        threading.Thread(target=setup, daemon=True).start()
 
 @app.route('/')
 def index():
