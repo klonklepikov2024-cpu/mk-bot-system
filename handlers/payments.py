@@ -330,16 +330,31 @@ def successful_payment(message):
 
     # 🔥 4. ПОКУПКА ИНДУЛЬГЕНЦИИ (ПОЛНЫЙ РАЗБАН) 🔥
     elif payload.startswith("indulgence_"):
-        # Добавляем доход в стату (в веб-панели будет отображаться)
+        # Добавляем доход в стату
         db['daily_revenue'].insert_one({"type": "indulgence", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
         
         now = datetime.datetime.now()
         
-        # 1. Очищаем все грехи (обнуляем страйки, закрываем тикет)
-        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0, "strikes": 0}, "$unset": {"topic_type": ""}})
+        # 1. Очищаем все грехи и ВЫДАЕМ 10 СУПЕРЩИТОВ
+        paid_collection.update_one(
+            {"uid": uid}, 
+            {
+                "$set": {"status": 0, "strikes": 0}, 
+                "$inc": {"immunity": 10}, 
+                "$unset": {"topic_type": ""}
+            }
+        )
         
-        # 2. Выдаем VIP-статус грешника
-        db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": "📜 Индульгенция"}}, upsert=True)
+        # 2. Выдаем текстовый тег без смайла + Включаем режим Бога (для Таможни)
+        db['users'].update_one(
+            {"_id": uid}, 
+            {"$set": {
+                "custom_tag": "Индульгенция",
+                "is_vip": True,
+                "is_queer": True
+            }}, 
+            upsert=True
+        )
         
         # 3. Передаем приказ Скайнету на глобальный разбан
         db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
@@ -351,17 +366,26 @@ def successful_payment(message):
             upsert=True
         )
         
-        # 5. Уведомляем админов и закрываем топик, если он был открыт
+        # 5. Уведомляем админов и закрываем топик
         user_data = paid_collection.find_one({"uid": uid})
         if user_data and "thread_id" in user_data:
-            try: bot.send_message(STAFF_GROUP_ID, f"📜 **КИТ КУПИЛ ИНДУЛЬГЕНЦИЮ ({amount}⭐️)!**\nСкайнет получил приказ на полный разбан, выдачу тега и очистку истории. Тикет закрыт.", message_thread_id=user_data["thread_id"], parse_mode="Markdown")
+            try: bot.send_message(STAFF_GROUP_ID, f"📜 **КИТ КУПИЛ ИНДУЛЬГЕНЦИЮ ({amount}⭐️)!**\nСкайнет получил приказ на полный разбан, выдачу тега, 10 щитов и Режим Бога. Тикет закрыт.", message_thread_id=user_data["thread_id"], parse_mode="Markdown")
             except: pass
             try: bot.close_forum_topic(STAFF_GROUP_ID, user_data["thread_id"])
             except: pass
 
-        # 6. Уведомляем юзера
+        # 6. Уведомляем юзера и выдаем стандартные ссылки для возврата
+        success_text = (
+            "🎉 **Грехи отпущены!**\n\n"
+            "Вы успешно приобрели Индульгенцию. Все блокировки сняты, а ваш аккаунт получил статус абсолютной неприкосновенности:\n\n"
+            "🛡 **Вам начислено 10 Щитов Иммунитета** от будущих системных мутов.\n"
+            "👑 **Открыт доступ во все города** (Таможня будет пропускать вас автоматически).\n\n"
+            f"{NETWORK_LINKS}\n\n"
+            "Приятного общения в Империи!"
+        )
+        
         try:
-            bot.send_message(uid, "🎉 **Грехи отпущены!**\n\nВы успешно приобрели 📜 Индульгенцию. Все блокировки сняты, статус выдан.\nПриятного общения в Империи!", parse_mode="Markdown")
+            bot.send_message(uid, success_text, parse_mode="Markdown", disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Не удалось отправить уведомление об Индульгенции: {e}")
 
