@@ -1,6 +1,11 @@
 import os
+import time
 import telebot
+import threading
+import requests
 from flask import Flask, request
+import threading
+threading.Thread(target=heartbeat_sec, daemon=True).start()
 
 from config import APP_URL, PORT
 from core.bot import bot
@@ -16,48 +21,70 @@ import handlers.start_menu # <--- ГЛАВНОЕ МЕНЮ ВСЕГДА В САМ
 
 app = Flask(__name__)
 
-# Флаг для одноразового запуска внутри воркера Gunicorn
 is_setup_done = False
 
 def setup():
-    """Настройка бота (выполняется внутри воркера)"""
-    start_scheduler() # Моторчик запустится там, где нужно!
+    """Настройка бота"""
+    global is_setup_done
+    start_scheduler() 
+    time.sleep(2)
     
     try:
-        bot.remove_webhook()
-        bot.set_webhook(url=f"{APP_URL}/webhook")
-        logger.info(f"✅ Вебхук успешно установлен на: {APP_URL}/webhook")
-    except Exception as e:
-        logger.error(f"❌ Ошибка установки вебхука: {e}")
+        if not APP_URL:
+            logger.error("❌ APP_URL не задан!")
+            return
 
-# 🔥 ГЛАВНАЯ МАГИЯ ЗДЕСЬ 🔥
-# Запускаем setup() только в момент первого пинга от сервера.
-# Теперь планировщик будет жить внутри рабочего процесса!
-@app.before_request
-def initialize_worker():
-    global is_setup_done
-    if not is_setup_done:
-        setup()
-        is_setup_done = True
+        target_url = f"{APP_URL.rstrip('/')}/webhook"
+        bot_token = os.getenv('BOT_TOKEN')
+        
+        logger.info(f"🔄 Устанавливаем вебхук: {target_url}")
+        
+        # Упрощённый вариант
+        requests.get(
+            f"https://api.telegram.org/bot{bot_token}/deleteWebhook?drop_pending_updates=True",
+            timeout=8
+        )
+        time.sleep(1)
+        
+        res = requests.get(
+            f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}&drop_pending_updates=True",
+            timeout=15
+        )
+        
+        if res.status_code == 200:
+            logger.info("✅ Вебхук успешно установлен!")
+        else:
+            logger.error(f"❌ Telegram ответил: {res.text}")
+            
+    except Exception as e:
+        logger.error(f"❌ Сбой вебхука: {e}")
+
+@app.route('/')
+def index():
+    return "Secretary Bot is Online and Healthy!", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Прием обновлений от серверов Telegram"""
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return 'ok', 200
-    else:
-        return 'error', 403
+    # 🔥 Бронебойный прием без проверки заголовков
+    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    bot.process_new_updates([update])
+    return 'ok', 200
 
 @app.route('/ping')
 def ping():
-    """Линия жизни для мониторинга (UptimeRobot)"""
     return "I am alive!", 200
 
+# === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
+def heartbeat_sec():
+    from database.mongo import db
+    while True:
+        try:
+            db['settings'].update_one({"_id": "bot_status"}, {"$set": {"sec_last_seen": time.time()}}, upsert=True)
+        except: pass
+        time.sleep(60)
+
+threading.Thread(target=heartbeat_sec, daemon=True).start()
+# ===============================
+
 if __name__ == '__main__':
-    # Этот блок теперь используется только для локального тестирования
-    logger.info("🚀 Бот Секретарь запускается локально...")
-    setup()
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host="0.0.0.0", port=PORT)

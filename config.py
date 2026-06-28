@@ -1,4 +1,5 @@
 import os
+import re # <--- ДОБАВИТЬ ЭТО
 from pymongo import MongoClient
 
 # ==================== СЕКРЕТЫ И НАСТРОЙКИ СЕРВЕРА ====================
@@ -44,9 +45,7 @@ FALLBACK_GAYZNAK = {"Красноярск": -1002335149925, "Екатеринб�
 # ==================== УМНАЯ СИНХРОНИЗАЦИЯ С ЦУП ====================
 client_db = MongoClient(MONGO_URI)
 db = client_db['elite_bot_db']
-infra = db['settings'].find_one({"_id": "infrastructure"})
 
-# Функция для авто-миграции на лету
 def create_and_push_default():
     def convert_dict_to_list(chat_dict):
         return [{"name": name, "id": str(chat_id)} for name, chat_id in chat_dict.items()]
@@ -66,22 +65,15 @@ def create_and_push_default():
     db['settings'].update_one({"_id": "infrastructure"}, {"$set": default_data}, upsert=True)
     return default_data
 
-# Если матрица пустая - бот загружает туда всё сам
-if not infra or not infra.get("networks") or len(infra["networks"].get("mk", [])) == 0:
-    print("⚙️ Матрица городов пуста. Запускаю авто-заполнение ЦУПа...")
-    infra = create_and_push_default()
-
-def list_to_dict(chat_list):
-    return {item["name"]: int(item["id"]) for item in chat_list}
-
-networks = infra.get("networks", {})
-chat_ids_mk = list_to_dict(networks.get("mk", []))
-chat_ids_parni = list_to_dict(networks.get("parni", []))
-chat_ids_ns = list_to_dict(networks.get("ns", []))
-chat_ids_rainbow = list_to_dict(networks.get("rainbow", []))
-chat_ids_gayznak = list_to_dict(networks.get("gayznak", []))
-
-MAIN_CHANNEL_LINK = infra.get("global_links", {}).get("main_channel", "https://t.me/clubofrm")
+# 🔥 1. Создаем "контейнеры" один раз, чтобы другие файлы могли их импортировать
+chat_ids_mk = {}
+chat_ids_parni = {}
+chat_ids_ns = {}
+chat_ids_rainbow = {}
+chat_ids_gayznak = {}
+all_cities = {}
+PARNI_CHATS = []
+MAIN_CHANNEL_LINK = "https://t.me/clubofrm"
 
 NETWORK_LINKS = (
     "📍 **Ссылки для возврата в чаты:**\n"
@@ -96,23 +88,57 @@ NON_CITIES = [
     "Аренда Жилья", "Секс Туризм", "Галерея", "Тестовая группа 🛠️"
 ]
 
-PARNI_CHATS = list(chat_ids_parni.values())
+# 🔥 2. Функция умного обновления (меняет "внутренности" словарей)
+def refresh_matrix():
+    global MAIN_CHANNEL_LINK
+    infra = db['settings'].find_one({"_id": "infrastructure"})
+    
+    if not infra or not infra.get("networks") or len(infra["networks"].get("mk", [])) == 0:
+        print("⚙️ Матрица городов пуста. Запускаю авто-заполнение ЦУПа...")
+        infra = create_and_push_default()
 
-all_cities = {}
-def insert_to_all(city, net_key, real_name, chat_id):
-    if city in NON_CITIES: 
-        return
-    clean_city = city.replace(" 2", "")
-    if clean_city not in all_cities:
-        all_cities[clean_city] = {}
-    if net_key not in all_cities[clean_city]:
-        all_cities[clean_city][net_key] = []
-    all_cities[clean_city][net_key].append({"name": real_name, "chat_id": chat_id})
+    networks = infra.get("networks", {})
+    MAIN_CHANNEL_LINK = infra.get("global_links", {}).get("main_channel", "https://t.me/clubofrm")
+    
+    def list_to_dict(chat_list):
+        return {item["name"]: int(item["id"]) for item in chat_list}
 
-for city, chat_id in chat_ids_mk.items(): insert_to_all(city, "mk", city, chat_id)
-for city, chat_id in chat_ids_parni.items(): insert_to_all(city, "parni", city, chat_id)
-for city, chat_id in chat_ids_ns.items(): insert_to_all(city, "ns", city, chat_id)
-for city, chat_id in chat_ids_rainbow.items(): insert_to_all(city, "rainbow", city, chat_id)
-for city, chat_id in chat_ids_gayznak.items(): insert_to_all(city, "gayznak", city, chat_id)
+    # ИСПОЛЬЗУЕМ clear() и update(), чтобы файлы (casino.py и т.д.) увидели новые данные!
+    chat_ids_mk.clear(); chat_ids_mk.update(list_to_dict(networks.get("mk", [])))
+    chat_ids_parni.clear(); chat_ids_parni.update(list_to_dict(networks.get("parni", [])))
+    chat_ids_ns.clear(); chat_ids_ns.update(list_to_dict(networks.get("ns", [])))
+    chat_ids_rainbow.clear(); chat_ids_rainbow.update(list_to_dict(networks.get("rainbow", [])))
+    chat_ids_gayznak.clear(); chat_ids_gayznak.update(list_to_dict(networks.get("gayznak", [])))
 
-print("✅ Скайнет успешно загрузил Матрицу Инфраструктуры!")
+    PARNI_CHATS.clear(); PARNI_CHATS.extend(list(chat_ids_parni.values()))
+
+    all_cities.clear()
+    def insert_to_all(city, net_key, real_name, chat_id):
+        if city in NON_CITIES: return
+        clean_city = re.sub(r'\s*\d+$', '', city).strip()
+        if clean_city not in all_cities:
+            all_cities[clean_city] = {}
+        if net_key not in all_cities[clean_city]:
+            all_cities[clean_city][net_key] = []
+        all_cities[clean_city][net_key].append({"name": real_name, "chat_id": chat_id})
+
+    for city, chat_id in chat_ids_mk.items(): insert_to_all(city, "mk", city, chat_id)
+    for city, chat_id in chat_ids_parni.items(): insert_to_all(city, "parni", city, chat_id)
+    for city, chat_id in chat_ids_ns.items(): insert_to_all(city, "ns", city, chat_id)
+    for city, chat_id in chat_ids_rainbow.items(): insert_to_all(city, "rainbow", city, chat_id)
+    for city, chat_id in chat_ids_gayznak.items(): insert_to_all(city, "gayznak", city, chat_id)
+
+# 🔥 3. Загружаем данные при старте бота
+refresh_matrix()
+print("✅ Скайнет-Секретарь успешно загрузил Матрицу Инфраструктуры!")
+
+# 🔥 4. Запускаем ДЕМОНА: он будет обновлять города в фоне каждые 60 секунд!
+import threading
+import time
+def matrix_updater_daemon():
+    while True:
+        time.sleep(60)
+        try: refresh_matrix()
+        except: pass
+
+threading.Thread(target=matrix_updater_daemon, daemon=True).start()
