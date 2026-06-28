@@ -18,6 +18,36 @@ from utils.logger import logger
 from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
 
+def check_video_timer(uid, chat_id, thread_id):
+    """Фоновый таймер: проверяет, прислал ли юзер кружок за 5 минут"""
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    # 👇 ПРЕДОХРАНИТЕЛЬ: Если видео получено, таймер просто умирает 👇
+    if user_data.get("video_received"):
+        return 
+        
+    # Если видео НЕ было — выдаем черную метку!
+    paid_collection.update_one(
+        {"uid": uid}, 
+        {"$set": {"failed_verification": True}}, 
+        upsert=True
+    )
+    
+    try:
+        bot.send_message(
+            chat_id, 
+            "🚫 **Время вышло!**\n\nВы не успели прислать видео-кружок за 5 минут. Бесплатная попытка сгорела.\nТеперь разблокировка возможна только через оплату штрафа.",
+            parse_mode="Markdown"
+        )
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            "⚠️ *Юзер не прислал кружок за 5 минут! Выдана черная метка. Бесплатная верификация закрыта.*", 
+            message_thread_id=thread_id, 
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.debug(f"Ошибка таймера кружка: {e}")
+
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private' and not (message.text and message.text.startswith('/')), content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])
 def handle_user_messages(message):
@@ -54,14 +84,30 @@ def handle_user_messages(message):
         # ТЕКСТ
         if message.content_type == 'text':
             if message.text.lower() in ["готов", "готова", "готовы", "готов(а)"]:
+                
+                # 👇 НОВОЕ: ПРОВЕРКА ЧЕРНОЙ МЕТКИ 👇
+                if user_data.get("failed_verification"):
+                    bot.send_message(
+                        uid, 
+                        "🚫 **Бесплатная верификация больше недоступна.**\n\nВы проигнорировали 5-минутный таймер (или ваша анкета была отклонена).\nТеперь разблокировка возможна **только через оплату штрафа**.",
+                        parse_mode="Markdown"
+                    )
+                    return
+                # 👆 ============================= 👆
+
                 code_words = ["ЯБЛОКО", "ТИГР", "СОЛНЦЕ", "МОРЕ", "СОКОЛ", "РАКЕТА", "ВЕТЕР", "МАЯК"]
                 secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
                 
-                paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code}})
+                # 👇 ИЗМЕНЕНО: Добавили video_received: False 👇
+                paid_collection.update_one({"uid": uid}, {"$set": {"verif_timer": datetime.datetime.now(), "secret_code": secret_code, "video_received": False}})
                 
                 text_phrase = f"⏳ **Таймер запущен! У вас ровно 5 минут.**\n\nЗапишите **видео-кружок**, на котором четко видно лицо, и произнесите:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*."
                 bot.send_message(uid, text_phrase, parse_mode="Markdown")
                 bot.send_message(STAFF_GROUP_ID, f"⏳ *Пользователь написал «Готов». Бот выдал код: {secret_code} и запустил таймер 5 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
+                
+                # 👇 НОВОЕ: ЗАПУСКАЕМ АКТИВНЫЙ ТАЙМЕР НА 5 МИНУТ (300 сек) 👇
+                threading.Timer(300.0, check_video_timer, args=[uid, message.chat.id, thread_id]).start()
+                
                 return 
 
             cleanup_old_buttons()
@@ -135,6 +181,10 @@ def handle_user_messages(message):
         # КРУЖКИ
         elif message.content_type == 'video_note':
             
+            # 👇 НОВОЕ: СТАВИМ ПРЕДОХРАНИТЕЛЬ (ОТКЛЮЧАЕМ ТАЙМЕР) 👇
+            paid_collection.update_one({"uid": uid}, {"$set": {"video_received": True}})
+            # 👆 ================================================ 👆
+
             # 🔥 ЕДИНЫЙ РАЗУМ: Записываем в память, что юзер скинул видео
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "user", "content": "[Пользователь отправил видео-кружок на проверку]"}}})
             # 🔥 АНТИ-ФЕЙК: ПРОВЕРКА НА ПЕРЕСЛАННЫЙ КРУЖОК 🔥
