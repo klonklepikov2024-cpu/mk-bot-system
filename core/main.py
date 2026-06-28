@@ -4,8 +4,6 @@ import telebot
 import threading
 import requests
 from flask import Flask, request
-import threading
-threading.Thread(target=heartbeat_sec, daemon=True).start()
 
 from config import APP_URL, PORT
 from core.bot import bot
@@ -83,8 +81,10 @@ def heartbeat_sec():
         except: pass
         time.sleep(60)
 
+# Правильный запуск потока ПОСЛЕ функции
 threading.Thread(target=heartbeat_sec, daemon=True).start()
 # ===============================
 
 if __name__ == '__main__':
+    setup() # <--- ОБЯЗАТЕЛЬНО ВЫЗЫВАЕМ SETUP
     app.run(host="0.0.0.0", port=PORT)
