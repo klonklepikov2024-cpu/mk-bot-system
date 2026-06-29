@@ -1,7 +1,6 @@
 import random
 import datetime
 from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
-from zoneinfo import ZoneInfo # <--- ДОБАВИТЬ ЭТУ СТРОКУ
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
@@ -93,15 +92,14 @@ def handle_casino_spin(message):
         sent_dice = bot.send_dice(message.chat.id, emoji='🎰')
         val = sent_dice.dice.value # Телеграм сам генерирует честный рандом (1-64)
 
-        # 3. НАДЕЖНЫЙ ЗАПУСК ФОНОВОЙ ЗАДАЧИ
-        tz = ZoneInfo("Europe/Moscow")
-        run_time = datetime.datetime.now(tz) + datetime.timedelta(seconds=2.2)
-        scheduler.add_job(
+        # 3. МГНОВЕННЫЙ ЗАПУСК БЕЗ НАГРУЗКИ НА БАЗУ
+        import threading
+        threading.Timer(
+            2.2, 
             process_spin_result, 
-            'date', 
-            run_date=run_time, 
-            args=[message.chat.id, message.from_user.username, sent_dice.message_id, val, uid] # Передаем ID вместо объектов
-        )
+            args=[message.chat.id, message.from_user.username, sent_dice.message_id, val, uid]
+        ).start()
+
     except Exception as e:
         logger.error(f"Не удалось запустить рулетку для {uid}: {e}")
         # Возвращаем деньги, если бросок сломался
@@ -510,8 +508,21 @@ def handle_claim_airdrop(call):
     except Exception as e:
         logger.debug(f"Игнор ошибки обновления кнопки аирдропа: {e}")
 
-# 🔥 ЗАПУСКАЕМ ТАЙМЕР АИРДРОПОВ (Например, каждые 3 часа)
-scheduler.add_job(trigger_random_airdrop, 'interval', hours=3, id='airdrop_timer', replace_existing=True)
+# 🔥 ЗАПУСКАЕМ ТАЙМЕР АИРДРОПОВ (В независимом потоке)
+import threading
+import time
+
+def airdrop_background_loop():
+    """Фоновый цикл для автоматического сброса аирдропов"""
+    while True:
+        # Спим 3 часа (10800 секунд)
+        time.sleep(10800)
+        try:
+            trigger_random_airdrop(is_manual=False)
+        except Exception as e:
+            logger.error(f"Ошибка в фоновом цикле аирдропов: {e}")
+
+threading.Thread(target=airdrop_background_loop, daemon=True).start()
 
 # ================= КНОПКИ РУЛЕТКИ ИЗ КАБИНЕТА =================
 @bot.callback_query_handler(func=lambda call: call.data == 'show_prizes_btn')

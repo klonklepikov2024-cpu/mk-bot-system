@@ -83,8 +83,13 @@ def heartbeat_sec():
 
 # Правильный запуск потока ПОСЛЕ функции
 threading.Thread(target=heartbeat_sec, daemon=True).start()
+
+# 🔥 ИСПРАВЛЕНИЕ: Запускаем setup в фоне ДО старта сервера, 
+# чтобы она сработала на любом хостинге (Gunicorn/WSGI)
+if not is_setup_done:
+    threading.Thread(target=setup, daemon=True).start()
+    is_setup_done = True
 # ===============================
 
 if __name__ == '__main__':
-    setup() # <--- ОБЯЗАТЕЛЬНО ВЫЗЫВАЕМ SETUP
     app.run(host="0.0.0.0", port=PORT)
