@@ -79,39 +79,43 @@ def handle_user_query(call):
 
     # ================= ЛОГИКА КНОПКИ РАЗБАНА =================
     if call.data == "btn_unban":
-        
-        # 👇 ДОБАВИТЬ ВЕСЬ ЭТОТ БЛОК АВТО-ИСЦЕЛЕНИЯ 👇
-        from config import VIP_CHAT_ID, BEYOND_CHAT_ID
+        from config import VIP_CHAT_ID, BEYOND_CHAT_ID, OWNER_ID, ADMIN_CHAT_IDS
         import datetime
-        is_vip_now = False
-        is_queer_now = False
         
-        try:
-            m_vip = bot.get_chat_member(VIP_CHAT_ID, uid)
-            is_vip_now = m_vip.status in ['member', 'administrator', 'creator'] or (m_vip.status == 'restricted' and getattr(m_vip, 'is_member', False))
-        except: pass
+        # 👇 1. СНАЧАЛА СМОТРИМ В БАЗУ ДАННЫХ (БРОНЯ ОТ СТРАЙКОВ) 👇
+        user_db = db['users'].find_one({"_id": uid}) or {}
+        is_elite = bool(
+            user_db.get("is_vip") or 
+            user_db.get("is_queer") or 
+            user_db.get("custom_tag") == "Спонсор_Одобрен" or 
+            uid == OWNER_ID or 
+            uid in ADMIN_CHAT_IDS
+        )
         
-        try:
-            m_beyond = bot.get_chat_member(BEYOND_CHAT_ID, uid)
-            is_queer_now = m_beyond.status in ['member', 'administrator', 'creator'] or (m_beyond.status == 'restricted' and getattr(m_beyond, 'is_member', False))
-        except: pass
-        
-        if is_vip_now or is_queer_now:
-            db['users'].update_one({"_id": uid}, {"$set": {"is_vip": is_vip_now, "is_queer": is_queer_now}}, upsert=True)
-            db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
-            paid_collection.update_one({"uid": uid}, {"$set": {"status": 0, "strikes": 0}, "$unset": {"topic_type": ""}})
+        # 👇 2. ЕСЛИ В БАЗЕ ПУСТО, ПРОВЕРЯЕМ ФИЗИЧЕСКОЕ ПРИСУТСТВИЕ (АВТО-ИСЦЕЛЕНИЕ) 👇
+        if not is_elite:
+            try:
+                m_vip = bot.get_chat_member(VIP_CHAT_ID, uid)
+                if m_vip.status in ['member', 'administrator', 'creator'] or (m_vip.status == 'restricted' and getattr(m_vip, 'is_member', False)):
+                    is_elite = True
+                    db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
+            except: pass
             
-            bot.send_message(
-                call.message.chat.id,
-                "🔄 **Синхронизация успешна!**\n\n"
-                "Система обнаружила у вас активную премиум-подписку. "
-                "Все ваши муты и блокировки в сети были автоматически сняты Скайнетом!\n\n"
-                "Приятного общения! 😎",
-                parse_mode="Markdown"
-            )
-            return 
-        # 👆 ======================================================== 👆
+            try:
+                m_beyond = bot.get_chat_member(BEYOND_CHAT_ID, uid)
+                if m_beyond.status in ['member', 'administrator', 'creator'] or (m_beyond.status == 'restricted' and getattr(m_beyond, 'is_member', False)):
+                    is_elite = True
+                    db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
+            except: pass
 
+        # 👇 3. ЕСЛИ ЭЛИТА - ДАЕМ БЕСПЛАТНЫЙ ПРОПУСК (status=1) И СБРАСЫВАЕМ СТРАЙКИ 👇
+        if is_elite:
+            user_data["status"] = 1
+            paid_collection.update_one({"uid": uid}, {"$set": {"status": 1, "strikes": 0}, "$unset": {"topic_type": ""}})
+            # Заодно кидаем приказ Скайнету снять с него все случайные блокировки!
+            db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+
+        # 👇 4. ПРОДОЛЖАЕМ ОБЫЧНУЮ ЛОГИКУ (Страйки для плебеев) 👇
         if user_data.get("strikes", 0) >= 3 and user_data.get("status") != 1:
             bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.\n\nДля разблокировки доступа напишите в службу поддержки: @FAQMKBOT")
             return 
@@ -141,7 +145,11 @@ def handle_user_query(call):
             if skynet_ban:
                 history_text += f"\n🚨 **АКТИВНЫЙ БАН СКАЙНЕТА:**\nПричина: {skynet_ban.get('reason', 'Не указана')}"
             
-            bot.send_message(call.message.chat.id, "✅ **Доступ открыт.** Напишите вашу проблему ниже, и мы начнем процесс верификации.")
+            # 🔥 РАЗДЕЛЯЕМ ПРИВЕТСТВИЕ ДЛЯ ЭЛИТЫ И ОБЫЧНЫХ ЮЗЕРОВ 🔥
+            if is_elite:
+                bot.send_message(call.message.chat.id, "👑 **Доступ открыт (VIP-привилегия).**\nВаши ограничения в сети были сняты!\nЕсли у вас есть вопрос к операторам, напишите его ниже:", parse_mode="Markdown")
+            else:
+                bot.send_message(call.message.chat.id, "✅ **Доступ открыт.** Напишите вашу проблему ниже, и мы начнем процесс верификации.")
 
             markup_ban = InlineKeyboardMarkup()
             markup_ban.add(InlineKeyboardButton("🚷 Заблокировать (Спам)", callback_data=f"ban_{uid}"))
