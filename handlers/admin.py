@@ -493,14 +493,30 @@ def handle_vid_check(call):
         db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
         
         try:
-            bot.send_message(target_uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-            markup = InlineKeyboardMarkup(row_width=5).add(
-                InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-                InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+            success_text = (
+                f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n"
+                f"🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n"
+                f"💎 **Спонсорский блок:**\n"
+                f"• 👑 Устал от проверок? Забирай иммунитет в закрытых чатах: [Elitepost VIP](https://t.me/Elitepost_bot)!\n"
+                f"• 🏳️‍🌈 Сочные \"девочки\" ждут настоящих мужчин! Может быть это ты? [BEYOND](https://t.me/Beyond_T_bot).\n"
+                f"• 🎰 Испытай удачу! Попробуй сорвать джекпот в нашей [Рулетке призов].\n"
+                f"• 💨 Расслабься после стресса: [Попперсы с доставкой](https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz).\n\n"
+                f"👇 Пожалуйста, оцените работу службы поддержки:"
+            )
+            markup = InlineKeyboardMarkup(row_width=5)
+            markup.add(
+                InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
+                InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
+                InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
                 InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
             )
-            markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-            bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+            markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+            markup.add(InlineKeyboardButton("🏳️‍🌈 Вступить в BEYOND (Транс-чат)", url="https://t.me/Beyond_T_bot"))
+            markup.add(InlineKeyboardButton("💨 Попперсы (Быстрая доставка)", url="https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz"))
+            markup.add(InlineKeyboardButton("🎰 Игровой Кабинет (Рулетка)", callback_data="btn_game_club"))
+            markup.add(InlineKeyboardButton("💸 Отправить чаевые админам ⭐️", callback_data="start_donate"))
+            bot.send_message(target_uid, success_text, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
         except Exception as e:
             logger.warning(f"Ошибка уведомления о разбане (вид_ок): {e}")
         
@@ -682,15 +698,30 @@ def handle_close_ticket(call):
         return 
     target_uid = user_data["uid"]
         
-    markup = InlineKeyboardMarkup(row_width=5).add(
-        InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-        InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+    close_text = (
+        "🏁 **Ваше обращение закрыто.**\n\n"
+        "💎 **Спонсорский блок:**\n"
+        "• 👑 Устал от проверок? Забирай иммунитет в закрытых чатах: [Elitepost VIP](https://t.me/Elitepost_bot)!\n"
+        "• 🏳️‍🌈 Сочные \"девочки\" ждут настоящих мужчин! Может быть это ты? [BEYOND](https://t.me/Beyond_T_bot).\n"
+        "• 🎰 Испытай удачу! Попробуй сорвать джекпот в нашей [Рулетке призов].\n"
+        "• 💨 Расслабься после стресса: [Попперсы с доставкой](https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz).\n\n"
+        "👇 Пожалуйста, оцените работу службы поддержки:"
+    )
+    markup = InlineKeyboardMarkup(row_width=5)
+    markup.add(
+        InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
+        InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+        InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
+        InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
         InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
     )
-    admin_username = call.from_user.username or call.from_user.first_name
-    db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
+    markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+    markup.add(InlineKeyboardButton("🏳️‍🌈 Вступить в BEYOND (Транс-чат)", url="https://t.me/Beyond_T_bot"))
+    markup.add(InlineKeyboardButton("💨 Попперсы (Быстрая доставка)", url="https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz"))
+    markup.add(InlineKeyboardButton("🎰 Игровой Кабинет (Рулетка)", callback_data="btn_game_club"))
+    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам ⭐️", callback_data="start_donate"))
     
-    try: bot.send_message(target_uid, "🏁 **Ваше обращение закрыто.**\n\nПожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+    try: bot.send_message(target_uid, close_text, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -753,10 +784,15 @@ def handle_rating(call):
     else:
         reply_text = f"✨ **Спасибо за оценку {rating}⭐!**\nМы постоянно докручиваем нейросети и улучшаем качество работы."
         
-    # Сохраняем кнопку Доната, как у вас и было!
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
+    # Сохраняем блок спонсоров после оценки!
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+    markup.add(InlineKeyboardButton("🏳️‍🌈 Вступить в BEYOND (Транс-чат)", url="https://t.me/Beyond_T_bot"))
+    markup.add(InlineKeyboardButton("💨 Попперсы (Быстрая доставка)", url="https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz"))
+    markup.add(InlineKeyboardButton("🎰 Игровой Кабинет (Рулетка)", callback_data="btn_game_club"))
+    markup.add(InlineKeyboardButton("💸 Отправить чаевые админам ⭐️", callback_data="start_donate"))
     
-    try: bot.edit_message_text(reply_text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    try: bot.edit_message_text(reply_text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # 4. Отчет админам в чат
@@ -786,14 +822,30 @@ def handle_force_unban(call):
     db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
     
     try:
-        bot.send_message(target_uid, f"🎉 **Ваши ограничения успешно сняты!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-        markup = InlineKeyboardMarkup(row_width=5).add(
-            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+        success_text = (
+            f"🎉 **Ограничения удалены! Вы можете снова вступить в нашу экосистему.** ❤️\n"
+            f"🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n"
+            f"💎 **Спонсорский блок:**\n"
+            f"• 👑 Устал от проверок? Забирай иммунитет в закрытых чатах: [Elitepost VIP](https://t.me/Elitepost_bot)!\n"
+            f"• 🏳️‍🌈 Сочные \"девочки\" ждут настоящих мужчин! Может быть это ты? [BEYOND](https://t.me/Beyond_T_bot).\n"
+            f"• 🎰 Испытай удачу! Попробуй сорвать джекпот в нашей [Рулетке призов].\n"
+            f"• 💨 Расслабься после стресса: [Попперсы с доставкой](https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz).\n\n"
+            f"👇 Пожалуйста, оцените работу службы поддержки:"
+        )
+        markup = InlineKeyboardMarkup(row_width=5)
+        markup.add(
+            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
+            InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
+            InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
             InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
         )
-        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-        bot.send_message(target_uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+        markup.add(InlineKeyboardButton("🏳️‍🌈 Вступить в BEYOND (Транс-чат)", url="https://t.me/Beyond_T_bot"))
+        markup.add(InlineKeyboardButton("💨 Попперсы (Быстрая доставка)", url="https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz"))
+        markup.add(InlineKeyboardButton("🎰 Игровой Кабинет (Рулетка)", callback_data="btn_game_club"))
+        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам ⭐️", callback_data="start_donate"))
+        bot.send_message(target_uid, success_text, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     archive_collection.update_one(
@@ -1236,14 +1288,30 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": "Скайнет (ИИ)", "uid": uid}}, upsert=True)
                     
                     try:
-                        bot.send_message(uid, f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n\n🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
-                        markup = InlineKeyboardMarkup(row_width=5).add(
-                            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"), InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
-                            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"), InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
+                        success_text = (
+                            f"🎉 **Ограничения удалены, выдан тег верифицированного участника!** ❤️\n"
+                            f"🔒 **Обращение закрыто. Уникальный номер:** `{ticket_num}`\n\n"
+                            f"💎 **Спонсорский блок:**\n"
+                            f"• 👑 Устал от проверок? Забирай иммунитет в закрытых чатах: [Elitepost VIP](https://t.me/Elitepost_bot)!\n"
+                            f"• 🏳️‍🌈 Сочные \"девочки\" ждут настоящих мужчин! Может быть это ты? [BEYOND](https://t.me/Beyond_T_bot).\n"
+                            f"• 🎰 Испытай удачу! Попробуй сорвать джекпот в нашей [Рулетке призов].\n"
+                            f"• 💨 Расслабься после стресса: [Попперсы с доставкой](https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz).\n\n"
+                            f"👇 Пожалуйста, оцените работу службы поддержки:"
+                        )
+                        markup = InlineKeyboardMarkup(row_width=5)
+                        markup.add(
+                            InlineKeyboardButton("1⭐", callback_data=f"rate_1_{thread_id}"),
+                            InlineKeyboardButton("2⭐", callback_data=f"rate_2_{thread_id}"),
+                            InlineKeyboardButton("3⭐", callback_data=f"rate_3_{thread_id}"),
+                            InlineKeyboardButton("4⭐", callback_data=f"rate_4_{thread_id}"),
                             InlineKeyboardButton("5⭐", callback_data=f"rate_5_{thread_id}")
                         )
-                        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам (Донат) ⭐️", callback_data="start_donate"))
-                        bot.send_message(uid, "🏁 Пожалуйста, оцените работу службы поддержки. Нам важно ваше мнение! 👇", reply_markup=markup)
+                        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+                        markup.add(InlineKeyboardButton("🏳️‍🌈 Вступить в BEYOND (Транс-чат)", url="https://t.me/Beyond_T_bot"))
+                        markup.add(InlineKeyboardButton("💨 Попперсы (Быстрая доставка)", url="https://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz"))
+                        markup.add(InlineKeyboardButton("🎰 Игровой Кабинет (Рулетка)", callback_data="btn_game_club"))
+                        markup.add(InlineKeyboardButton("💸 Отправить чаевые админам ⭐️", callback_data="start_donate"))
+                        bot.send_message(uid, success_text, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
                     except Exception as e: logger.warning(f"Ошибка уведомления о разбане (STT): {e}")
                     
                     archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Успешная верификация", "reason": "Кружок принят Нейросетью"}}}, upsert=True)
