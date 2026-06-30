@@ -1257,7 +1257,7 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
                     except Exception as e: logger.debug(f"Игнор ошибки: {e}") 
                     
-                    paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+                    paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": "", "failed_verification": "", "video_received": "", "secret_code": ""}})
                     
                 else:
                     # ⚠️ ГОЛОС ВЕРНЫЙ, НО ЛИЦА НЕТ (КАМЕРА В ПОТОЛОК ИЛИ ТЕМНОТА)
@@ -1922,7 +1922,6 @@ def ticket_sweeper_task():
             now = datetime.datetime.now()
             deadline = now - datetime.timedelta(hours=24) # Таймаут: 24 часа
             
-            # Ищем всех, у кого статус 1 (открыт тикет) и последняя активность была раньше дедлайна
             abandoned_users = paid_collection.find({
                 "status": 1, 
                 "last_activity": {"$lt": deadline}
@@ -1931,48 +1930,89 @@ def ticket_sweeper_task():
             for user in abandoned_users:
                 target_uid = user.get("uid")
                 thread_id = user.get("thread_id")
+                topic_type = user.get("topic_type")
+                failed_verif = user.get("failed_verification")
+                
                 if not target_uid: continue
                 
-                # 1. Очищаем активный статус в базе
-                paid_collection.update_one({"uid": target_uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
-                
-                # 2. Уведомляем юзера
-                try: 
-                    bot.send_message(
-                        target_uid, 
-                        "⏳ **Ваше обращение было автоматически закрыто из-за отсутствия активности (24 часа).**\n\nЕсли ваш вопрос всё ещё не решен, пожалуйста, создайте новое обращение через главное меню.", 
-                        parse_mode="Markdown"
-                    )
-                except Exception as e: logger.debug(f"Санитар: юзер {target_uid} заблочил бота.")
-                
-                # 3. Делаем запись в досье
                 now_str = now.strftime("%d.%m.%Y %H:%M")
-                archive_collection.update_one(
-                    {"target": str(target_uid)}, 
-                    {"$push": {
-                        "history": {
-                            "date": now_str, 
-                            "action": "Обращение закрыто", 
-                            "reason": "Авто-очистка (Таймаут 24ч)",
-                            "evidence_summary": "Автоматическое закрытие по неактивности"
-                        }
-                    }}, 
-                    upsert=True
+
+                # 🔥 ЛОГИКА ЖЕСТКОГО БАНА: Если завис на разбане или проигнорил кружок
+                if topic_type == "unban" or failed_verif:
+                    
+                    # 1. Заносим в глобальный бан (Скайнет кикнет его из всех групп)
+                    db['banned'].update_one(
+                        {"_id": target_uid}, 
+                        {"$set": {"reason": "Верификация не валидна. Умер в процессе (Таймаут 24ч)"}},
+                        upsert=True
+                    )
+                    
+                    # 2. Пишем в архив триггерную фразу для ИИ-Секретаря
+                    archive_collection.update_one(
+                        {"target": str(target_uid)}, 
+                        {"$push": {
+                            "history": {
+                                "date": now_str, 
+                                "action": "Глобальная блокировка", 
+                                "reason": "Верификация не валидна.",
+                                "evidence_summary": "Умер в процессе (Таймаут 24ч)"
+                            }
+                        }}, 
+                        upsert=True
+                    )
+                    
+                    # 3. Уведомляем юзера о бане
+                    try: 
+                        bot.send_message(
+                            target_uid, 
+                            "🚫 **Время вышло. Верификация признана недействительной.**\n\n"
+                            "Вы были заблокированы, так как не завершили процесс подтверждения личности (или проигнорировали штраф).\n"
+                            "Для снятия ограничений обратитесь в поддержку заново.", 
+                            parse_mode="Markdown"
+                        )
+                    except: pass
+                    
+                    # 4. Сообщаем админам
+                    if thread_id:
+                        try: bot.send_message(STAFF_GROUP_ID, "💀 *Скайнет: Юзер умер в процессе верификации (24ч). Выдан Глобальный Бан.*", message_thread_id=thread_id, parse_mode="Markdown")
+                        except: pass
+
+                # 🌸 ЛОГИКА МЯГКОГО ЗАКРЫТИЯ (Для обычных вопросов/рекламы)
+                else:
+                    archive_collection.update_one(
+                        {"target": str(target_uid)}, 
+                        {"$push": {
+                            "history": {
+                                "date": now_str, 
+                                "action": "Обращение закрыто", 
+                                "reason": "Авто-очистка (Таймаут 24ч)",
+                                "evidence_summary": "Автоматическое закрытие по неактивности"
+                            }
+                        }}, 
+                        upsert=True
+                    )
+                    try: 
+                        bot.send_message(target_uid, "⏳ **Ваше обращение было автоматически закрыто из-за отсутствия активности (24 часа).**", parse_mode="Markdown")
+                    except: pass
+                    if thread_id:
+                        try: bot.send_message(STAFF_GROUP_ID, "🧹 *Скайнет: Диалог закрыт по таймауту (24 часа бездействия).* База очищена.", message_thread_id=thread_id, parse_mode="Markdown")
+                        except: pass
+
+                # 🧹 ОБЩАЯ ОЧИСТКА БАЗЫ (Снимаем метки и статус в любом случае)
+                paid_collection.update_one(
+                    {"uid": target_uid}, 
+                    {"$set": {"status": 0}, "$unset": {"topic_type": "", "failed_verification": "", "video_received": "", "secret_code": ""}}
                 )
                 
-                # 4. Закрываем топик в админке
+                # Закрываем топик
                 if thread_id:
-                    try: 
-                        bot.send_message(STAFF_GROUP_ID, "🧹 *Скайнет: Диалог автоматически закрыт по таймауту (24 часа бездействия).* База данных очищена.", message_thread_id=thread_id, parse_mode="Markdown")
-                    except: pass
-                    try: 
-                        bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
+                    try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
                     except: pass
                     
         except Exception as e:
             logger.error(f"Ошибка Санитара Архивов: {e}")
         
-        # Засыпаем ровно на 1 час (3600 секунд), затем повторяем проверку
+        # Спим час
         time.sleep(3600)
 
 # Запускаем Санитара в отдельном фоновом потоке при старте файла

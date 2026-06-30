@@ -268,7 +268,7 @@ def successful_payment(message):
             try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
             except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
 
-        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": "", "failed_verification": "", "video_received": "", "secret_code": ""}})
 
         try:
             bot.send_message(uid, f"✅ **Оплата штрафа успешно получена!**\n\nВаши ограничения сняты автоматически. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
@@ -299,7 +299,7 @@ def successful_payment(message):
             try: bot.close_forum_topic(STAFF_GROUP_ID, user_data["thread_id"])
             except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             
-        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": ""}})
+        paid_collection.update_one({"uid": uid}, {"$set": {"status": 0}, "$unset": {"topic_type": "", "failed_verification": "", "video_received": "", "secret_code": ""}})
         try:
             bot.send_message(uid, f"✅ **Оплата успешно получена!**\n\nСписано: {used_rubles}₽ + {amount}⭐️\nВаши ограничения сняты. Номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
         except Exception as e:
