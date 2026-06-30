@@ -79,6 +79,39 @@ def handle_user_query(call):
 
     # ================= ЛОГИКА КНОПКИ РАЗБАНА =================
     if call.data == "btn_unban":
+        
+        # 👇 ДОБАВИТЬ ВЕСЬ ЭТОТ БЛОК АВТО-ИСЦЕЛЕНИЯ 👇
+        from config import VIP_CHAT_ID, BEYOND_CHAT_ID
+        import datetime
+        is_vip_now = False
+        is_queer_now = False
+        
+        try:
+            m_vip = bot.get_chat_member(VIP_CHAT_ID, uid)
+            is_vip_now = m_vip.status in ['member', 'administrator', 'creator'] or (m_vip.status == 'restricted' and getattr(m_vip, 'is_member', False))
+        except: pass
+        
+        try:
+            m_beyond = bot.get_chat_member(BEYOND_CHAT_ID, uid)
+            is_queer_now = m_beyond.status in ['member', 'administrator', 'creator'] or (m_beyond.status == 'restricted' and getattr(m_beyond, 'is_member', False))
+        except: pass
+        
+        if is_vip_now or is_queer_now:
+            db['users'].update_one({"_id": uid}, {"$set": {"is_vip": is_vip_now, "is_queer": is_queer_now}}, upsert=True)
+            db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+            paid_collection.update_one({"uid": uid}, {"$set": {"status": 0, "strikes": 0}, "$unset": {"topic_type": ""}})
+            
+            bot.send_message(
+                call.message.chat.id,
+                "🔄 **Синхронизация успешна!**\n\n"
+                "Система обнаружила у вас активную премиум-подписку. "
+                "Все ваши муты и блокировки в сети были автоматически сняты Скайнетом!\n\n"
+                "Приятного общения! 😎",
+                parse_mode="Markdown"
+            )
+            return 
+        # 👆 ======================================================== 👆
+
         if user_data.get("strikes", 0) >= 3 and user_data.get("status") != 1:
             bot.send_message(call.message.chat.id, "⛔️ Вы заблокированы за спам. Лимит обращений исчерпан.\n\nДля разблокировки доступа напишите в службу поддержки: @FAQMKBOT")
             return 

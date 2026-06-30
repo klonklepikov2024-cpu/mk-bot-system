@@ -697,6 +697,11 @@ def handle_close_ticket(call):
         except: pass
         return 
     target_uid = user_data["uid"]
+    
+    # 👇 ВОТ ЭТИ ДВЕ СТРОЧКИ ВЕРНУТ ИМЯ АДМИНА 👇
+    admin_username = call.from_user.username or call.from_user.first_name
+    db['ticket_ratings'].update_one({"thread_id": thread_id}, {"$set": {"admin": admin_username, "uid": target_uid}}, upsert=True)
+    # 👆 ========================================= 👆
         
     close_text = (
         "🏁 **Ваше обращение закрыто.**\n\n"
