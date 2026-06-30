@@ -113,7 +113,7 @@ def handle_user_query(call):
             user_data["status"] = 1
             paid_collection.update_one({"uid": uid}, {"$set": {"status": 1, "strikes": 0}, "$unset": {"topic_type": ""}})
             # Заодно кидаем приказ Скайнету снять с него все случайные блокировки!
-            db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+            db['skynet_tasks'].insert_one({"uid": uid, "action": "auto_heal", "timestamp": datetime.datetime.now()})
 
         # 👇 4. ПРОДОЛЖАЕМ ОБЫЧНУЮ ЛОГИКУ (Страйки для плебеев) 👇
         if user_data.get("strikes", 0) >= 3 and user_data.get("status") != 1:
