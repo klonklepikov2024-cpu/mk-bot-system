@@ -22,11 +22,11 @@ def check_video_timer(uid, chat_id, thread_id):
     """Фоновый таймер: проверяет, прислал ли юзер кружок за 5 минут"""
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
-    # 👇 ПРЕДОХРАНИТЕЛЬ: Если видео получено, таймер просто умирает 👇
-    if user_data.get("video_received"):
+    # 👇 ПРЕДОХРАНИТЕЛЬ: Если видео получено ИЛИ тикет уже успешно закрыт (status == 0) 👇
+    if user_data.get("video_received") or user_data.get("status") == 0:
         return 
         
-    # Если видео НЕ было — выдаем черную метку!
+    # Если видео НЕ было и тикет еще открыт — выдаем черную метку!
     paid_collection.update_one(
         {"uid": uid}, 
         {"$set": {"failed_verification": True}}, 
