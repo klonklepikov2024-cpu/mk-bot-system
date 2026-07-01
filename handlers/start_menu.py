@@ -246,7 +246,7 @@ def handle_user_query(call):
                         markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_points} очк.)", callback_data=f"support_pts_{cost_points}"))
                     else:
                         missing = cost_points - user_points
-                        markup.add(InlineKeyboardButton(f"🎰 Не хватает {missing} Очков (Играть)", url="https://t.me/FAQMKBOT"))
+                        markup.add(InlineKeyboardButton(f"🎰 Не хватает {missing} Очков (Играть)", callback_data="btn_game_club"))
                     
                     # 👇 ВЕРНУЛИ ТВОЙ ТЕКСТ ДЛЯ "НЕ УМНЫХ", НО ДОБАВИЛИ ЛАЙФХАК 👇
                     warning_text = (

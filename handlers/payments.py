@@ -140,7 +140,7 @@ def handle_checkout(call):
         try: bot.send_message(call.message.chat.id, f"✅ **Оплата Очками прошла успешно!**\n\nВаши ограничения сняты. Уникальный номер: `{ticket_num}`\n\n{NETWORK_LINKS}", parse_mode="Markdown", disable_web_page_preview=True)
         except Exception as e: logger.error(f"Не удалось отправить юзеру сообщение о разбане за очки: {e}")
 
-# 🔥 ИСПРАВЛЕНО: Функция теперь принимает ID чата и ID сообщения
+# 🔥 ИСПРАВЛЕНО: Функция теперь выдает ПОЛНОЕ МЕНЮ ОПЛАТЫ со всеми способами
 def process_promo_code(message, target_type, original_amount, call_msg_chat_id, call_msg_id):
     if message.text == '/start':
         from handlers.start_menu import send_welcome
@@ -154,44 +154,83 @@ def process_promo_code(message, target_type, original_amount, call_msg_chat_id, 
     promo_text = message.text.strip().upper()
     promo_data = db['promocodes'].find_one({"_id": promo_text})
     
-    def send_full_invoice(error_msg):
-        try:
-            bot.send_message(message.chat.id, error_msg)
-            bot.send_invoice(message.chat.id, title=f"Оплата ({original_amount}⭐️)", description="Оплата услуг.", invoice_payload=f"{target_type}_payment_{original_amount}", provider_token="", currency="XTR", prices=[LabeledPrice(label="К оплате", amount=original_amount)])
-        except Exception as e: logger.warning(f"Ошибка выставления инвойса: {e}")
+    # 👇 УНИВЕРСАЛЬНЫЙ ГЕНЕРАТОР КАССЫ ДЛЯ ПРОМОКОДОВ 👇
+    def send_payment_menu(amount_to_pay, text_header, is_discounted=False):
+        user_id = message.chat.id
+        
+        url_usdt = get_crypto_pay_url(f"{target_type}_{user_id}", amount_to_pay, f"Оплата ({amount_to_pay}⭐️)", asset="USDT")
+        url_ton = get_crypto_pay_url(f"{target_type}_{user_id}", amount_to_pay, f"Оплата ({amount_to_pay}⭐️)", asset="TON")
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        
+        # Если промокод не сработал — оставляем возможность ввести другой
+        if not is_discounted:
+            markup.add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_{target_type}_{amount_to_pay}"))
+            
+        markup.add(InlineKeyboardButton(f"⭐️ Оплатить {amount_to_pay} Звезд", callback_data=f"checkout_pay_{target_type}_{amount_to_pay}"))
+        
+        if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
+        if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
 
+        user_data_pay = paid_collection.find_one({"uid": user_id}) or {}
+        cb_balance = user_data_pay.get("cashback_balance", 0)
+        pts_balance = user_data_pay.get("bounty_points", 0)
+        cost_rub = amount_to_pay * 2
+        cost_pts = amount_to_pay * 5
+
+        if cb_balance >= cost_rub:
+            markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_rub}₽)", callback_data=f"checkout_balance_{target_type}_{amount_to_pay}"))
+        elif cb_balance > 0:
+            remaining_stars = amount_to_pay - (cb_balance // 2)
+            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_{target_type}_{amount_to_pay}_{cb_balance}"))
+
+        if pts_balance >= cost_pts: 
+            markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_{target_type}_{amount_to_pay}"))
+        else: 
+            InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", callback_data="btn_game_club")
+
+        markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount_to_pay}"))
+        
+        if target_type == "fine":
+            markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
+            
+        bot.send_message(user_id, text_header, reply_markup=markup, parse_mode="Markdown")
+
+    # 1. Промокод не существует или отключен
     if not promo_data or not promo_data.get("is_active"):
-        send_full_invoice("❌ Промокод не найден или уже недействителен. Выставляем полный счет.")
+        send_payment_menu(original_amount, "❌ Промокод не найден или уже недействителен.\n\n🧾 **Выставляем счет на полную сумму:**", is_discounted=False)
         return
         
-    if promo_data["used_count"] >= promo_data["usage_limit"]:
-        send_full_invoice("❌ Лимит активаций этого промокода исчерпан. Выставляем полный счет.")
+    # 2. Лимит исчерпан
+    if promo_data.get("used_count", 0) >= promo_data.get("usage_limit", 1):
+        send_payment_menu(original_amount, "❌ Лимит активаций этого промокода исчерпан.\n\n🧾 **Выставляем счет на полную сумму:**", is_discounted=False)
         return
         
-    if promo_data["target"] != "all" and promo_data["target"] != target_type:
-        send_full_invoice("❌ Этот промокод нельзя применить к данной услуге. Выставляем полный счет.")
+    # 3. Проверка целевого назначения (штраф, реклама и т.д.)
+    if promo_data.get("target") not in ["all", target_type]:
+        send_payment_menu(original_amount, "❌ Этот промокод нельзя применить к данной услуге.\n\n🧾 **Выставляем счет на полную сумму:**", is_discounted=False)
         return
 
+    # 4. Считаем скидку
     discount = promo_data["value"]
     new_amount = original_amount
     
-    if promo_data["type"] == "percent": new_amount = int(original_amount * (1 - discount / 100))
-    elif promo_data["type"] == "fixed": new_amount = original_amount - discount
+    if promo_data["type"] == "percent": 
+        new_amount = int(original_amount * (1 - discount / 100))
+    elif promo_data["type"] == "fixed": 
+        new_amount = original_amount - discount
         
     if new_amount < 1: new_amount = 1 
         
+    # 5. Применяем промокод и выдаем новую кассу!
     db['promocodes'].update_one({"_id": promo_text}, {"$inc": {"used_count": 1}})
     
+    success_text = f"✅ **Промокод успешно применен!**\nСкидка составила {original_amount - new_amount}⭐️.\n\n🧾 **Счет пересчитан. К оплате: {new_amount}⭐️**"
+    
     try:
-        bot.send_message(message.chat.id, f"✅ **Промокод успешно применен!**\nСкидка составила {original_amount - new_amount}⭐️. Счет пересчитан.", parse_mode="Markdown")
-        bot.send_invoice(
-            message.chat.id, title=f"Оплата со скидкой ({new_amount}⭐️)", 
-            description="Оплата услуг бота с учетом промокода.", 
-            invoice_payload=f"{target_type}_payment_{new_amount}", 
-            provider_token="", currency="XTR", 
-            prices=[LabeledPrice(label="К оплате", amount=new_amount)]
-        )
-    except Exception as e: logger.error(f"Ошибка выставления инвойса СО СКИДКОЙ: {e}")
+        send_payment_menu(new_amount, success_text, is_discounted=True)
+    except Exception as e: 
+        logger.error(f"Ошибка выставления инвойса СО СКИДКОЙ: {e}")
 
 # ================= ПРИЕМ ПЛАТЕЖЕЙ TELEGRAM STARS =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
