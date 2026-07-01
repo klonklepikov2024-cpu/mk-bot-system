@@ -2013,12 +2013,16 @@ def ticket_sweeper_task():
                 # 🔥 ЛОГИКА ЖЕСТКОГО БАНА: Если завис на разбане или проигнорил кружок
                 if topic_type == "unban" or failed_verif:
                     
-                    # 1. Заносим в глобальный бан (Скайнет кикнет его из всех групп)
-                    db['banned'].update_one(
-                        {"_id": target_uid}, 
-                        {"$set": {"reason": "Верификация не валидна. Умер в процессе (Таймаут 24ч)"}},
-                        upsert=True
-                    )
+                    reason_text = "Верификация не валидна. Умер в процессе (Таймаут 24ч)"
+                    
+                    # 1. Секретарь передает официальный приказ Скайнету на ликвидацию!
+                    db['skynet_tasks'].insert_one({
+                        "uid": target_uid,
+                        "action": "global_ban",
+                        "reason": reason_text,
+                        "admin_name": "Санитар Архивов 🧹",
+                        "timestamp": time.time()
+                    })
                     
                     # 2. Пишем в архив триггерную фразу для ИИ-Секретаря
                     archive_collection.update_one(
