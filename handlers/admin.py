@@ -55,9 +55,25 @@ def check_video_timer(uid, chat_id, thread_id, expected_code=None):
         logger.debug(f"Ошибка таймера кружка: {e}")
 
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
+# ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private' and not (message.text and message.text.startswith('/')), content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])
 def handle_user_messages(message):
     uid = message.from_user.id
+    
+    # 👇 БЛОК ПРОТИВ ИСЧЕЗАЕК (ОДНОРАЗОВЫХ ФОТО/ВИДЕО) 👇
+    if getattr(message, 'has_protected_content', False):
+        try:
+            bot.send_message(
+                uid, 
+                "❌ **ОШИБКА: Система не принимает «исчезайки»!**\n\n"
+                "Бот физически не умеет получать и открывать одноразовые фото или видео. **ЭТО ПУСТАЯ ТРАТА вашего времени, которая НЕ РЕШАЕТ вопрос.**\n\n"
+                "Пожалуйста, отправьте нормальный, обычный медиафайл, чтобы мы могли его проверить.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.debug(f"Игнор ошибки (исчезайки): {e}")
+        return
+    # 👆 ============================================ 👆
     
     # 🔥 ОБНОВЛЯЕМ ТАЙМЕР АКТИВНОСТИ ПРИ ЛЮБОМ СООБЩЕНИИ 🔥
     paid_collection.update_one({"uid": uid}, {"$set": {"last_activity": datetime.datetime.now()}}, upsert=True)
