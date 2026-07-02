@@ -1588,43 +1588,44 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 meaningful_text = latest_text
 
             # 🔥 ТЕПЕРЬ АНАЛИЗИРУЕМ ТОЛЬКО meaningful_text 🔥
-            if any(x in meaningful_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
-                if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК", "ОТРЕАГИРОВ"]): ban_type = "nark_react" 
-                else: ban_type = "nark" 
+                if any(x in meaningful_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
+                    if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК", "ОТРЕАГИРОВ"]): ban_type = "nark_react" 
+                    else: ban_type = "nark" 
 
-            elif any(x in meaningful_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
-                ban_type = "clean"
-                
-            elif any(x in meaningful_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
-                if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): ban_type = "minor_react" 
-                else: ban_type = "black_zone"
-            
-            elif any(x in meaningful_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
-                ban_type = "orange_zone"
-                
-            elif any(x in meaningful_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
-                ban_type = "sponsor"
-                
-            elif any(x in meaningful_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
-                ban_type = "commercial"
-                
-            elif any(x in meaningful_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', meaningful_text):
-                ban_type = "manual_hard"
-                
-            elif any(x in meaningful_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
-                ban_type = "failed_verif"
-                
-            elif any(x in meaningful_text for x in ["БИО", "ССЫЛКА В"]):
-                ban_type = "bio"
-                
-            elif any(x in meaningful_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН"]):
-                ban_type = "spam"
-                
-            elif any(x in meaningful_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
-                ban_type = "bot_block"
+                # 👇 ПЕРЕНЕСЕНО ВЫШЕ: Сначала ловим кастомные штрафы и звёзды, чтобы они не перехватывались словом "Разбан" 👇
+                elif any(x in meaningful_text for x in ["ОТКАЗ", "НЕДОВОЛЕН", "ПРАВИЛ", "ШТРАФ", "В АД", "ЗВЕЗД", "ЗВЁЗД", "⭐️"]) or re.search(r'\d+\s*(ЗВЕЗД|ЗВЁЗД|⭐️)', meaningful_text):
+                    ban_type = "manual_hard"
 
-            elif any(x in meaningful_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
-                ban_type = "may_1"
+                elif any(x in meaningful_text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ", "СНЯТ"]):
+                    ban_type = "clean"
+                    
+                elif any(x in meaningful_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
+                    if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): ban_type = "minor_react" 
+                    else: ban_type = "black_zone"
+                
+                elif any(x in meaningful_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
+                    ban_type = "orange_zone"
+                    
+                elif any(x in meaningful_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
+                    ban_type = "sponsor"
+                    
+                elif any(x in meaningful_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
+                    ban_type = "commercial"
+                    
+                elif any(x in meaningful_text for x in ["НЕВАЛИДНА", "НЕ ВАЛИДНА", "ТАЙМАУТ", "БЕЗДЕЙСТВИ", "НЕАКТИВНОСТ", "УМЕР В ПРОЦЕССЕ"]):
+                    ban_type = "failed_verif"
+                    
+                elif any(x in meaningful_text for x in ["БИО", "ССЫЛКА В"]):
+                    ban_type = "bio"
+                    
+                elif any(x in meaningful_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН"]):
+                    ban_type = "spam"
+                    
+                elif any(x in meaningful_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
+                    ban_type = "bot_block"
+
+                elif any(x in meaningful_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
+                    ban_type = "may_1"
 
         dossier = "\n".join(dossier_lines)
 
