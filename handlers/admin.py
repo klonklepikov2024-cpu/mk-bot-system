@@ -18,13 +18,19 @@ from utils.logger import logger
 from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
 
-def check_video_timer(uid, chat_id, thread_id):
+def check_video_timer(uid, chat_id, thread_id, expected_code=None):
     """Фоновый таймер: проверяет, прислал ли юзер кружок за 5 минут"""
-    user_data = paid_collection.find_one({"uid": uid}) or {}
+    user_data = paid_collection.find_one({"uid": uid})
     
-    # 👇 ПРЕДОХРАНИТЕЛЬ: Если видео получено ИЛИ тикет уже успешно закрыт (status == 0) 👇
-    if user_data.get("video_received") or user_data.get("status") == 0:
-        return 
+    # 👇 ПРЕДОХРАНИТЕЛЬ 1: Если юзера уже нет в базе (Скайнет всё очистил),
+    # либо статус не 1 (тикет закрыт), либо видео уже получено — отменяем таймер! 👇
+    if not user_data or user_data.get("status") != 1 or user_data.get("video_received"):
+        return
+        
+    # 👇 ПРЕДОХРАНИТЕЛЬ 2: Защита от зомби-таймеров.
+    # Если юзер попросил новый код, старый таймер должен просто мирно умереть.
+    if expected_code and user_data.get("secret_code") != expected_code:
+        return
         
     # Если видео НЕ было и тикет еще открыт — выдаем черную метку!
     paid_collection.update_one(
@@ -106,7 +112,7 @@ def handle_user_messages(message):
                 bot.send_message(STAFF_GROUP_ID, f"⏳ *Пользователь написал «Готов». Бот выдал код: {secret_code} и запустил таймер 5 минут! Ждем кружок.*", message_thread_id=thread_id, parse_mode="Markdown")
                 
                 # 👇 НОВОЕ: ЗАПУСКАЕМ АКТИВНЫЙ ТАЙМЕР НА 5 МИНУТ (300 сек) 👇
-                threading.Timer(300.0, check_video_timer, args=[uid, message.chat.id, thread_id]).start()
+                threading.Timer(300.0, check_video_timer, args=[uid, message.chat.id, thread_id, secret_code]).start()
                 
                 return 
 
