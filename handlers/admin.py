@@ -1597,16 +1597,30 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             latest_entry = recent[-1] if recent else {}
             latest_text = f"{latest_entry.get('action', '')} {latest_entry.get('reason', '')} {latest_entry.get('evidence_summary', '')}".upper()
             
-            # 🔥 ИЩЕМ ПОСЛЕДНЕЕ РЕАЛЬНОЕ СОБЫТИЕ 🔥
+            # 🔥 ИЩЕМ ВСЕ АКТИВНЫЕ СОБЫТИЯ (ИЕРАРХИЯ БАНОВ) 🔥
             meaningful_text = ""
+            import re # На случай, если забыли импортировать выше
+            
             for entry in reversed(recent):
                 text = f"{entry.get('action', '')} {entry.get('reason', '')} {entry.get('evidence_summary', '')}".upper()
+                
                 if any(garbage in text for garbage in ["ОБРАЩЕНИЕ ЗАКРЫТО", "ТИКЕТ ЗАКРЫТ", "ВОПРОС РЕШЕН АДМИНОМ", "БЕЗ РАЗБАНА"]):
                     continue
-                meaningful_text = text
-                break
                 
-            if not meaningful_text:
+                # Проверяем, не является ли событие снятием ограничений (Амнистия/Разбан)
+                is_clean = any(x in text for x in ["РАЗБАН", "РАЗМУТ", "АМНИСТИЯ", "УСПЕШНАЯ ВЕРИФИКАЦИЯ", "СНЯТИЕ ОГРАНИЧЕНИЙ"]) or re.search(r'\bСНЯТ\b', text)
+                
+                if is_clean:
+                    # Если разбан — это самое последнее действие, записываем его, чтобы ИИ знал, что юзер чист.
+                    if not meaningful_text:
+                        meaningful_text = text
+                    # В любом случае прерываем цикл: старые грехи до разбана нас больше не волнуют.
+                    break
+                
+                # Собираем ВСЕ активные нарушения в один большой кусок текста
+                meaningful_text += " " + text
+                
+            if not meaningful_text.strip():
                 meaningful_text = latest_text
 
             # 👇 НОВАЯ, СТРОГАЯ ИЕРАРХИЯ ПРОВЕРОК 👇

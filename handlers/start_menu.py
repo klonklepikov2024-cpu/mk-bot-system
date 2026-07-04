@@ -159,18 +159,18 @@ def handle_user_query(call):
                     bot.reopen_forum_topic(STAFF_GROUP_ID, thread_id)
                     caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                     bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
-                    paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
+                    paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban", "last_activity": datetime.datetime.now()}, "$unset": {"dialog_history": ""}})
                 except ApiTelegramException as e:
                     if "not closed" in e.description.lower() or "not modified" in e.description.lower():
                         # Топик и так открыт, просто пишем в него!
                         caption = f"🔄 **Повторное обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                         bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
-                        paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban"}, "$unset": {"dialog_history": ""}})
+                        paid_collection.update_one({"uid": uid}, {"$set": {"topic_type": "unban", "last_activity": datetime.datetime.now()}, "$unset": {"dialog_history": ""}})
                     else:
                         logger.warning(f"Топик {thread_id} мертв, создаем новый: {e}")
                         topic = bot.create_forum_topic(chat_id=STAFF_GROUP_ID, name=f"🆘 | {name}")
                         thread_id = topic.message_thread_id
-                        paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}, "$unset": {"dialog_history": ""}}, upsert=True)
+                        paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban", "last_activity": datetime.datetime.now()}, "$unset": {"dialog_history": ""}}, upsert=True)
                         caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡) [ТОПИК ПЕРЕСОЗДАН]:**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                         bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
             else:
@@ -186,7 +186,7 @@ def handle_user_query(call):
 
                 thread_id = topic.message_thread_id
                 # 🔥 Добавили очистку памяти
-                paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban"}, "$unset": {"dialog_history": ""}}, upsert=True)
+                paid_collection.update_one({"uid": uid}, {"$set": {"thread_id": thread_id, "topic_type": "unban", "last_activity": datetime.datetime.now()}, "$unset": {"dialog_history": ""}}, upsert=True)
                 caption = f"🆕 **Новое обращение (ОПЛАЧЕНО ⭐️/🛡):**\n• ID: `{uid}`\n• Юзер: {safe_username}\n\n{history_text}"
                 bot.send_message(STAFF_GROUP_ID, caption, message_thread_id=thread_id, parse_mode="Markdown", reply_markup=markup_ban)
                  
