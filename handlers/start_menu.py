@@ -28,17 +28,23 @@ def send_welcome(message):
 
        # Обновленное Главное Меню
         markup = InlineKeyboardMarkup(row_width=2)
+        
+        # 👇 ТА САМАЯ БОЛЬШАЯ КРАСНАЯ КНОПКА (отдельно на всю ширину сверху) 👇
+        markup.add(
+            InlineKeyboardButton("🔴 РАЗБЛОКИРОВКА / ВЕРИФИКАЦИЯ 🔴", callback_data="btn_unban")
+        )
+        # Остальные кнопки чуть ниже
         markup.add(
             InlineKeyboardButton("💰 Реклама", callback_data="btn_ads"),
-            InlineKeyboardButton("🆘 СНЯТЬ БЛОК/ОПЕРАТОРЫ/ПОДДЕЖКА", callback_data="btn_unban")
+            InlineKeyboardButton("🚨 Подать жалобу", callback_data="sec_submit_report")
         )
         markup.add(
-            InlineKeyboardButton("🚨 Подать жалобу на нарушителя", callback_data="sec_submit_report"), # <-- Жалобы теперь тут!
-            InlineKeyboardButton("🎰 Игровой Кабинет", callback_data="btn_game_club")    # <-- Вход в Метавселенную
+            InlineKeyboardButton("🎰 Игровой Кабинет", callback_data="btn_game_club")
         )
         markup.add(
             InlineKeyboardButton("📜 Снять бан без вопросов (2000⭐️)", callback_data="buy_indulgence")
         )
+        
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
         
     except Exception as e:
@@ -293,7 +299,6 @@ def handle_user_query(call):
         
         return
 
-# 👇 НОВЫЕ ОБРАБОТЧИКИ ОПЛАТЫ ПОДДЕРЖКИ 👇
 @bot.callback_query_handler(func=lambda call: call.data.startswith('support_rub_') or call.data.startswith('support_pts_'))
 def handle_support_payment(call):
     try: bot.answer_callback_query(call.id)
@@ -325,9 +330,10 @@ def handle_support_payment(call):
 
     bot.send_message(
         call.message.chat.id,
-        f"✅ **Оплата прошла успешно!** (Списано {cost} {currency})\nДоступ к поддержке открыт.\n\n👇 Нажмите кнопку ниже, чтобы написать обращение.",
+        f"✅ **Оплата прошла успешно!** (Списано {cost} {currency})\nДоступ к поддержке открыт.\n\n👇 Нажмите кнопку ниже, чтобы пройти верификацию или задать вопрос.",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🆘 НАПИСАТЬ ОБРАЩЕНИЕ", callback_data="btn_unban"))
+        # 👇 Поменяли текст и здесь тоже! 👇
+        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔴 РАЗБЛОКИРОВКА / ВЕРИФИКАЦИЯ 🔴", callback_data="btn_unban"))
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == "insufficient_funds")
