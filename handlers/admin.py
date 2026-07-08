@@ -1141,7 +1141,7 @@ def handle_claim_premium(call):
 def process_premium_claim(message):
     if not message.text:
         msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
-        bot.register_next_step_handler(msg, process_tag_input)
+        bot.register_next_step_handler(msg, process_premium_claim)
         return
         
     if message.text == '/start':
@@ -1149,12 +1149,36 @@ def process_premium_claim(message):
         send_welcome(message)
         return
         
-    uid, name, username = message.from_user.id, message.from_user.first_name, f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Выдано", callback_data=f"prem_done_{uid}"))
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
+    
+    # 👇 НОВОЕ: Сохраняем заявку в базу данных для Веб-панели 👇
+    db['premium_claims'].update_one(
+        {"uid": uid}, 
+        {"$set": {
+            "name": name, 
+            "username": username, 
+            "details": message.text, 
+            "timestamp": time.time()
+        }}, 
+        upsert=True
+    )
+    
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"https://{APP_URL}/glaz"))
     try:
-        bot.send_message(STAFF_GROUP_ID, f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)</b> 🏆\n\n👤 Победитель: {name} ({username})\n📝 Реквизиты для подарка:\n<code>{message.text}</code>\n\nАдмины, подарите подписку и закройте тикет!", parse_mode="HTML", reply_markup=markup)
-        bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена администрации! С вами скоро свяжутся.")
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        # Уведомляем админов, но теперь без лишних кнопок "Выдано" в самом ТГ
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)</b> 🏆\n\n"
+            f"👤 Победитель: {name} ({username})\n\n"
+            f"❗️ <i>Заявка добавлена в Веб-панель (раздел «Награды»).</i>", 
+            parse_mode="HTML", 
+            reply_markup=markup
+        )
+        bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена! С вами скоро свяжутся.")
+    except Exception as e: 
+        logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prem_done_'))
 def handle_prem_done(call):
