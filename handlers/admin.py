@@ -1620,7 +1620,6 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             latest_entry = recent[-1] if recent else {}
             latest_text = f"{latest_entry.get('action', '')} {latest_entry.get('reason', '')} {latest_entry.get('evidence_summary', '')}".upper()
             
-            import re
             for entry in reversed(recent):
                 text = f"{entry.get('action', '')} {entry.get('reason', '')} {entry.get('evidence_summary', '')}".upper()
                 
