@@ -55,7 +55,6 @@ def check_video_timer(uid, chat_id, thread_id, expected_code=None):
         logger.debug(f"Ошибка таймера кружка: {e}")
 
 # ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
-# ================= СООБЩЕНИЯ ОТ ЮЗЕРА -> АДМИНАМ =================
 @bot.message_handler(func=lambda message: message.chat.type == 'private' and not (message.text and message.text.startswith('/')), content_types=['text', 'photo', 'document', 'video_note', 'voice', 'video', 'sticker', 'audio'])
 def handle_user_messages(message):
     uid = message.from_user.id
@@ -1154,16 +1153,12 @@ def process_premium_claim(message):
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     
     # 👇 НОВОЕ: Сохраняем заявку в базу данных для Веб-панели 👇
-    db['premium_claims'].update_one(
-        {"uid": uid}, 
-        {"$set": {
-            "name": name, 
-            "username": username, 
-            "details": message.text, 
-            "timestamp": time.time()
-        }}, 
-        upsert=True
-    )
+    db['premium_claims'].insert_one({
+        "uid": uid,
+        "username": username,
+        "timestamp": time.time(),
+        "status": "pending"
+    }) # <--- ДОБАВИЛИ СКОБКУ }
     
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"https://{APP_URL}/glaz"))
     try:
@@ -1186,6 +1181,11 @@ def handle_prem_done(call):
     try: bot.answer_callback_query(call.id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     target_uid = int(call.data.split('_')[2])
+    
+    # 👇 ДОБАВЛЯЕМ УДАЛЕНИЕ ЗАЯВКИ ИЗ ВЕБ-ПАНЕЛИ 👇
+    db['premium_claims'].delete_one({"uid": target_uid})
+    # 👆 ========================================= 👆
+
     try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫДАНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.send_message(target_uid, "🎉 Администрация подтвердила выдачу Telegram Premium! Наслаждайтесь!")

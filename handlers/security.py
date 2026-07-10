@@ -367,11 +367,23 @@ def process_payout_details(message, cb_balance, method):
 
     paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
     
+    method_names = {"card": "💳 На карту", "phone": "📱 На телефон", "crypto": "💎 USDT (TRC20)"}
+    
+    # 👇 ДОБАВЛЕНО: ОТПРАВЛЯЕМ ЗАЯВКУ НА САЙТ 👇
+    import time
+    db['withdrawals'].insert_one({
+        "user_id": uid,
+        "amount": cb_balance,
+        "method": method_names.get(method, method),
+        "details": details,
+        "status": "pending",
+        "timestamp": time.time()
+    })
+    # 👆 =================================== 👆
+    
     # Защита от подчеркиваний в Markdown
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     safe_username = username.replace('_', '\\_') 
-    
-    method_names = {"card": "💳 На карту", "phone": "📱 На телефон", "crypto": "💎 USDT (TRC20)"}
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -398,12 +410,20 @@ def handle_payout_decision(call):
     amount = int(parts[3])
     
     if action == "done":
+        # 👇 ДОБАВЛЕНО: ЗАКРЫВАЕМ ВЫПЛАТУ НА САЙТЕ 👇
+        db['withdrawals'].update_many({"user_id": target_uid, "amount": amount, "status": "pending"}, {"$set": {"status": "paid"}})
+        # 👆 ===================================== 👆
+        
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫПЛАЧЕНО УСПЕШНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"💸 **Ваша заявка на выплату ({amount} руб.) успешно обработана!** Деньги отправлены.")
         except Exception as e: logger.warning(f"Не удалось уведомить {target_uid} о выплате: {e}")
             
     elif action == "cancel":
+        # 👇 ДОБАВЛЕНО: ОТКЛОНЯЕМ ВЫПЛАТУ НА САЙТЕ 👇
+        db['withdrawals'].update_many({"user_id": target_uid, "amount": amount, "status": "pending"}, {"$set": {"status": "rejected"}})
+        # 👆 ===================================== 👆
+        
         paid_collection.update_one({"uid": target_uid}, {"$inc": {"cashback_balance": amount}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Деньги возвращены)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
