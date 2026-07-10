@@ -36,7 +36,8 @@ def handle_security_menu(call):
         # 🚀 FSM: Записываем ожидание жалобы (без next_step_handler)
         db['user_states'].update_one(
             {"uid": uid},
-            {"$set": {"state": "waiting_report"}},
+            # 👇 ИСПРАВЛЕНО: было "waiting_report", нужно "waiting_report_target"
+            {"$set": {"state": "waiting_report_target"}}, 
             upsert=True
         )
         
