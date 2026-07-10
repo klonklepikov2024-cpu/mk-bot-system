@@ -524,6 +524,45 @@ def airdrop_background_loop():
 
 threading.Thread(target=airdrop_background_loop, daemon=True).start()
 
+
+# === ФОНОВЫЙ УВЕДОМИТЕЛЬ О ВЫПЛАТАХ СО СКАЙНЕТА ===
+import threading
+import time
+
+def payout_notifier_loop():
+    """Фоновый демон: проверяет базу на наличие заявок, по которым Веб-панель просит уведомить юзеров"""
+    while True:
+        try:
+            # Ищем все заявки, где Скайнет оставил флажок notify_status
+            tasks = db['withdrawals'].find({"notify_status": {"$exists": True}})
+            
+            for task in tasks:
+                uid = task['user_id']
+                amount = task['amount']
+                notify_type = task['notify_status']
+                
+                # Отправляем сообщение ОТ ЛИЦА ИГРОВОГО БОТА
+                if notify_type == "pay":
+                    try: bot.send_message(uid, f"✅ **ВЫПЛАТА УСПЕШНА!**\nВаш запрос на вывод **{amount} руб.** одобрен администратором! Деньги отправлены.", parse_mode="Markdown")
+                    except Exception as e: logger.debug(f"Не смогли уведомить {uid}: {e}")
+                        
+                elif notify_type == "reject":
+                    try: bot.send_message(uid, f"❌ **ОТКАЗ В ВЫПЛАТЕ!**\nВаш запрос на вывод средств отклонён. Сумма (**{amount} руб.**) возвращена на ваш внутренний баланс.", parse_mode="Markdown")
+                    except Exception as e: logger.debug(f"Не смогли уведомить {uid}: {e}")
+                
+                # 🧹 Стираем флажок, чтобы бот не отправил сообщение второй раз
+                db['withdrawals'].update_one({"_id": task["_id"]}, {"$unset": {"notify_status": ""}})
+                
+        except Exception as e:
+            logger.error(f"Ошибка в демоне уведомлений о выплатах: {e}")
+        
+        # Спим 3 секунды и снова проверяем
+        time.sleep(3)
+
+# Запускаем независимый поток
+threading.Thread(target=payout_notifier_loop, daemon=True).start()
+# ===================================================
+
 # ================= КНОПКИ РУЛЕТКИ ИЗ КАБИНЕТА =================
 @bot.callback_query_handler(func=lambda call: call.data == 'show_prizes_btn')
 def btn_show_prizes(call):

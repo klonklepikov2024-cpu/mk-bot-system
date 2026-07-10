@@ -409,21 +409,38 @@ def handle_payout_decision(call):
     target_uid = int(parts[2])
     amount = int(parts[3])
     
+    # 👇 ДОБАВЛЯЕМ ЗАЩИТУ ОТ ДУБЛИКАТОВ И ДВОЙНЫХ ВЫПЛАТ 👇
+    pending_wd = db['withdrawals'].find_one({"user_id": target_uid, "amount": amount, "status": "pending"})
+    
+    if not pending_wd:
+        # Если заявка уже закрыта на сайте или другим админом — блокируем кнопку!
+        try: 
+            bot.edit_message_text(
+                f"{call.message.text}\n\n⚠️ **УЖЕ ОБРАБОТАНО (через Глаз Саурона или другим админом)**", 
+                chat_id=call.message.chat.id, 
+                message_id=call.message.message_id
+            )
+        except: pass
+        return # ⛔️ Останавливаем выполнение, чтобы ничего не дублировалось
+    # 👆 ================================================ 👆
+    
     if action == "done":
-        # 👇 ДОБАВЛЕНО: ЗАКРЫВАЕМ ВЫПЛАТУ НА САЙТЕ 👇
-        db['withdrawals'].update_many({"user_id": target_uid, "amount": amount, "status": "pending"}, {"$set": {"status": "paid"}})
-        # 👆 ===================================== 👆
-        
+        # 👇 ЗАКРЫВАЕМ ВЫПЛАТУ НА САЙТЕ 👇
+        db['withdrawals'].update_many(
+            {"user_id": target_uid, "amount": amount, "status": "pending"}, 
+            {"$set": {"status": "paid"}}
+        )
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫПЛАЧЕНО УСПЕШНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"💸 **Ваша заявка на выплату ({amount} руб.) успешно обработана!** Деньги отправлены.")
         except Exception as e: logger.warning(f"Не удалось уведомить {target_uid} о выплате: {e}")
             
     elif action == "cancel":
-        # 👇 ДОБАВЛЕНО: ОТКЛОНЯЕМ ВЫПЛАТУ НА САЙТЕ 👇
-        db['withdrawals'].update_many({"user_id": target_uid, "amount": amount, "status": "pending"}, {"$set": {"status": "rejected"}})
-        # 👆 ===================================== 👆
-        
+        # 👇 ОТКЛОНЯЕМ ВЫПЛАТУ НА САЙТЕ 👇
+        db['withdrawals'].update_many(
+            {"user_id": target_uid, "amount": amount, "status": "pending"}, 
+            {"$set": {"status": "rejected"}}
+        )
         paid_collection.update_one({"uid": target_uid}, {"$inc": {"cashback_balance": amount}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Деньги возвращены)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
