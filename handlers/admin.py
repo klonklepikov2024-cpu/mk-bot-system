@@ -2160,6 +2160,111 @@ def handle_panel_navigation(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
     except: pass
 
+# ================= ВОЗВРАТ СРЕДСТВ (ИНТЕРАКТИВНЫЙ) =================
+@bot.message_handler(commands=['refund', 'возврат'])
+def handle_refund_stars(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
+        return
+
+    args = message.text.split()
+    if len(args) != 2 or not args[1].isdigit():
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/refund [ID_пользователя]`", parse_mode="Markdown")
+        except: pass
+        return
+
+    target_uid = int(args[1])
+
+    # Ищем ВСЕ успешные транзакции этого юзера (сортируем от новых к старым)
+    transactions = list(db['star_transactions'].find({"uid": target_uid, "status": "paid"}).sort("timestamp", -1))
+
+    if not transactions:
+        try: bot.reply_to(message, "❌ У этого пользователя нет доступных платежей для возврата.")
+        except: pass
+        return
+
+    # Формируем клавиатуру со списком платежей
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    import datetime
+    for tx in transactions:
+        amount = tx.get("amount")
+        tx_time = datetime.datetime.fromtimestamp(tx.get("timestamp")).strftime('%d.%m %H:%M')
+        # Обрезаем charge_id для callback_data (Телеграм лимитирует длину callback_data)
+        short_id = str(tx["_id"]) 
+        
+        btn_text = f"💰 {amount}⭐️ (от {tx_time})"
+        markup.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"refundtx_{short_id}"))
+
+    bot.reply_to(
+        message, 
+        f"🔎 **Найдены платежи пользователя `{target_uid}`:**\n\nВыберите, какую именно транзакцию вы хотите отменить и вернуть средства:", 
+        parse_mode="Markdown", 
+        reply_markup=markup
+    )
+
+
+# --- ОБРАБОТЧИК КНОПКИ ВОЗВРАТА ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('refundtx_'))
+def process_specific_refund(call):
+    # Защита: нажимать могут только админы
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID) and call.from_user.id != OWNER_ID:
+        return
+
+    from bson.objectid import ObjectId
+    tx_id = call.data.split('_')[1]
+    
+    # Ищем транзакцию в базе
+    tx = db['star_transactions'].find_one({"_id": ObjectId(tx_id)})
+    
+    if not tx:
+        bot.answer_callback_query(call.id, "❌ Транзакция не найдена!", show_alert=True)
+        return
+        
+    if tx.get("status") == "refunded":
+        bot.answer_callback_query(call.id, "⚠️ Этот платеж УЖЕ был возвращен!", show_alert=True)
+        return
+
+    target_uid = tx.get("uid")
+    charge_id = tx.get("charge_id")
+    amount = tx.get("amount")
+
+    try:
+        # 1. Отправляем команду возврата серверам Telegram (используя конкретный charge_id)
+        bot.refund_star_payment(target_uid, charge_id)
+
+        # 2. Помечаем транзакцию как возвращенную
+        db['star_transactions'].update_one({"_id": ObjectId(tx_id)}, {"$set": {"status": "refunded"}})
+
+        # 3. Корректируем Z-Отчет (добавляем отрицательную сумму)
+        import time, datetime
+        db['daily_revenue'].insert_one({
+            "type": "refund",
+            "amount": -amount,
+            "timestamp": time.time(),
+            "date": datetime.datetime.now().strftime("%d.%m.%Y")
+        })
+
+        # 4. Отчитываемся админу (меняем сообщение с кнопками на текст успеха)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"✅ **Возврат успешно выполнен админом @{call.from_user.username}!**\nПользователю `{target_uid}` возвращено **{amount}⭐️**.",
+            parse_mode="Markdown"
+        )
+        
+        # 5. Уведомляем пользователя
+        try:
+            bot.send_message(target_uid, f"💸 **Возврат средств**\n\nАдминистрация инициировала возврат. На ваш счет зачислено **{amount}⭐️**.\n_Звезды появятся в ваших настройках Telegram в течение нескольких минут._", parse_mode="Markdown")
+        except: pass
+
+    except Exception as e:
+        error_msg = str(e)
+        if "CHARGE_ALREADY_REFUNDED" in error_msg:
+            bot.answer_callback_query(call.id, "❌ Ошибка: Этот платеж уже был возвращен ранее.", show_alert=True)
+            db['star_transactions'].update_one({"_id": ObjectId(tx_id)}, {"$set": {"status": "refunded"}})
+        else:
+            bot.answer_callback_query(call.id, f"❌ Ошибка API: {error_msg}", show_alert=True)
+
 # ================= ОБРАБОТЧИК КНОПОК ПАНЕЛИ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_panel_'))
 def handle_admin_panel_clicks(call):

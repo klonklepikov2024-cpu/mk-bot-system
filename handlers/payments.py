@@ -245,6 +245,18 @@ def successful_payment(message):
     payload = message.successful_payment.invoice_payload
     amount = message.successful_payment.total_amount
     uid = message.from_user.id
+    
+    # 👇 НОВОЕ: Запоминаем уникальный ID чека для возможных возвратов 👇
+    charge_id = message.successful_payment.telegram_payment_charge_id
+    import time
+    db['star_transactions'].insert_one({
+        "uid": uid,
+        "amount": amount,
+        "charge_id": charge_id,
+        "timestamp": time.time(),
+        "status": "paid"
+    })
+    # 👆 ======================================================== 👆
 
     # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА (Отчисляем 20% от любого платежа в Фонд)
     db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": amount * 0.20}}, upsert=True)
