@@ -1007,7 +1007,10 @@ def process_admin_invoice(message):
     except Exception:
         bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА` (например: 123456 500)")
 
-@bot.message_handler(func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.is_topic_message and not message.from_user.is_bot, content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation'])
+@bot.message_handler(
+    func=lambda message: str(message.chat.id) == str(STAFF_GROUP_ID) and message.message_thread_id is not None and message.from_user.id != bot.get_me().id, 
+    content_types=['text', 'photo', 'video', 'document', 'voice', 'audio', 'sticker', 'video_note', 'animation']
+)
 def handle_admin_replies(message):
     thread_id = message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
