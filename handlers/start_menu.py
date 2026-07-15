@@ -88,6 +88,14 @@ def handle_user_query(call):
         from config import VIP_CHAT_ID, BEYOND_CHAT_ID, OWNER_ID, ADMIN_CHAT_IDS
         import datetime
         
+        # ⛔️ ЗАМОК ОТ СПАМЕРОВ: Проверяем, есть ли уже активный тикет ⛔️
+        if user_data.get("status") == 1 and user_data.get("thread_id"):
+            bot.send_message(
+                call.message.chat.id, 
+                "⏳ **У вас уже есть открытое обращение!**\nПожалуйста, дождитесь ответа Скайнета или администратора. Не нужно нажимать кнопку несколько раз."
+            )
+            return # Прерываем код, чтобы дубль не улетел админам!
+        
         # 👇 1. СНАЧАЛА СМОТРИМ В БАЗУ ДАННЫХ (БРОНЯ ОТ СТРАЙКОВ) 👇
         user_db = db['users'].find_one({"_id": uid}) or {}
         is_elite = bool(
