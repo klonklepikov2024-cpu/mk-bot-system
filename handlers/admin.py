@@ -1856,7 +1856,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                         "response_format": {"type": "json_object"},
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.4,
-                        "max_tokens": 350
+                        "max_tokens": 1000
                     },
                     timeout=20
                 )
