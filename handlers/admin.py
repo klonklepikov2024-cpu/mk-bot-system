@@ -1451,7 +1451,6 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            data = {
             "model": "openai/gpt-oss-120b",
             "messages": [
                 {
@@ -1530,7 +1529,6 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         )
 
         data = {
-            data = {
             "model": "openai/gpt-oss-120b",
             "messages": [
                 {
@@ -1541,7 +1539,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
                     ]
                 }
             ],
-            "temperature": 0.4, # Чуть добавили креатива для эмоций паспортистки
+            "temperature": 0.4,
             "max_tokens": 200
         }
 
