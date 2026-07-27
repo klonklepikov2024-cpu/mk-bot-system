@@ -1281,18 +1281,27 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
             temp_video_path = temp_video.name
 
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
         
-        with open(temp_video_path, "rb") as audio_file:
-            files = {"file": ("video.mp4", audio_file, "video/mp4")}
-            data = {
-                "model": "whisper-large-v3", 
-                "language": "ru",
-                "response_format": "json"
-            }
-            response = requests.post(url, headers=headers, files=files, data=data)
+        response = None
+        # 👇 Перебираем ключи 👇
+        for key in GROQ_API_KEYS:
+            headers = {"Authorization": f"Bearer {key}"}
+            # Открываем файл ВНУТРИ цикла, чтобы при второй попытке он читался с начала
+            with open(temp_video_path, "rb") as audio_file:
+                files = {"file": ("video.mp4", audio_file, "video/mp4")}
+                data = {
+                    "model": "whisper-large-v3", 
+                    "language": "ru",
+                    "response_format": "json"
+                }
+                try:
+                    response = requests.post(url, headers=headers, files=files, data=data)
+                    if response.status_code == 200:
+                        break # Успех, выходим из цикла
+                except Exception:
+                    pass
 
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             raw_text = response.json().get("text", "").lower()
             
             # 🔥 ДЕШИФРАТОР АНГЛИЙСКОГО WHISPER (Защита от sokol39) 🔥
@@ -1439,11 +1448,6 @@ def check_face_in_thumbnail(thumb_file_id):
         mime_type = "image/png" if ext == "png" else "image/jpeg"
 
         url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
         prompt = (
             "Это кадр из видеосообщения. Присутствует ли на этом изображении хотя бы одно человеческое лицо? "
             "Оно может быть немного размытым, находиться вдалеке или быть не по центру — это нормально. "
@@ -1451,7 +1455,7 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            "model": "openai/gpt-oss-120b",
+            "model": "qwen-3.6-27b",
             "messages": [
                 {
                     "role": "user",
@@ -1461,12 +1465,25 @@ def check_face_in_thumbnail(thumb_file_id):
                     ]
                 }
             ],
-            "temperature": 0.0,
+            "temperature": 0.1,
             "max_tokens": 15
         }
 
-        response = requests.post(url, headers=headers, json=data)
-        if response.status_code == 200:
+        response = None
+        # 👇 Перебираем ключи 👇
+        for key in GROQ_API_KEYS:
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+            try:
+                response = requests.post(url, headers=headers, json=data)
+                if response.status_code == 200:
+                    break # Успех, выходим из цикла
+            except Exception:
+                pass
+
+        if response and response.status_code == 200:
             ai_answer = response.json()["choices"][0]["message"]["content"].strip().upper()
             
             # 🔥 УМНЫЙ ПОИСК СЛОВА "ДА" 🔥
@@ -1505,12 +1522,6 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         mime_type = "image/png" if ext == "png" else "image/jpeg"
 
         url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        # 🔥 НОВЫЙ ПРОМПТ: СТРОГАЯ ПАСПОРТИСТКА (ИСПРАВЛЕННАЯ МАТЕМАТИКА) 🔥
         prompt = (
             "Ты — колоритная, строгая, уставшая, но очень дотошная паспортистка-таможенница (в стиле скетчей Comedy Woman). "
             "Твоя задача — проверить фото документа пользователя. Сейчас 2026 год.\n"
@@ -1529,7 +1540,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         )
 
         data = {
-            "model": "openai/gpt-oss-120b",
+            "model": "qwen-3.6-27b",
             "messages": [
                 {
                     "role": "user",
@@ -1543,9 +1554,21 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
             "max_tokens": 200
         }
 
-        response = requests.post(url, headers=headers, json=data)
+        response = None
+        # 👇 Перебираем ключи 👇
+        for key in GROQ_API_KEYS:
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+            try:
+                response = requests.post(url, headers=headers, json=data)
+                if response.status_code == 200:
+                    break # Успех, выходим из цикла
+            except Exception:
+                pass
 
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             ai_text = response.json()["choices"][0]["message"]["content"].strip()
             
             vision_memory = f"Паспортистка проверила документ. Отчет:\n{ai_text}"
@@ -1837,8 +1860,8 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                     },
                     timeout=20
                 )
-                if response.status_code == 429:
-                    logger.warning(f"⚠️ Ключ {key[:8]}... лимит (429)! Переключаюсь...")
+                if response.status_code != 200: # Переключаемся при ЛЮБОЙ ошибке
+                    logger.warning(f"⚠️ Ключ {key[:8]}... ошибка (Код {response.status_code})! Переключаюсь...")
                     continue 
                 break 
             except requests.exceptions.RequestException as e:
@@ -1849,9 +1872,9 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
             except: pass
 
-        if not response or response.status_code != 200:
-            error_details = response.text if response else "Нет ответа"
-            raise Exception(f"Все резервные ключи исчерпаны! API Error: {error_details}")
+        if response is None or response.status_code != 200:
+            error_details = response.text if response is not None else "Нет ответа"
+            raise Exception(f"Ошибка API (Код {response.status_code if response is not None else 'None'}): {error_details}")
 
         result = json.loads(response.json()["choices"][0]["message"]["content"])
         action = result.get("action", "transfer_to_human")

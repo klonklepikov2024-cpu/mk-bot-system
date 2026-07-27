@@ -13,7 +13,8 @@ PORT = int(os.environ.get('PORT', 5000))
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_API_KEY_2 = os.environ.get("GROQ_API_KEY_2")
 GROQ_API_KEY_3 = os.environ.get("GROQ_API_KEY_3")
-GROQ_API_KEYS = [key for key in [GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3] if key]
+GROQ_API_KEY_4 = os.environ.get("GROQ_API_KEY_4")
+GROQ_API_KEYS = [key for key in [GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3, GROQ_API_KEY_4] if key]
 
 HF_TOKEN = os.getenv('HF_TOKEN')
 OPENROUTER_KEY = os.getenv('OPENROUTER_KEY')
