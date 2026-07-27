@@ -1466,7 +1466,7 @@ def check_face_in_thumbnail(thumb_file_id):
                 }
             ],
             "temperature": 0.1,
-            "max_tokens": 15
+            "max_tokens": 300
         }
 
         response = None
@@ -1551,7 +1551,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
                 }
             ],
             "temperature": 0.4,
-            "max_tokens": 200
+            "max_tokens": 1000
         }
 
         response = None
