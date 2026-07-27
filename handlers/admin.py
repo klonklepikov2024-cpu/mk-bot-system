@@ -1451,7 +1451,7 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            "model": "gpt-oss-120b",
+            "model": "openai/gpt-oss-120b",
             "messages": [
                 {
                     "role": "user",
@@ -1529,7 +1529,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         )
 
         data = {
-            "model": "gpt-oss-120b",
+            "model": "openai/gpt-oss-120b",
             "messages": [
                 {
                     "role": "user",
@@ -1829,7 +1829,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                     json={
-                        "model": "gpt-oss-120b",
+                        "model": "openai/gpt-oss-120b",
                         "response_format": {"type": "json_object"},
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.4,
