@@ -1455,7 +1455,7 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            "model": "qwen-3.6-27b",
+            "model": "qwen/qwen3.6-27b",
             "messages": [
                 {
                     "role": "user",
@@ -1511,7 +1511,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         file_info = bot.get_file(file_id)
         
         # 🔥 ЖЕСТКИЙ ЛИМИТ: 80 КБ
-        if file_info.file_size > 80000:
+        if file_info.file_size and file_info.file_size > 4000000::
             bot.send_message(STAFF_GROUP_ID, f"⚠️ *Файл слишком тяжелый для нейросети ({file_info.file_size // 1024} КБ).* Проверьте документ вручную.", message_thread_id=thread_id, parse_mode="Markdown")
             return
             
