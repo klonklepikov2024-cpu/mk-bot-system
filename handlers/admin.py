@@ -178,7 +178,7 @@ def handle_user_messages(message):
                 # 🔥 УМНЫЙ ПОИСК: Ищем самое большое фото, но СТРОГО до 80 КБ
                 ai_file_id = message.photo[0].file_id # Дефолт - самая маленькая
                 for p in message.photo[::-1]:
-                    if p.file_size and p.file_size < 80000:
+                    if p.file_size and p.file_size < 4000000:
                         ai_file_id = p.file_id
                         break
                 
@@ -1439,7 +1439,7 @@ def check_face_in_thumbnail(thumb_file_id):
 
     try:
         file_info = bot.get_file(thumb_file_id)
-        if file_info.file_size > 80000: return False 
+        if file_info.file_size > 4000000: return False 
         
         downloaded_file = bot.download_file(file_info.file_path)
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
@@ -1511,7 +1511,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         file_info = bot.get_file(file_id)
         
         # 🔥 ЖЕСТКИЙ ЛИМИТ: 80 КБ
-        if file_info.file_size and file_info.file_size > 4000000::
+        if file_info.file_size > 4000000:
             bot.send_message(STAFF_GROUP_ID, f"⚠️ *Файл слишком тяжелый для нейросети ({file_info.file_size // 1024} КБ).* Проверьте документ вручную.", message_thread_id=thread_id, parse_mode="Markdown")
             return
             
