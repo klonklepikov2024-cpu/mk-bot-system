@@ -1540,7 +1540,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         )
 
         data = {
-            "model": "qwen-3.6-27b",
+            "model": "qwen/qwen3.6-27b",
             "messages": [
                 {
                     "role": "user",
