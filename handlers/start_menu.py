@@ -89,7 +89,7 @@ def handle_user_query(call):
         import datetime
         
         # ⛔️ ЗАМОК ОТ СПАМЕРОВ: Проверяем, есть ли уже активный тикет ⛔️
-        if user_data.get("status") == 1 and user_data.get("thread_id"):
+        if user_data.get("status") == 1 and user_data.get("topic_type"):
             bot.send_message(
                 call.message.chat.id, 
                 "⏳ **У вас уже есть открытое обращение!**\nПожалуйста, дождитесь ответа Скайнета или администратора. Не нужно нажимать кнопку несколько раз."
