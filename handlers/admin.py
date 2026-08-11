@@ -2403,15 +2403,25 @@ def handle_admin_panel_clicks(call):
             "🧾 **Z-ОТЧЕТ (ВЫРУЧКА СКАЙНЕТА)**\n\n"
             f"📅 **СЕГОДНЯ ({today_str}):**\n"
             f"💰 Штрафы: **{format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')}⭐️**\n"
+            f"📢 Реклама: **{format_money(today_dict, 'ads')}⭐️**\n"
+            f"👑 VIP-доступ: **{format_money(today_dict, 'vip')}⭐️**\n"
+            f"🏳️‍🌈 BEYOND-чат: **{format_money(today_dict, 'beyond')}⭐️**\n"
             f"📜 Индульгенции: **{format_money(today_dict, 'indulgence')}⭐️**\n"
+            f"🆘 Саппорт: **{format_money(today_dict, 'support')}⭐️**\n"
             f"🛒 Магазин очков: **{format_money(today_dict, 'points_shop')}⭐️**\n"
             f"💖 Донаты: **{format_money(today_dict, 'donation')}⭐️**\n"
+            f"💸 Возвраты: **{format_money(today_dict, 'refund')}⭐️**\n"
             f"🟢 **ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())}⭐️**\n\n"
             f"🌍 **ЗА ВСЁ ВРЕМЯ:**\n"
             f"💰 Штрафы: **{format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')}⭐️**\n"
+            f"📢 Реклама: **{format_money(all_dict, 'ads')}⭐️**\n"
+            f"👑 VIP-доступ: **{format_money(all_dict, 'vip')}⭐️**\n"
+            f"🏳️‍🌈 BEYOND-чат: **{format_money(all_dict, 'beyond')}⭐️**\n"
             f"📜 Индульгенции: **{format_money(all_dict, 'indulgence')}⭐️**\n"
+            f"🆘 Саппорт: **{format_money(all_dict, 'support')}⭐️**\n"
             f"🛒 Магазин очков: **{format_money(all_dict, 'points_shop')}⭐️**\n"
             f"💖 Донаты: **{format_money(all_dict, 'donation')}⭐️**\n"
+            f"💸 Возвраты: **{format_money(all_dict, 'refund')}⭐️**\n"
             f"🏆 **ОБЩАЯ КАССА: {sum(all_dict.values())}⭐️**"
         )
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
@@ -2542,7 +2552,10 @@ def process_admin_set_tag(message):
         parts = message.text.split(maxsplit=1)
         uid = int(parts[0])
         tag = parts[1][:15] # Ограничиваем длину тега до 15 символов
-        db['custom_tags'].update_one({"_id": uid}, {"$set": {"tag": tag}}, upsert=True)
+        
+        # 👇 ИСПРАВЛЕНО: Теперь пишем в правильную коллекцию 'users' и в правильное поле 'custom_tag'
+        db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": tag}}, upsert=True)
+        
         bot.send_message(message.chat.id, f"✅ Тег `{tag}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
     except:
         bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ТЕГ`")
