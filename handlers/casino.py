@@ -57,6 +57,7 @@ def handle_casino_spin(message):
     uid = message.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
     points = user_data.get("bounty_points", 0)
+    cb_balance = user_data.get("cashback_balance", 0) # Достаем баланс кэшбека
 
     SPIN_PRICE = 50 # Стоимость одной прокрутки
 
@@ -64,7 +65,12 @@ def handle_casino_spin(message):
         bot_info = bot.get_me()
         bot_username = bot_info.username
         
-        markup = InlineKeyboardMarkup()
+        markup = InlineKeyboardMarkup(row_width=1) # Делаем кнопки друг под другом
+        
+        # 👇 НОВОЕ: Спасительная кнопка быстрого обмена 👇
+        if cb_balance >= SPIN_PRICE:
+            markup.add(InlineKeyboardButton(f"💸 Крутить за кэшбек ({SPIN_PRICE}₽)", callback_data="spin_for_cashback"))
+        
         markup.add(InlineKeyboardButton("💳 Купить очки (В ЛС бота)", url=f"https://t.me/{bot_username}?start=shop"))
         
         try:
@@ -73,7 +79,7 @@ def handle_casino_spin(message):
                 f"❌ **Недостаточно Очков Бдительности!**\n\n"
                 f"Стоимость прокрутки: `{SPIN_PRICE}` очков.\n"
                 f"Ваш баланс: `{points}` очков.\n\n"
-                f"💡 _Нажмите кнопку ниже, чтобы мгновенно перейти в магазин._", 
+                f"💡 _Воспользуйтесь меню ниже для пополнения._", 
                 parse_mode="Markdown",
                 reply_markup=markup
             )
@@ -100,12 +106,46 @@ def handle_casino_spin(message):
             args=[message.chat.id, message.from_user.username, sent_dice.message_id, val, uid]
         ).start()
 
+    # 👇 ЭТОТ БЛОК ДОЛЖЕН БЫТЬ ЗДЕСЬ, ОН ЗАКРЫВАЕТ TRY И ОТНОСИТСЯ К ФУНКЦИИ РУЛЕТКИ 👇
     except Exception as e:
         logger.error(f"Не удалось запустить рулетку для {uid}: {e}")
         # Возвращаем деньги, если бросок сломался
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": SPIN_PRICE}})
 
-def process_spin_result(chat_id, username, dice_msg_id, val, uid): # Изменили аргументы
+# ==============================================================================
+# 👇 А ВОТ ТЕПЕРЬ, КОГДА ФУНКЦИЯ РУЛЕТКИ ПОЛНОСТЬЮ ЗАКРЫТА, ДОБАВЛЯЕМ НОВУЮ 👇
+# ==============================================================================
+
+@bot.callback_query_handler(func=lambda call: call.data == 'spin_for_cashback')
+def handle_spin_for_cashback(call):
+    uid = call.from_user.id
+    SPIN_PRICE = 50
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("cashback_balance", 0) < SPIN_PRICE:
+        try: bot.answer_callback_query(call.id, "❌ Недостаточно кэшбека!", show_alert=True)
+        except: pass
+        return
+        
+    # Транзакция: списываем рубли, начисляем очки
+    paid_collection.update_one(
+        {"uid": uid}, 
+        {"$inc": {"cashback_balance": -SPIN_PRICE, "bounty_points": SPIN_PRICE}}
+    )
+    
+    try: bot.answer_callback_query(call.id, "✅ Кэшбек обменян! Запускаем барабан...")
+    except: pass
+    
+    # Убираем сообщение с кнопкой, чтобы не кликали дважды
+    try: bot.delete_message(call.message.chat.id, call.message.message_id)
+    except: pass
+    
+    # Элегантно перезапускаем функцию рулетки от имени пользователя
+    call.message.from_user = call.from_user
+    handle_casino_spin(call.message)
+
+
+def process_spin_result(chat_id, username, dice_msg_id, val, uid):
     user_data = paid_collection.find_one({"uid": uid}) or {}
     points = user_data.get("bounty_points", 0)
     pm_msg = None

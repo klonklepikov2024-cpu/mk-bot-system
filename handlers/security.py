@@ -66,9 +66,14 @@ def handle_game_club(call):
         InlineKeyboardButton("🛒 Магазин скидок", callback_data="shop_rewards_menu"),
         InlineKeyboardButton("🔗 Заработать (CPA)", callback_data="cpa_menu")
     )
-    # Вывод денег, если есть
+    # 👇 ИЗМЕНЕНИЯ ЗДЕСЬ: Добавляем кнопку обменника 👇
     if cb_balance > 0:
-        markup.add(InlineKeyboardButton(f"💸 Вывести средства ({cb_balance}₽)", callback_data="request_cashback_payout"))
+        markup.add(
+            InlineKeyboardButton("💱 Обменник (Рубли ➔ Очки)", callback_data="exchange_cb_menu")
+        )
+        markup.add(
+            InlineKeyboardButton(f"💸 Вывести средства ({cb_balance}₽)", callback_data="request_cashback_payout")
+        )
         
     markup.add(InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main"))
 
@@ -1067,3 +1072,53 @@ def handle_buy_chest(call):
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В магазин", callback_data="shop_rewards_menu"))
     try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
     except: pass
+
+# ================= ВАЛЮТНЫЙ ОБМЕННИК (КЭШБЕК В ОЧКИ) =================
+@bot.callback_query_handler(func=lambda call: call.data == 'exchange_cb_menu')
+def handle_exchange_cb_menu(call):
+    uid = call.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    cb_balance = user_data.get("cashback_balance", 0)
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("📦 50 очков — 50₽ (1:1)", callback_data="do_exchange_50_50"),
+        InlineKeyboardButton("🔥 175 очков — 150₽ (Выгода 15%)", callback_data="do_exchange_150_175"),
+        InlineKeyboardButton("💥 300 очков — 250₽ (Выгода 20%)", callback_data="do_exchange_250_300"),
+        InlineKeyboardButton("💎 650 очков — 500₽ (Выгода 30%)", callback_data="do_exchange_500_650"),
+        InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club")
+    )
+    
+    text = (
+        f"💱 **ОБМЕННИК КЭШБЕКА**\n\n"
+        f"Ваш баланс: **{cb_balance}₽**\n\n"
+        f"Здесь вы можете конвертировать заработанный кэшбек в Очки Бдительности.\n"
+        f"Чем крупнее пакет, тем выгоднее курс обмена!"
+    )
+    try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('do_exchange_'))
+def handle_do_exchange(call):
+    parts = call.data.split('_')
+    cost_rub = int(parts[2])
+    pts_reward = int(parts[3])
+    uid = call.from_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("cashback_balance", 0) < cost_rub:
+        try: bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽.", show_alert=True)
+        except: pass
+        return
+        
+    # Атомарная транзакция
+    paid_collection.update_one(
+        {"uid": uid}, 
+        {"$inc": {"cashback_balance": -cost_rub, "bounty_points": pts_reward}}
+    )
+    
+    try: bot.answer_callback_query(call.id, f"✅ Успешный обмен! Вы получили {pts_reward} очков.", show_alert=True)
+    except: pass
+    
+    # Перерисовываем меню, чтобы баланс обновился на глазах
+    handle_exchange_cb_menu(call)
