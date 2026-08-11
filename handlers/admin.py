@@ -2389,15 +2389,32 @@ def handle_admin_panel_clicks(call):
         
         today_str = datetime.datetime.now().strftime("%d.%m.%Y")
         
-        # Считаем за всё время
-        all_time = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
-        all_dict = {item["_id"]: item["total"] for item in all_time}
+        # 1. Достаем сырые данные из базы
+        all_time_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        today_raw = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
         
-        # Считаем за сегодня
-        today = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
-        today_dict = {item["_id"]: item["total"] for item in today}
+        # 2. УМНАЯ СОРТИРОВКА (Защита от регистра, например VIP и vip склеятся в одно)
+        all_dict = {}
+        for item in all_time_raw:
+            key = str(item["_id"]).lower() if item["_id"] else "unknown"
+            all_dict[key] = all_dict.get(key, 0) + item["total"]
+            
+        today_dict = {}
+        for item in today_raw:
+            key = str(item["_id"]).lower() if item["_id"] else "unknown"
+            today_dict[key] = today_dict.get(key, 0) + item["total"]
         
         def format_money(d, key): return d.get(key, 0)
+        
+        # 3. Вычисляем "ПРОЧЕЕ" (всё, что не попало в наш список)
+        known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund']
+        
+        today_other = sum(today_dict.values()) - sum(today_dict.get(k, 0) for k in known_keys)
+        all_other = sum(all_dict.values()) - sum(all_dict.get(k, 0) for k in known_keys)
+        
+        # Строки для "Прочего" показываем только если там реально что-то есть
+        today_other_str = f"📦 Прочее (Неизвестно): **{today_other}⭐️**\n" if today_other != 0 else ""
+        all_other_str = f"📦 Прочее (Неизвестно): **{all_other}⭐️**\n" if all_other != 0 else ""
         
         text = (
             "🧾 **Z-ОТЧЕТ (ВЫРУЧКА СКАЙНЕТА)**\n\n"
@@ -2411,6 +2428,7 @@ def handle_admin_panel_clicks(call):
             f"🛒 Магазин очков: **{format_money(today_dict, 'points_shop')}⭐️**\n"
             f"💖 Донаты: **{format_money(today_dict, 'donation')}⭐️**\n"
             f"💸 Возвраты: **{format_money(today_dict, 'refund')}⭐️**\n"
+            f"{today_other_str}"
             f"🟢 **ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())}⭐️**\n\n"
             f"🌍 **ЗА ВСЁ ВРЕМЯ:**\n"
             f"💰 Штрафы: **{format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')}⭐️**\n"
@@ -2422,6 +2440,7 @@ def handle_admin_panel_clicks(call):
             f"🛒 Магазин очков: **{format_money(all_dict, 'points_shop')}⭐️**\n"
             f"💖 Донаты: **{format_money(all_dict, 'donation')}⭐️**\n"
             f"💸 Возвраты: **{format_money(all_dict, 'refund')}⭐️**\n"
+            f"{all_other_str}"
             f"🏆 **ОБЩАЯ КАССА: {sum(all_dict.values())}⭐️**"
         )
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
