@@ -1070,7 +1070,6 @@ def handle_claim_tag(call):
         return
         
     try: bot.answer_callback_query(call.id)
-    except: pass
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -1149,7 +1148,6 @@ def handle_claim_premium(call):
         return
         
     try: bot.answer_callback_query(call.id)
-    except: pass
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
