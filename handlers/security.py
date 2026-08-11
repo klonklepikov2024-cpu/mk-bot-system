@@ -4,6 +4,7 @@ import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from core.bot import bot
+from utils.validators import is_user_locked
 from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 from database.mongo import paid_collection, db
 from utils.logger import logger
@@ -65,6 +66,10 @@ def handle_game_club(call):
     markup.add(
         InlineKeyboardButton("🛒 Магазин скидок", callback_data="shop_rewards_menu"),
         InlineKeyboardButton("🔗 Заработать (CPA)", callback_data="cpa_menu")
+    )
+    # 👇 НОВОЕ: ЧЕРНЫЙ РЫНОК 👇
+    markup.add(
+        InlineKeyboardButton("⚖️ Черный Рынок (P2P)", callback_data="market_main")
     )
     # 👇 ИЗМЕНЕНИЯ ЗДЕСЬ: Добавляем кнопку обменника 👇
     if cb_balance > 0:
@@ -215,28 +220,6 @@ def handle_pawn_promo(call):
     msg = bot.send_message(call.message.chat.id, "♻️ **Ломбард Промокодов**\n\nОтправьте мне любой рабочий промокод (например, на VIP или Рекламу), и я переплавлю его в **Осколки Джекпота**:")
     bot.register_next_step_handler(msg, process_pawn_promo)
 
-def process_pawn_promo(message):
-    if message.text == '/start':
-        from handlers.start_menu import send_welcome
-        send_welcome(message)
-        return
-        
-    code = message.text.strip().upper()
-    uid = message.from_user.id
-    
-    promo = db['promocodes'].find_one({"_id": code, "is_active": True})
-    if not promo or promo.get("used_count", 0) >= promo.get("usage_limit", 1):
-        bot.send_message(message.chat.id, "❌ Промокод не найден, уже использован или сгорел.")
-        return
-        
-    # VIP-код дает 10 осколков, обычный - 5
-    shards_reward = 10 if promo.get("target") == "vip" else 5
-    
-    db['promocodes'].delete_one({"_id": code})
-    paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}}, upsert=True)
-    
-    bot.send_message(message.chat.id, f"♻️ **Успешная переплавка!**\n\nПромокод `{code}` уничтожен.\nВы получили: **+{shards_reward} Осколков рулетки** 🧩!", parse_mode="Markdown")
-
 # ================= НАГРАДЫ И ПРОМОКОДЫ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_reward_'))
 def handle_reward_purchase(call):
@@ -302,6 +285,13 @@ def handle_reward_purchase(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('request_cashback_payout'))
 def handle_cashback_request(call):
     uid = call.from_user.id
+    
+    # 👇 ЗАМОК НА ВЫВОД СРЕДСТВ 👇
+    if is_user_locked(uid):
+        try: bot.answer_callback_query(call.id, "⛔️ Вывод средств заморожен! Оплатите штраф или снимите блокировку через /start.", show_alert=True)
+        except: pass
+        return
+        
     user_data = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data.get("cashback_balance", 0)
     

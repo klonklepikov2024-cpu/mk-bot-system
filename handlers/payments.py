@@ -4,6 +4,7 @@ import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 
 from core.bot import bot
+from utils.validators import is_user_locked
 from config import STAFF_GROUP_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
@@ -439,6 +440,46 @@ def successful_payment(message):
             bot.send_message(uid, success_text, parse_mode="Markdown", disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Не удалось отправить уведомление об Индульгенции: {e}")
+
+    # 🔥 5. ЧЕРНЫЙ РЫНОК (ПОКУПКА ЛОТА ЗА ЗВЕЗДЫ) 🔥
+    elif payload.startswith("marketpay_"):
+        parts = payload.split('_')
+        lot_id_str = parts[1]
+        price_stars = int(parts[2])
+        
+        from bson.objectid import ObjectId
+        
+        # Атомарная блокировка лота
+        lot = db['market_orders'].find_one_and_update(
+            {"_id": ObjectId(lot_id_str), "status": "active"},
+            {"$set": {"status": "sold", "buyer_uid": uid}}
+        )
+        
+        if not lot:
+            # Если кто-то успел перехватить лот за рубли, пока юзер вводил пароль карты для звезд
+            bot.send_message(uid, "❌ Ошибка! Лот уже был куплен кем-то другим. Ваши средства будут возвращены.")
+            # Делаем возврат звезд (автоматически через API Telegram)
+            bot.refund_star_payment(uid, charge_id)
+            db['star_transactions'].update_one({"charge_id": charge_id}, {"$set": {"status": "refunded"}})
+            return
+
+        # Добавляем комиссию Скайнета в Z-отчет (Звезды, которые Telegram забрал себе, плюс разница)
+        db['daily_revenue'].insert_one({"type": "market_fee", "amount": price_stars, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
+        
+        promo_id = lot['promo_id']
+        seller_uid = lot['seller_uid']
+        seller_profit = int(lot['price_rub'] * 0.9) # Продавец получает 90%
+        
+        # Выдаем промокод покупателю
+        db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
+        
+        # Начисляем продавцу рубли
+        paid_collection.update_one({"uid": seller_uid}, {"$inc": {"cashback_balance": seller_profit}})
+        
+        try:
+            bot.send_message(uid, f"🎉 **СДЕЛКА УСПЕШНА!**\nВы купили артефакт на Черном Рынке.\nВаш промокод: `{promo_id}`\n_Он уже добавлен в ваш Инвентарь._", parse_mode="Markdown")
+            bot.send_message(seller_uid, f"💸 **НОВОСТИ С РЫНКА!**\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (с учетом 10% комиссии).", parse_mode="Markdown")
+        except: pass
 
 # ================= АУДИТ КАЗИНО =================
 @bot.message_handler(commands=['bank'])

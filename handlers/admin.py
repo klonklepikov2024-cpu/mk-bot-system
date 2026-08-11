@@ -12,6 +12,7 @@ from config import GROQ_API_KEY, GROQ_API_KEYS
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
+from utils.validators import is_user_locked
 from config import STAFF_GROUP_ID, OWNER_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
@@ -1060,7 +1061,16 @@ def handle_give_cmd(message):
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
+    uid = call.from_user.id
+    
+    # 👇 ЗАМОК НА ТЕГИ 👇
+    if is_user_locked(uid):
+        try: bot.answer_callback_query(call.id, "⛔️ Установка личного статуса невозможна при активной блокировке!", show_alert=True)
+        except: pass
+        return
+        
     try: bot.answer_callback_query(call.id)
+    except: pass
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -1130,7 +1140,16 @@ def handle_admin_tag_decision(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_premium')
 def handle_claim_premium(call):
+    uid = call.from_user.id
+    
+    # 👇 ЗАМОК НА ПОЛУЧЕНИЕ ПРЕМИУМА 👇
+    if is_user_locked(uid):
+        try: bot.answer_callback_query(call.id, "⛔️ Выдача призов приостановлена до снятия системных ограничений!", show_alert=True)
+        except: pass
+        return
+        
     try: bot.answer_callback_query(call.id)
+    except: pass
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
