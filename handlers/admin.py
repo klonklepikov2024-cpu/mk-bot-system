@@ -2393,7 +2393,7 @@ def handle_admin_panel_clicks(call):
         all_time_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
         today_raw = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
         
-        # 2. УМНАЯ СОРТИРОВКА (Защита от регистра, например VIP и vip склеятся в одно)
+        # 2. УМНАЯ СОРТИРОВКА (Защита от регистра)
         all_dict = {}
         for item in all_time_raw:
             key = str(item["_id"]).lower() if item["_id"] else "unknown"
@@ -2406,21 +2406,31 @@ def handle_admin_panel_clicks(call):
         
         def format_money(d, key): return d.get(key, 0)
         
-        # 3. Вычисляем "ПРОЧЕЕ" (всё, что не попало в наш список)
-        known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund']
+        # 3. Добавляем новые ключи в список "известных"
+        known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund', 'city_access', 'ads_rub_balance', 'ads_points']
         
+        # Вычисляем "ПРОЧЕЕ" на будущее
         today_other = sum(today_dict.values()) - sum(today_dict.get(k, 0) for k in known_keys)
         all_other = sum(all_dict.values()) - sum(all_dict.get(k, 0) for k in known_keys)
         
-        # Строки для "Прочего" показываем только если там реально что-то есть
         today_other_str = f"📦 Прочее (Неизвестно): **{today_other}⭐️**\n" if today_other != 0 else ""
         all_other_str = f"📦 Прочее (Неизвестно): **{all_other}⭐️**\n" if all_other != 0 else ""
+
+        # УМНАЯ ГРУППИРОВКА
+        # Склеиваем все рекламные платежи в одну сумму
+        today_ads_total = format_money(today_dict, 'ads') + format_money(today_dict, 'ads_rub_balance') + format_money(today_dict, 'ads_points')
+        all_ads_total = format_money(all_dict, 'ads') + format_money(all_dict, 'ads_rub_balance') + format_money(all_dict, 'ads_points')
+
+        # Склеиваем штрафы
+        today_fine_total = format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')
+        all_fine_total = format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')
         
         text = (
             "🧾 **Z-ОТЧЕТ (ВЫРУЧКА СКАЙНЕТА)**\n\n"
             f"📅 **СЕГОДНЯ ({today_str}):**\n"
-            f"💰 Штрафы: **{format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')}⭐️**\n"
-            f"📢 Реклама: **{format_money(today_dict, 'ads')}⭐️**\n"
+            f"💰 Штрафы: **{today_fine_total}⭐️**\n"
+            f"📢 Реклама: **{today_ads_total}⭐️**\n"
+            f"🏙 Доступ к городам: **{format_money(today_dict, 'city_access')}⭐️**\n"
             f"👑 VIP-доступ: **{format_money(today_dict, 'vip')}⭐️**\n"
             f"🏳️‍🌈 BEYOND-чат: **{format_money(today_dict, 'beyond')}⭐️**\n"
             f"📜 Индульгенции: **{format_money(today_dict, 'indulgence')}⭐️**\n"
@@ -2431,8 +2441,9 @@ def handle_admin_panel_clicks(call):
             f"{today_other_str}"
             f"🟢 **ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())}⭐️**\n\n"
             f"🌍 **ЗА ВСЁ ВРЕМЯ:**\n"
-            f"💰 Штрафы: **{format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')}⭐️**\n"
-            f"📢 Реклама: **{format_money(all_dict, 'ads')}⭐️**\n"
+            f"💰 Штрафы: **{all_fine_total}⭐️**\n"
+            f"📢 Реклама: **{all_ads_total}⭐️**\n"
+            f"🏙 Доступ к городам: **{format_money(all_dict, 'city_access')}⭐️**\n"
             f"👑 VIP-доступ: **{format_money(all_dict, 'vip')}⭐️**\n"
             f"🏳️‍🌈 BEYOND-чат: **{format_money(all_dict, 'beyond')}⭐️**\n"
             f"📜 Индульгенции: **{format_money(all_dict, 'indulgence')}⭐️**\n"
