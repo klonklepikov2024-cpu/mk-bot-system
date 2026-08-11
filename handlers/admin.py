@@ -2701,3 +2701,28 @@ def handle_req_manual_pay(call):
                 parse_mode="Markdown"
             )
         except: pass
+
+@bot.message_handler(commands=['audit'])
+def handle_revenue_audit(message):
+    # Защита: только для владельца
+    if message.from_user.id != 479938867: 
+        return
+        
+    known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund']
+    
+    # Ищем все транзакции, тип которых НЕ входит в наш список
+    unknowns = list(db['daily_revenue'].aggregate([
+        {"$match": {"type": {"$nin": known_keys}}},
+        {"$group": {"_id": "$type", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]))
+    
+    if not unknowns:
+        bot.reply_to(message, "✅ **Всё чисто!** Неизвестных транзакций в базе нет.", parse_mode="Markdown")
+        return
+        
+    text = "🔎 **НАЙДЕННЫЕ АНОМАЛИИ В БАЗЕ:**\n\n"
+    for item in unknowns:
+        # Выводим системное имя типа, общую сумму и количество чеков
+        text += f"Тип: `{item['_id']}`\nСумма: **{item['total']}⭐️** (Чеков: {item['count']})\n\n"
+        
+    bot.reply_to(message, text, parse_mode="Markdown")
