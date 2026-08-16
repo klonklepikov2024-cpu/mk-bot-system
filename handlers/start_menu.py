@@ -122,12 +122,18 @@ def handle_user_query(call):
                     db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
             except: pass
 
-        # 👇 3. ЕСЛИ ЭЛИТА - ДАЕМ БЕСПЛАТНЫЙ ПРОПУСК (status=1) И СБРАСЫВАЕМ СТРАЙКИ 👇
+        # 👇 3. ЕСЛИ ЭЛИТА - АВТО-ИСЦЕЛЕНИЕ БЕЗ ОТКРЫТИЯ ТИКЕТА 👇
         if is_elite:
-            user_data["status"] = 1
-            paid_collection.update_one({"uid": uid}, {"$set": {"status": 1, "strikes": 0}, "$unset": {"topic_type": ""}})
-            # Заодно кидаем приказ Скайнету снять с него все случайные блокировки!
+            user_data["status"] = 0
+            paid_collection.update_one({"uid": uid}, {"$set": {"status": 0, "strikes": 0}, "$unset": {"topic_type": ""}})
             db['skynet_tasks'].insert_one({"uid": uid, "action": "auto_heal", "timestamp": datetime.datetime.now()})
+            
+            bot.send_message(
+                call.message.chat.id, 
+                "👑 **Доступ открыт (VIP-привилегия).**\nВаши ограничения в сети были автоматически сняты!\n\n_Если вам нужно связаться с оператором, используйте кнопку «🚨 Подать жалобу» в главном меню._", 
+                parse_mode="Markdown"
+            )
+            return # 🛑 ПРЕРЫВАЕМ ФУНКЦИЮ, ЧТОБЫ ТИКЕТ НЕ ОТКРЫВАЛСЯ ВООБЩЕ!
 
         # 👇 4. ПРОДОЛЖАЕМ ОБЫЧНУЮ ЛОГИКУ (Страйки для плебеев) 👇
         if user_data.get("strikes", 0) >= 3 and user_data.get("status") != 1:
