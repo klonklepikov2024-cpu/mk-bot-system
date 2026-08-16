@@ -55,19 +55,26 @@ def show_casino_prizes(message):
 @bot.message_handler(commands=['spin', 'казино', 'рулетка'])
 def handle_casino_spin(message):
     uid = message.from_user.id
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    points = user_data.get("bounty_points", 0)
-    cb_balance = user_data.get("cashback_balance", 0) # Достаем баланс кэшбека
-
     SPIN_PRICE = 50 # Стоимость одной прокрутки
 
-    if points < SPIN_PRICE:
+    # 🔥 АТОМАРНАЯ ОПЕРАЦИЯ: База данных сама проверяет, есть ли 50 очков,
+    # и если есть — МГНОВЕННО их списывает. Никаких микрозадержек!
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": SPIN_PRICE}}, # Условие: баланс >= 50
+        {"$inc": {"bounty_points": -SPIN_PRICE}}             # Действие: списать 50
+    )
+
+    # Если updated_user == None, значит очков меньше 50 (база отклонила запрос)
+    if not updated_user:
+        # Достаем актуальные данные только для того, чтобы красиво показать их в меню ошибки
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        points = user_data.get("bounty_points", 0)
+        cb_balance = user_data.get("cashback_balance", 0)
+        
         bot_info = bot.get_me()
         bot_username = bot_info.username
         
-        markup = InlineKeyboardMarkup(row_width=1) # Делаем кнопки друг под другом
-        
-        # 👇 НОВОЕ: Спасительная кнопка быстрого обмена 👇
+        markup = InlineKeyboardMarkup(row_width=1)
         if cb_balance >= SPIN_PRICE:
             markup.add(InlineKeyboardButton(f"💸 Крутить за кэшбек ({SPIN_PRICE}₽)", callback_data="spin_for_cashback"))
         
@@ -83,16 +90,13 @@ def handle_casino_spin(message):
                 parse_mode="Markdown",
                 reply_markup=markup
             )
-            # НАДЕЖНОЕ удаление сообщения бота и команды юзера через 180 секунд
             schedule_message_deletion(message.chat.id, msg.message_id, 180, bot)
             schedule_message_deletion(message.chat.id, message.message_id, 180, bot)
         except Exception as e:
             logger.warning(f"Ошибка при обработке нехватки баланса для спина: {e}")
         return
 
-    # 1. Списываем очки за прокрут
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -SPIN_PRICE}}, upsert=True)
-
+    # 1. Очки УЖЕ списаны атомарным запросом выше.
     # 2. Кидаем анимированные слоты в чат
     try:
         sent_dice = bot.send_dice(message.chat.id, emoji='🎰')
@@ -106,10 +110,9 @@ def handle_casino_spin(message):
             args=[message.chat.id, message.from_user.username, sent_dice.message_id, val, uid]
         ).start()
 
-    # 👇 ЭТОТ БЛОК ДОЛЖЕН БЫТЬ ЗДЕСЬ, ОН ЗАКРЫВАЕТ TRY И ОТНОСИТСЯ К ФУНКЦИИ РУЛЕТКИ 👇
     except Exception as e:
         logger.error(f"Не удалось запустить рулетку для {uid}: {e}")
-        # Возвращаем деньги, если бросок сломался
+        # Возвращаем деньги, если бросок сломался (Телеграм отвалился)
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": SPIN_PRICE}})
 
 # ==============================================================================

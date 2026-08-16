@@ -623,28 +623,45 @@ def process_gift_code(message):
     code_text = message.text.strip().upper()
     uid = message.from_user.id
     
+    # Просто проверяем, существует ли вообще код (чтобы не нагружать сложными запросами пустые вводы)
     promo = db['promocodes'].find_one({"_id": code_text, "is_active": True})
     
     if not promo:
         bot.send_message(message.chat.id, "❌ Промокод не найден или уже недействителен.")
         return
         
-    if promo.get("used_count", 0) >= promo.get("usage_limit", 1):
-        bot.send_message(message.chat.id, "❌ Лимит активаций исчерпан. Вы не успели!")
-        return
-        
     if promo.get("type") == "airdrop":
-        if uid in promo.get("activated_by", []):
-            bot.send_message(message.chat.id, "❌ Вы уже активировали этот промокод!")
+        # Узнаем лимит активаций этого кода
+        usage_limit = promo.get("usage_limit", 1)
+        
+        # 🔥 АТОМАРНАЯ ОПЕРАЦИЯ 🔥
+        # База сама ищет код, в котором юзера ЕЩЕ НЕТ, и где лимит еще не исчерпан.
+        # Если находит - мгновенно записывает юзера в массив.
+        updated_promo = db['promocodes'].find_one_and_update(
+            {
+                "_id": code_text, 
+                "is_active": True, 
+                "activated_by": {"$ne": uid},          # Юзера не должно быть в списке
+                "used_count": {"$lt": usage_limit}     # Количество использований меньше лимита
+            },
+            {
+                "$inc": {"used_count": 1}, 
+                "$push": {"activated_by": uid}
+            }
+        )
+        
+        # Если updated_promo пустое — значит юзер уже активировал код ИЛИ лимит исчерпан
+        if not updated_promo:
+            bot.send_message(message.chat.id, "❌ Вы уже активировали этот промокод, либо лимит активаций исчерпан. Вы не успели!")
             return
             
-        points = promo.get("value", 0)
+        # Начисляем очки только ОДИН раз
+        points = updated_promo.get("value", 0)
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": points}}, upsert=True)
-        db['promocodes'].update_one({"_id": code_text}, {"$inc": {"used_count": 1}, "$push": {"activated_by": uid}})
         
         bot.send_message(message.chat.id, f"✅ **Промокод успешно активирован!**\nВам начислено: **+{points} очков** 💰\n_Можете использовать их для игры в рулетку!_")
     else:
-        bot.send_message(message.chat.id, "❌ Этот промокод дает скидку, а не бесплатные очки. Введите его при оплате услуг (штраф, реклама).")
+        bot.send_message(message.chat.id, "❌ Этот промокод дает скидку, а не бесплатные очки. Введите его при оплате услуг (штраф, реклама, вип, транс-чат).")
 
 # ================= ВОРОНКА ЖАЛОБ (РАБОТАЕТ ЧЕРЕЗ FSM) =================
 def process_report_target(message):
