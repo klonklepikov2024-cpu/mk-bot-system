@@ -19,6 +19,16 @@ from utils.logger import logger
 from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
 
+import html
+
+def safe_md(text, max_len=1000):
+    """Очищает текст от спецсимволов Markdown и обрезает длину, чтобы не крашнуть Телеграм"""
+    if not text:
+        return "Нет данных"
+    # Превращаем в строку, обрезаем и удаляем маркеры разметки
+    safe_text = str(text)[:max_len]
+    return safe_text.replace('*', '').replace('_', '').replace('`', "'").replace('[', '(').replace(']', ')')
+
 def check_video_timer(uid, chat_id, thread_id, expected_code=None):
     """Фоновый таймер: проверяет, прислал ли юзер кружок за 5 минут"""
     user_data = paid_collection.find_one({"uid": uid})
@@ -1246,7 +1256,8 @@ def process_arrest_claim(message, code):
     
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}"))
     try:
-        bot.send_message(STAFF_GROUP_ID, f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{message.text}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", parse_mode="HTML", reply_markup=markup)
+        safe_cause = html.escape(message.text)
+        bot.send_message(STAFF_GROUP_ID, f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{safe_cause}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", parse_mode="HTML", reply_markup=markup)
         bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
@@ -1588,6 +1599,9 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         if response and response.status_code == 200:
             ai_text = response.json()["choices"][0]["message"]["content"].strip()
             
+            # 👇 ДОБАВИТЬ ЭТУ СТРОКУ: Вырезаем символы, которые могут сломать Markdown Телеграма
+            ai_text = safe_md(ai_text)
+            
             vision_memory = f"Паспортистка проверила документ. Отчет:\n{ai_text}"
             paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": vision_memory}}})
 
@@ -1634,12 +1648,11 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
                 bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=thread_id, parse_mode="Markdown")
 
         else:
-            error_details = response.text 
-            try: bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{error_details}`", message_thread_id=thread_id, parse_mode="Markdown")
+            try: bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{safe_md(response.text)}`", message_thread_id=thread_id, parse_mode="Markdown")
             except: pass
 
     except Exception as e:
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Паспортистки при анализе:* `{e}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Паспортистки при анализе:* `{safe_md(e)}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
         except: pass
 
 
@@ -1949,7 +1962,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                     
                 bot.send_message(uid, f"🧾 **Скайнет выставил вам счет на оплату штрафа.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
                 
-                bot.send_message(STAFF_GROUP_ID, f"🤖 💸 **АВТО-КАССИР:** Скайнет САМ выставил счет на **{amount}⭐️**!\nПричина ИИ: {reason}", message_thread_id=thread_id, parse_mode="Markdown")
+                bot.send_message(STAFF_GROUP_ID, f"🤖 💸 **АВТО-КАССИР:** Скайнет САМ выставил счет на **{amount}⭐️**!\nПричина ИИ: {safe_md(reason)}", message_thread_id=thread_id, parse_mode="Markdown")
                 paid_collection.update_one({"uid": uid}, {"$push": {"dialog_history": {"role": "assistant", "content": f"[Автоматически выставлен счет на {amount} звезд]"}}})
                 
             except Exception as e:
