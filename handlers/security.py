@@ -577,14 +577,16 @@ def handle_trade_in(call):
     if parts[1] == 'promo':
         code, reward_type, amount = parts[2], parts[3], int(parts[4])
         
-        promo = db['promocodes'].find_one({"_id": code, "is_active": True, "used_count": 0})
-        if not promo:
+        # 🔥 АТОМАРНОЕ УДАЛЕНИЕ: База находит код и мгновенно его уничтожает, возвращая документ
+        deleted_promo = db['promocodes'].find_one_and_delete(
+            {"_id": code, "is_active": True, "used_count": 0}
+        )
+        
+        if not deleted_promo:
             try: bot.answer_callback_query(call.id, "❌ Этот промокод уже использован или был обменян ранее!", show_alert=True)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
             
-        db['promocodes'].delete_one({"_id": code})
-        
         reward_text = f"{amount} очков бдительности" if reward_type == 'points' else f"{amount} осколков"
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points" if reward_type == 'points' else "jackpot_shards": amount}})
             
@@ -593,16 +595,19 @@ def handle_trade_in(call):
 
     elif parts[1] == 'shield':
         reward_type, amount = parts[2], int(parts[3])
-        user_data = paid_collection.find_one({"uid": uid}) or {}
         
-        if user_data.get("immunity", 0) < 1:
+        # 🔥 АТОМАРНОЕ СПИСАНИЕ ЩИТА И НАЧИСЛЕНИЕ НАГРАДЫ В ОДИН ЗАПРОС 🔥
+        updated_user = paid_collection.find_one_and_update(
+            {"uid": uid, "immunity": {"$gte": 1}},
+            {"$inc": {"immunity": -1, "bounty_points" if reward_type == 'points' else "jackpot_shards": amount}}
+        )
+        
+        if not updated_user:
             try: bot.answer_callback_query(call.id, "❌ У вас нет активных Щитов для обмена!", show_alert=True)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
             
-        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
         reward_text = f"{amount} очков бдительности" if reward_type == 'points' else f"{amount} осколков"
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points" if reward_type == 'points' else "jackpot_shards": amount}})
             
         try: bot.edit_message_text(f"♻️ **Щит сдан в утиль!**\n\nВы разобрали 1 Щит Иммунитета.\nПолучено: **+{reward_text}**.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -1112,17 +1117,17 @@ def handle_do_exchange(call):
     pts_reward = int(parts[3])
     uid = call.from_user.id
     
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    if user_data.get("cashback_balance", 0) < cost_rub:
+    # 🔥 АТОМАРНАЯ ТРАНЗАКЦИЯ: Ищем юзера с нужным балансом и сразу списываем/начисляем
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": cost_rub}},
+        {"$inc": {"cashback_balance": -cost_rub, "bounty_points": pts_reward}}
+    )
+    
+    # Если база ничего не вернула, значит рублей не хватило
+    if not updated_user:
         try: bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽.", show_alert=True)
         except: pass
         return
-        
-    # Атомарная транзакция
-    paid_collection.update_one(
-        {"uid": uid}, 
-        {"$inc": {"cashback_balance": -cost_rub, "bounty_points": pts_reward}}
-    )
     
     try: bot.answer_callback_query(call.id, f"✅ Успешный обмен! Вы получили {pts_reward} очков.", show_alert=True)
     except: pass
