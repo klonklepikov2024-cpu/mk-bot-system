@@ -340,23 +340,31 @@ def handle_market_my_lots(call):
 def handle_market_cancel_lot(call):
     lot_id_str = call.data.replace("market_cancel_", "")
     uid = call.from_user.id
-    from bson.objectid import ObjectId
     
-    lot = db['market_orders'].find_one_and_update(
-        {"_id": ObjectId(lot_id_str), "seller_uid": uid, "status": "active"},
-        {"$set": {"status": "cancelled"}}
-    )
-    
-    if not lot:
-        try: bot.answer_callback_query(call.id, "❌ Лот уже продан или снят!", show_alert=True)
-        except: pass
-        return
+    try:
+        from bson.objectid import ObjectId
         
-    # Возвращаем промокод владельцу
-    db['promocodes'].update_one({"_id": lot['promo_id']}, {"$set": {"owner_uid": uid}})
-    
-    try: bot.answer_callback_query(call.id, "✅ Лот снят с продажи! Артефакт возвращен в инвентарь.", show_alert=True)
-    except: pass
-    
-    # Перерисовываем список
-    handle_market_my_lots(call)
+        # 1. Атомарно находим ваш лот и меняем статус на "отменен"
+        lot = db['market_orders'].find_one_and_update(
+            {"_id": ObjectId(lot_id_str), "seller_uid": uid, "status": "active"},
+            {"$set": {"status": "cancelled"}}
+        )
+        
+        if not lot:
+            try: bot.answer_callback_query(call.id, "❌ Лот уже продан или снят!", show_alert=True)
+            except: pass
+            return
+            
+        # 2. Возвращаем промокод законному владельцу
+        db['promocodes'].update_one({"_id": lot['promo_id']}, {"$set": {"owner_uid": uid}})
+        
+        try: bot.answer_callback_query(call.id, "✅ Лот снят с продажи! Артефакт возвращен в инвентарь.", show_alert=True)
+        except: pass
+        
+        # 3. Перерисовываем список ваших лотов
+        handle_market_my_lots(call)
+        
+    except Exception as e:
+        logger.error(f"Ошибка отмены лота на рынке: {e}")
+        try: bot.answer_callback_query(call.id, "❌ Системная ошибка при снятии лота.", show_alert=True)
+        except: pass
