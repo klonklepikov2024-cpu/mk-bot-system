@@ -3,11 +3,16 @@ from telebot.apihelper import ApiTelegramException
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from config import STAFF_GROUP_ID
+from telebot.types import ReplyKeyboardRemove
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger, notify_admin_on_error
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    # 👇 ЗАЩИТА: Если команду написали в группе, бот просто молча выходит
+    if message.chat.type != 'private':
+        return
+        
     try:
         # 🔥 ЖУЧОК ДЛЯ ЮЗЕРНЕЙМОВ 🔥
         if message.from_user.username:
@@ -353,3 +358,11 @@ def handle_support_payment(call):
 @bot.callback_query_handler(func=lambda call: call.data == "insufficient_funds")
 def handle_insufficient_funds_start(call):
     bot.answer_callback_query(call.id, "На вашем счету не хватает средств! 😔 Поиграйте в Гача-Рулетку.", show_alert=True)
+
+@bot.message_handler(commands=['fix_buttons'])
+def remove_stuck_buttons(message):
+    bot.send_message(
+        message.chat.id, 
+        "🧹 Убираю залипшие кнопки...", 
+        reply_markup=ReplyKeyboardRemove()
+    )

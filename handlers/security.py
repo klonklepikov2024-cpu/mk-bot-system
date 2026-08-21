@@ -855,8 +855,12 @@ def handle_admin_report_decision(call):
 
 def check_fsm_state(message):
     """Проверяет, ждет ли бот от юзера какого-то ввода"""
+    # 👇 ЗАЩИТА: Бот игнорирует ввод данных, если это происходит в общей группе
+    if message.chat.type != 'private':
+        return False
+        
     state = db['user_states'].find_one({"uid": message.from_user.id})
-    return bool(state) # Вернет True, если юзер есть в базе состояний
+    return bool(state)
 
 @bot.message_handler(func=check_fsm_state, content_types=['text', 'photo', 'document', 'video', 'voice', 'audio'])
 def handle_fsm_states(message):
