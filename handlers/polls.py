@@ -38,8 +38,15 @@ def get_todays_holidays():
         for h in h_list:
             h_clean = re.sub(r'<[^>]+>', '', h).strip()
             h_lower = h_clean.lower()
-            # Проверяем длину и отсутствие стоп-слов
-            if len(h_clean) > 5 and "праздник" not in h_lower and not any(stop in h_lower for stop in stop_words):
+            
+            # 🔥 Защита от мусорных заголовков сайта
+            is_garbage = "календарь" in h_lower or "202" in h_lower or "праздник" in h_lower
+            
+            # Проверяем длину, отсутствие стоп-слов и мусора
+            if len(h_clean) > 5 and len(h_clean) < 60 and not is_garbage and not any(stop in h_lower for stop in stop_words):
+                # Добавляем "День" в начало, если это просто слово
+                if not h_clean.lower().startswith("день"):
+                    h_clean = f"День: {h_clean}"
                 valid.append(h_clean)
         return valid
 
