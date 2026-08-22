@@ -9,11 +9,12 @@ from telebot.apihelper import ApiTelegramException
 
 from core.bot import bot
 from core.scheduler import scheduler
-from config import GROQ_API_KEYS, OPENROUTER_API_KEY, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, STAFF_GROUP_ID
+# УБРАЛИ КЛЮЧ ИЗ ИМПОРТА ОТСЮДА 👇
+from config import GROQ_API_KEYS, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, STAFF_GROUP_ID
 from utils.logger import logger
 import os
 
-# Скайнет сам возьмет ключ из настроек Render
+# Скайнет сам возьмет ключ из настроек Render 👇 (И ПОЛУЧИТ ЕГО ЗДЕСЬ)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
