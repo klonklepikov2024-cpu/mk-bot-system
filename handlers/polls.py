@@ -2,6 +2,7 @@ import time
 import datetime
 import requests
 import json
+import re
 from telebot.apihelper import ApiTelegramException
 
 from core.bot import bot
@@ -12,30 +13,58 @@ from utils.logger import logger
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
 DONOR_GROUP_ID = -1003107308525 
 
+# ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ =================
+def get_todays_holidays():
+    """Скрипт заходит на сайт и собирает реальные праздники на сегодня"""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=5)
+        res.encoding = 'utf-8'
+        # Вытаскиваем названия праздников прямо из HTML-кода сайта
+        holidays = re.findall(r'<span itemprop="text">([^<]+)</span>', res.text)
+        if holidays:
+            # Берем первые 5 праздников, чтобы у ИИ был выбор
+            return ", ".join(holidays[:5])
+    except Exception as e:
+        logger.warning(f"Ошибка парсинга праздников: {e}")
+    return "День спонтанных знакомств, День вкусной еды, День лени"
+
 # ================= ТЕСТОВАЯ КОМАНДА =================
 @bot.message_handler(commands=['test_poll'])
 def test_poll_cmd(message):
-    # Защита: команду может вызвать только владелец (ты) или кто-то из админского чата
     if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != 479938867:
         return
-    bot.reply_to(message, "⏳ *Скайнет генерирует тестовый опрос... Пожалуйста, подождите пару секунд.*", parse_mode="Markdown")
+    bot.reply_to(message, "⏳ *Скайнет ищет праздники и придумывает горячий опрос... Ждите.*", parse_mode="Markdown")
     generate_and_send_daily_poll(is_test=True)
 # ====================================================
 
 def generate_and_send_daily_poll(is_test=False):
     """Генерация и рассылка опроса дня ровно в 00:00 (или по команде теста)"""
     now = datetime.datetime.now()
-    today_str = now.strftime("%d.%m")
+    today_str = now.strftime("%d.%m.%Y")
     
-    # ================= 1. ГЕНЕРАЦИЯ ИДЕИ ЧЕРЕЗ ИИ (GROQ) =================
+    # 1. Получаем список реальных праздников на сегодня!
+    real_holidays = get_todays_holidays()
+    
+    # ================= 2. ЖЕСТКАЯ ИНСТРУКЦИЯ ДЛЯ ИИ (ПРОМПТ) =================
     prompt = f"""
-    Сегодня {today_str}. Узнай или придумай забавный неофициальный праздник на этот день.
-    Придумай смешной, жизненный опрос для мужских и гей-чатов с легким эротическим или провокационным подтекстом.
+    Сегодня {today_str}. В реальном календаре сегодня отмечаются: {real_holidays}.
     
-    Требования:
-    1. 1 Вопрос (строго до 255 символов) с упоминанием праздника.
-    2. Ровно 10 вариантов ответа (каждый строго ДО 100 символов, иначе Телеграм выдаст ошибку!), включая шуточные.
-    
+    ТВОЯ ЗАДАЧА: Выбери ОДИН самый забавный праздник из списка выше и придумай к нему ГОРЯЧИЙ опрос для мужского ГЕЙ-чата знакомств (18+).
+
+    СТРОГИЕ ТРЕБОВАНИЯ:
+    1. ВОПРОС (до 255 символов): Упомяни выбранный праздник. Сделай подводку максимально игривой, пошлой и провоцирующей на флирт. Обязательно используй эмодзи!
+    2. ВАРИАНТЫ ОТВЕТОВ (РОВНО 10 штук, каждый до 100 символов): 
+       - Они должны быть жизненными, смешными и пошлыми.
+       - ОБЯЗАТЕЛЬНО используй гей-сленг (актив, пассив, универсал, стояк, нюдсы, 20+ см, БДСМ и т.д.).
+       - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО должен стоять подходящий эмодзи (например: 🍑, 🍆, 💦, 😈, 🥵, 🌈, 👅, 🔞).
+       
+    ПРИМЕР КРУТЫХ ОТВЕТОВ:
+    "🍑 Я чистый пассив, жду жесткого актива на вечер"
+    "🍆 Уверенный актив: люблю наказывать и доминировать"
+    "💦 Скину свои горячие нюдсы в личку первому встречному"
+    "😈 Универсал: подстроюсь под красивого парня"
+
     Верни ответ СТРОГО в формате JSON:
     {{"question": "текст вопроса", "options": ["вариант 1", "вариант 2", ..., "вариант 10"]}}
     """
@@ -50,7 +79,7 @@ def generate_and_send_daily_poll(is_test=False):
                     "model": "openai/gpt-oss-120b", 
                     "response_format": {"type": "json_object"},
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7,
+                    "temperature": 0.75, # Чуть повысили креативность
                     "max_tokens": 800
                 },
                 timeout=20
@@ -63,38 +92,37 @@ def generate_and_send_daily_poll(is_test=False):
             continue
 
     if not ai_data or "question" not in ai_data:
-        logger.error("❌ Не удалось сгенерировать опрос ИИ")
-        try: bot.send_message(STAFF_GROUP_ID, "❌ Ошибка: Скайнет не смог сгенерировать ежедневный опрос. API не ответил.")
+        try: bot.send_message(STAFF_GROUP_ID, "❌ Ошибка: Скайнет не смог сгенерировать опрос.")
         except: pass
         return
 
-    # ================= 2. ПУБЛИКАЦИЯ В ГРУППУ-ДОНОР =================
-    close_time = int(time.time()) + 86400 # Ровно 24 часа жизни опроса
+    # ================= 3. ПУБЛИКАЦИЯ В ГРУППУ-ДОНОР =================
+    close_time = int(time.time()) + 86400
 
     try:
         poll_msg = bot.send_poll(
             chat_id=DONOR_GROUP_ID,
             question=ai_data["question"],
-            options=ai_data["options"][:10], # Страховка: берем максимум 10 ответов
-            is_anonymous=False,              # Имена участников открыты
-            allows_multiple_answers=True,    # Несколько ответов
-            close_date=close_time            # Таймер до закрытия
+            options=ai_data["options"][:10],
+            is_anonymous=False,
+            allows_multiple_answers=True,
+            close_date=close_time
         )
     except Exception as e:
-        logger.error(f"❌ Ошибка публикации опроса в донор: {e}")
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (проверьте длину текста): {e}")
+        logger.error(f"❌ Ошибка публикации опроса: {e}")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (проверьте длину): {e}")
         except: pass
         return
 
-    # 🔥 ЗАЩИТА ПРИ ТЕСТЕ: ЕСЛИ ЭТО ТЕСТ - ОСТАНАВЛИВАЕМ КОД ЗДЕСЬ 🔥
+    # 🔥 ЗАЩИТА ПРИ ТЕСТЕ: ЕСЛИ ЭТО ТЕСТ - ОСТАНАВЛИВАЕМСЯ 🔥
     if is_test:
-        try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован, но рассылка по сетке **ОТКЛЮЧЕНА**.", parse_mode="Markdown")
+        try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован (на основе реальных праздников!), рассылка ОТКЛЮЧЕНА.", parse_mode="Markdown")
         except: pass
-        try: bot.send_message(STAFF_GROUP_ID, "✅ **Тестовый опрос готов!**\nПосмотрите результат в группе «Ваше мнение...». Рассылка по группам отключена.", parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, "✅ **Тестовый опрос готов!**\nПосмотрите результат в группе-доноре.", parse_mode="Markdown")
         except: pass
         return
 
-    # ================= 3. МАССОВАЯ РАССЫЛКА ПО СЕТКЕ =================
+    # ================= 4. МАССОВАЯ РАССЫЛКА ПО СЕТКЕ =================
     all_target_chats = []
     all_target_chats.extend(chat_ids_mk.values())
     all_target_chats.extend(chat_ids_parni.values())
@@ -110,23 +138,22 @@ def generate_and_send_daily_poll(is_test=False):
                 message_id=poll_msg.message_id
             )
             success_count += 1
-            time.sleep(0.5) # Защита от флуд-контроля Telegram
-        except ApiTelegramException as e:
-            logger.debug(f"Игнор ошибки пересылки в {chat_id}: {e}")
+            time.sleep(0.5)
+        except ApiTelegramException:
+            pass
 
-    # ================= 4. ОТЧЕТ АДМИНАМ =================
+    # ================= 5. ОТЧЕТ АДМИНАМ =================
     report_text = f"✅ **Авто-Опрос запущен!**\nСкайнет успешно сгенерировал опрос дня и разослал его в {success_count} чатов.\nОн закроется автоматически через 24 часа."
     try: bot.send_message(DONOR_GROUP_ID, report_text, parse_mode="Markdown")
     except: pass
     try: bot.send_message(STAFF_GROUP_ID, report_text, parse_mode="Markdown")
     except: pass
 
-# Планировщик по-прежнему работает и ждет полночи для боевого запуска
 scheduler.add_job(
     generate_and_send_daily_poll, 
     'cron', 
-    hour=0,      # Час запуска (Полночь)
-    minute=0,    # Минуты
+    hour=0,      
+    minute=0,    
     id="daily_auto_poll", 
     replace_existing=True 
 )
