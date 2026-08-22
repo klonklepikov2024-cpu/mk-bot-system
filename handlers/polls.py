@@ -70,7 +70,7 @@ def generate_and_send_daily_poll(is_test=False):
     for key in GROQ_API_KEYS:
         try:
             res = requests.post(
-                "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={
                     "model": "openai/gpt-oss-120b", 
