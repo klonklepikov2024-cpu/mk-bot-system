@@ -15,6 +15,7 @@ import handlers.security
 import handlers.admin
 import handlers.casino
 import handlers.payments
+import handlers.polls       # <--- ДОБАВИТЬ ЭТУ СТРОКУ СЮДА
 import handlers.market  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
 import handlers.start_menu # <--- ГЛАВНОЕ МЕНЮ ВСЕГДА В САМОМ НИЗУ!
 
