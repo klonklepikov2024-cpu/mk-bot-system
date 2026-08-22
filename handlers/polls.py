@@ -18,26 +18,53 @@ DONOR_GROUP_ID = -1003107308525
 
 # ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ =================
 def get_todays_holidays():
-    """Скрипт заходит на сайт и собирает реальные праздники на сегодня"""
+    """Скрипт заходит на сайты и собирает реальные праздники на сегодня"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
+
+    # Попытка 1: Основной сайт
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=5)
         res.encoding = 'utf-8'
         
-        # Делаем поиск более гибким: игнорируем другие атрибуты в теге
+        # Ищем любые блоки с классом, похожим на название праздника (они часто меняют верстку)
         holidays = re.findall(r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>', res.text)
+        if not holidays: # Альтернативный поиск по заголовкам
+             holidays = re.findall(r'<h4[^>]*>(.*?)</h4>', res.text)
+             
+        if holidays:
+            clean_holidays = [re.sub(r'<[^>]+>', '', h).strip() for h in holidays if h.strip()]
+            # Отфильтровываем слишком короткие или технические строки
+            valid_holidays = [h for h in clean_holidays if len(h) > 5 and "праздник" not in h.lower()][:5]
+            if valid_holidays:
+                return ", ".join(valid_holidays)
+    except Exception as e:
+        logger.warning(f"Ошибка парсинга kakoysegodnyaprazdnik: {e}")
+
+    # Попытка 2: Запасной сайт (если первый не ответил или поменял дизайн)
+    try:
+        res = requests.get('https://my-calend.ru/holidays', headers=headers, timeout=5)
+        res.encoding = 'utf-8'
+        
+        # Ищем названия праздников в списках на my-calend
+        holidays = re.findall(r'<li[^>]*><a[^>]*>(.*?)</a></li>', res.text)
         
         if holidays:
-            # Очищаем от случайных вложенных тегов, если они появились
-            clean_holidays = [re.sub(r'<[^>]+>', '', h).strip() for h in holidays]
-            return ", ".join(clean_holidays[:5])
-            
+            clean_holidays = [re.sub(r'<[^>]+>', '', h).strip() for h in holidays if h.strip()]
+            if clean_holidays:
+                return ", ".join(clean_holidays[:5])
     except Exception as e:
-        logger.warning(f"Ошибка парсинга праздников: {e}")
-        
-    # Запасной вариант, если сайт недоступен (чтобы не было сюрпризов)
-    today_str = datetime.datetime.now().strftime("%d.%m")
-    return f"День мужской солидарности, Пятница-развратница, День отличного настроения ({today_str})"
+        logger.warning(f"Ошибка парсинга my-calend: {e}")
+
+    # Попытка 3: Экстренный резерв (формируется из текущей даты)
+    now = datetime.datetime.now()
+    months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+    today_date = f"{now.day} {months[now.month - 1]}"
+    
+    return f"День спонтанных сюрпризов, Праздник отличного настроения, День общения ({today_date})"
 
 # ================= ТЕСТОВАЯ КОМАНДА =================
 @bot.message_handler(commands=['test_poll'])
@@ -68,15 +95,15 @@ def generate_and_send_daily_poll(is_test=False):
     user_prompt = f"""
     Сегодня {today_str}. Праздники: {real_holidays}.
 
-    ТВОЯ РОЛЬ: Ты — циничный и пошлый стендап-комик, выступающий в закрытом мужском гей-клубе (18+). Тебе нужно написать сценарий интерактивного опроса для зрителей. Твой стиль: жесткий юмор, сарказм, клубный сленг.
+    ТВОЯ РОЛЬ: Ты — харизматичный и дерзкий ведущий в закрытом мужском клубе (18+). Тебе нужно написать провокационный опрос для участников. Твой стиль: взрослый юмор, флирт, сарказм и клубный сленг.
 
     Правила:
     - Выбери один праздник из списка для темы опроса.
-    - Вопрос: упомяни праздник, добавь грязный флирт и эмодзи.
+    - Вопрос: упомяни праздник, сделай горячую подводку к опросу и добавь эмодзи.
     - Ровно 10 вариантов ответа (каждый начинается с эмодзи).
-    - Используй клубный сленг зрителей (актив, пассив, универсал, топ, боттом).
-    - Используй нецензурную лексику для усиления шуток (пидор, хуй, трахать, дрочить и т.д.).
-    - Сделай ответы жизненными и сексуальными. Никакой романтики, только суровая мужская комедия!
+    - Используй сленг чата знакомств (актив, пассив, универсал, топ, боттом).
+    - Сделай ответы жизненными, смешными и с явным интимным подтекстом (18+).
+    - ВАЖНО: Будь пошлым и сексуальным, но БЕЗ откровенной чернухи, токсичности и прямых оскорблений пользователей. Держи баланс между страстью и юмором!
 
     Выведи ТОЛЬКО JSON В ФОРМАТЕ НИЖЕ:
     {{
