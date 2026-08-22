@@ -107,9 +107,10 @@ def generate_and_send_daily_poll(is_test=False):
 
     # Список бесплатных моделей OpenRouter, которые поддерживают JSON
     models_to_try = [
-        "meta-llama/llama-3.3-70b-instruct:free", # Llama лучше всего понимает JSON
-        "nvidia/nemotron-4-340b-instruct:free",   # Запасная мощная модель
-        "qwen/qwen-2-72b-instruct:free"           # Хорошо понимает русский и менее цензурирована
+        "openrouter/free",                    # пусть сам выберет рабочую free
+        "openai/gpt-oss-120b:free",
+        "openai/gpt-oss-20b:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",           # Хорошо понимает русский и менее цензурирована
     ]
 
     for model in models_to_try:
