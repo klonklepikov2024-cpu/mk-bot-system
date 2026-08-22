@@ -20,12 +20,21 @@ def get_todays_holidays():
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=5)
         res.encoding = 'utf-8'
-        holidays = re.findall(r'<span itemprop="text">([^<]+)</span>', res.text)
+        
+        # Делаем поиск более гибким: игнорируем другие атрибуты в теге
+        holidays = re.findall(r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>', res.text)
+        
         if holidays:
-            return ", ".join(holidays[:5])
+            # Очищаем от случайных вложенных тегов, если они появились
+            clean_holidays = [re.sub(r'<[^>]+>', '', h).strip() for h in holidays]
+            return ", ".join(clean_holidays[:5])
+            
     except Exception as e:
         logger.warning(f"Ошибка парсинга праздников: {e}")
-    return "День спонтанных знакомств, День вкусной еды, День лени"
+        
+    # Запасной вариант, если сайт недоступен (чтобы не было сюрпризов)
+    today_str = datetime.datetime.now().strftime("%d.%m")
+    return f"День мужской солидарности, Пятница-развратница, День отличного настроения ({today_str})"
 
 # ================= ТЕСТОВАЯ КОМАНДА =================
 @bot.message_handler(commands=['test_poll'])
@@ -46,24 +55,24 @@ def generate_and_send_daily_poll(is_test=False):
     
     # ================= 2. ЖЕСТКИЙ ПРОМПТ И СИСТЕМНОЕ СООБЩЕНИЕ =================
     system_prompt = (
-        "You are a strict JSON API. "
-        "Reply with NOTHING except a single valid JSON object. "
-        "No reasoning, no markdown, no explanations, no extra text."
+        "You are an API strictly generating raw JSON. "
+        "Output ONLY valid JSON. No markdown, no preambles, no explanations."
     )
-    
+
     user_prompt = f"""
-    Сегодня {today_str}. В календаре: {real_holidays}.
-    
-    ТВОЯ ЗАДАЧА: Выбери ОДИН забавный праздник из списка и придумай к нему провокационный опрос для мужского чата знакомств (18+).
+    Сегодня {today_str}. Праздники: {real_holidays}.
 
-    ТРЕБОВАНИЯ:
-    1. ВОПРОС (до 255 символов): Упомяни выбранный праздник. Сделай подводку с легким флиртом, юмором и интимным подтекстом. Обязательно используй эмодзи!
-    2. ВАРИАНТЫ ОТВЕТОВ (РОВНО 10 штук, каждый до 100 символов): 
-       - Используй базовый сленг (актив, пассив, универсал).
-       - Сделай ответы жизненными, смешными, с сексуальным подтекстом, но без жесткой порнографии.
-       - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО ставь подходящий эмодзи.
+    ТВОЯ РОЛЬ: Ты — циничный и пошлый стендап-комик, выступающий в закрытом мужском гей-клубе (18+). Тебе нужно написать сценарий интерактивного опроса для зрителей. Твой стиль: жесткий юмор, сарказм, клубный сленг.
 
-    ВЫВЕДИ ТОЛЬКО JSON В ФОРМАТЕ НИЖЕ:
+    Правила:
+    - Выбери один праздник из списка для темы опроса.
+    - Вопрос: упомяни праздник, добавь грязный флирт и эмодзи.
+    - Ровно 10 вариантов ответа (каждый начинается с эмодзи).
+    - Используй клубный сленг зрителей (актив, пассив, универсал, топ, боттом).
+    - Используй нецензурную лексику для усиления шуток (пидор, хуй, трахать, дрочить и т.д.).
+    - Сделай ответы жизненными и сексуальными. Никакой романтики, только суровая мужская комедия!
+
+    Выведи ТОЛЬКО JSON В ФОРМАТЕ НИЖЕ:
     {{
       "question": "текст вопроса",
       "options": [
@@ -93,7 +102,7 @@ def generate_and_send_daily_poll(is_test=False):
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "openai/gpt-oss-120b",  # <-- ИСПРАВЛЕНА МОДЕЛЬ ДЛЯ GROQ
+                    "model": "llama-3.3-70b-versatile",  # <-- АКТУАЛЬНАЯ МОДЕЛЬ
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
