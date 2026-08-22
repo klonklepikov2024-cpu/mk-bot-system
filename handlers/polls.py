@@ -26,46 +26,59 @@ def get_todays_holidays():
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
     }
 
+    # 🔥 СТОП-СЛОВА: убираем религию, трагедии и дни памяти, чтобы не присесть
+    stop_words = [
+        'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памяти',
+        'христ', 'господ', 'богородиц', 'апостол', 'преподоб', 'религ', 'жертв',
+        'трагед', 'войн', 'смерт', 'погибш', 'скорб', 'террор', 'ислам', 'аллах', 'иудей'
+    ]
+
+    def filter_holidays(h_list):
+        valid = []
+        for h in h_list:
+            h_clean = re.sub(r'<[^>]+>', '', h).strip()
+            h_lower = h_clean.lower()
+            # Проверяем длину и отсутствие стоп-слов
+            if len(h_clean) > 5 and "праздник" not in h_lower and not any(stop in h_lower for stop in stop_words):
+                valid.append(h_clean)
+        return valid
+
     # Попытка 1: Основной сайт
     try:
         res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=5)
         res.encoding = 'utf-8'
         
-        # Ищем любые блоки с классом, похожим на название праздника (они часто меняют верстку)
         holidays = re.findall(r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>', res.text)
-        if not holidays: # Альтернативный поиск по заголовкам
+        if not holidays:
              holidays = re.findall(r'<h4[^>]*>(.*?)</h4>', res.text)
              
         if holidays:
-            clean_holidays = [re.sub(r'<[^>]+>', '', h).strip() for h in holidays if h.strip()]
-            # Отфильтровываем слишком короткие или технические строки
-            valid_holidays = [h for h in clean_holidays if len(h) > 5 and "праздник" not in h.lower()][:5]
+            valid_holidays = filter_holidays(holidays)
             if valid_holidays:
-                return ", ".join(valid_holidays)
+                return ", ".join(valid_holidays[:5])
     except Exception as e:
         logger.warning(f"Ошибка парсинга kakoysegodnyaprazdnik: {e}")
 
-    # Попытка 2: Запасной сайт (если первый не ответил или поменял дизайн)
+    # Попытка 2: Запасной сайт
     try:
         res = requests.get('https://my-calend.ru/holidays', headers=headers, timeout=5)
         res.encoding = 'utf-8'
         
-        # Ищем названия праздников в списках на my-calend
         holidays = re.findall(r'<li[^>]*><a[^>]*>(.*?)</a></li>', res.text)
         
         if holidays:
-            clean_holidays = [re.sub(r'<[^>]+>', '', h).strip() for h in holidays if h.strip()]
-            if clean_holidays:
-                return ", ".join(clean_holidays[:5])
+            valid_holidays = filter_holidays(holidays)
+            if valid_holidays:
+                return ", ".join(valid_holidays[:5])
     except Exception as e:
         logger.warning(f"Ошибка парсинга my-calend: {e}")
 
-    # Попытка 3: Экстренный резерв (формируется из текущей даты)
+    # Попытка 3: Экстренный резерв
     now = datetime.datetime.now()
     months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
     today_date = f"{now.day} {months[now.month - 1]}"
     
-    return f"День спонтанных сюрпризов, Праздник отличного настроения, День общения ({today_date})"
+    return f"День спонтанных сюрпризов, День отличного настроения, День общения ({today_date})"
 
 # ================= ТЕСТОВАЯ КОМАНДА =================
 @bot.message_handler(commands=['test_poll'])
