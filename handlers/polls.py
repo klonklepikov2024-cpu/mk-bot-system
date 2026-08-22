@@ -102,7 +102,7 @@ def generate_and_send_daily_poll(is_test=False):
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",  # <-- АКТУАЛЬНАЯ МОДЕЛЬ
+                    "model": "openai/gpt-oss-120b",  # <-- АКТУАЛЬНАЯ МОДЕЛЬ
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
