@@ -380,6 +380,7 @@ def process_payout_details(message, cb_balance, method):
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     safe_username = username.replace('_', '\\_') 
     
+    from config import FINANCE_THREAD_ID
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
         InlineKeyboardButton("✅ Выплачено", callback_data=f"payout_done_{uid}_{cb_balance}"),
@@ -389,7 +390,9 @@ def process_payout_details(message, cb_balance, method):
     bot.send_message(
         STAFF_GROUP_ID,
         f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n👤 От: {safe_username} (`{uid}`)\n💵 Сумма к выдаче: **{cb_balance} руб.**\n🏦 Способ: **{method_names[method]}**\n📝 Реквизиты юзера:\n`{details}`\n\nСделайте перевод и нажмите кнопку подтверждения:",
-        reply_markup=markup, parse_mode="Markdown"
+        reply_markup=markup, 
+        parse_mode="Markdown",
+        message_thread_id=FINANCE_THREAD_ID # Отправляем в папку финансов
     )
     bot.send_message(message.chat.id, "✅ **Заявка на выплату успешно создана!**\nСумма списана с баланса. Ожидайте поступления средств на указанные реквизиты.")
 

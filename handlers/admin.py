@@ -1114,7 +1114,15 @@ def process_tag_input(message):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     markup = InlineKeyboardMarkup(row_width=2).add(InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"), InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}"))
-    try: bot.send_message(STAFF_GROUP_ID, f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ</b>\n\n👤 От: {name} (<code>{uid}</code>)\n📝 Желаемый тег: <b>{tag_text}</b>\n\nОдобрить установку?", parse_mode="HTML", reply_markup=markup)
+    from config import PRIZES_THREAD_ID
+    try: 
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ</b>\n\n👤 От: {name} (<code>{uid}</code>)\n📝 Желаемый тег: <b>{tag_text}</b>\n\nОдобрить установку?", 
+            parse_mode="HTML", 
+            reply_markup=markup, 
+            message_thread_id=PRIZES_THREAD_ID # Отправляем в папку призов
+        )
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
@@ -1190,16 +1198,17 @@ def process_premium_claim(message):
         "status": "pending"
     }) # <--- ДОБАВИЛИ СКОБКУ }
     
+    from config import PRIZES_THREAD_ID
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"https://{APP_URL}/glaz"))
     try:
-        # Уведомляем админов, но теперь без лишних кнопок "Выдано" в самом ТГ
         bot.send_message(
             STAFF_GROUP_ID, 
             f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)</b> 🏆\n\n"
             f"👤 Победитель: {name} ({username})\n\n"
             f"❗️ <i>Заявка добавлена в Веб-панель (раздел «Награды»).</i>", 
             parse_mode="HTML", 
-            reply_markup=markup
+            reply_markup=markup,
+            message_thread_id=PRIZES_THREAD_ID # Отправляем в папку призов
         )
         bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена! С вами скоро свяжутся.")
     except Exception as e: 
@@ -1254,10 +1263,17 @@ def process_arrest_claim(message, code):
     uid, name, username = message.from_user.id, message.from_user.first_name, f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
     db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
     
+    from config import PRIZES_THREAD_ID
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}"))
     try:
         safe_cause = html.escape(message.text)
-        bot.send_message(STAFF_GROUP_ID, f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{safe_cause}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", parse_mode="HTML", reply_markup=markup)
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{safe_cause}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", 
+            parse_mode="HTML", 
+            reply_markup=markup,
+            message_thread_id=PRIZES_THREAD_ID # Отправляем в папку призов
+        )
         bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
