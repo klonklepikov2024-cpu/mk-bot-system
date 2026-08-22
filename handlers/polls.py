@@ -21,26 +21,30 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
 DONOR_GROUP_ID = -1003107308525 
 
-# ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ (RSS) =================
+# ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ =================
 def get_todays_holidays():
-    """Неубиваемый парсер через RSS-ленты (никаких меню и стран)"""
+    """Парсер, который ищет только НЕОБЫЧНЫЕ и ЗАБАВНЫЕ праздники"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml'
+        'Accept-Language': 'ru-RU,ru;q=0.9'
     }
 
-    # Наш выстраданный фильтр от религии и трагедий
+    # 🔥 РАСШИРЕННЫЙ ФИЛЬТР: религия + ВОЕННЫЕ, ПОЛИТИЧЕСКИЕ И ТРАГИЧЕСКИЕ
     stop_words = [
+        # Религия и трагедии
         'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памят',
         'христ', 'господ', 'богородиц', 'апостол', 'преподоб', 'религ', 'жертв',
         'трагед', 'войн', 'смерт', 'погибш', 'скорб', 'террор', 'ислам', 'аллах', 'иудей',
-        'именин', 'ангел'
+        'именин', 'ангел', 
+        # Военные, исторические и государственные (ЧТОБЫ БЕЗ ДИЧИ)
+        'битв', 'войск', 'арми', 'фашист', 'ссср', 'геро', 'отечеств', 'республик', 
+        'государств', 'национальн', 'флаг', 'герб', 'независимост', 'конституци', 
+        'полици', 'вдв', 'мвд', 'фсб', 'президент'
     ]
 
     def is_good(text: str) -> bool:
         text = text.strip()
-        # Если строка слишком короткая — это мусор (реальные праздники длиннее 8 букв)
-        if len(text) < 8 or len(text) > 80:
+        if len(text) < 7 or len(text) > 80:
             return False
         lower = text.lower()
         if any(sw in lower for sw in stop_words):
@@ -51,43 +55,50 @@ def get_todays_holidays():
 
     found = []
 
-    # === 1. RSS главного сайта ===
+    # === 1. Calend.ru (Раздел: НЕОБЫЧНЫЕ праздники) ===
     try:
-        res = requests.get('https://kakoysegodnyaprazdnik.ru/rss/', headers=headers, timeout=10)
+        # Идем ТОЛЬКО в раздел забавных праздников! 
+        res = requests.get('https://www.calend.ru/holidays/unusual/', headers=headers, timeout=10)
         res.encoding = 'utf-8'
         
-        # В RSS названия лежат строго в тегах <title> внутри <item>
-        matches = re.findall(r'<item>\s*<title>(.*?)</title>', res.text, re.IGNORECASE | re.DOTALL)
-        for m in matches:
-            clean = re.sub(r'<[^>]+>', '', m).replace('<![CDATA[', '').replace(']]>', '').strip()
-            if is_good(clean) and clean not in found:
-                found.append(clean)
-                
-        if found:
-            logger.info(f"✅ Праздники (RSS 1): {found[:5]}")
-            return ", ".join(found[:5])
-    except Exception as e:
-        logger.warning(f"Ошибка RSS 1: {e}")
+        matches = re.findall(r'<span class="title"[^>]*>\s*<a[^>]*>(.*?)</a>', res.text, re.I | re.S)
+        if not matches:
+            matches = re.findall(r'<a[^>]+href="/holidays/[^"]*"[^>]*>(.*?)</a>', res.text, re.I | re.S)
 
-    # === 2. RSS Calend.ru ===
-    try:
-        res = requests.get('https://www.calend.ru/img/export/calend.rss', headers=headers, timeout=10)
-        res.encoding = 'utf-8'
-        
-        matches = re.findall(r'<item>\s*<title>(.*?)</title>', res.text, re.IGNORECASE | re.DOTALL)
         for m in matches:
-            clean = re.sub(r'<[^>]+>', '', m).replace('<![CDATA[', '').replace(']]>', '').strip()
-            if is_good(clean) and clean not in found:
+            clean = re.sub(r'<[^>]+>', '', m).strip()
+            # Отсекаем мусор и менюшки
+            if is_good(clean) and clean not in found and "календарь" not in clean.lower():
                 found.append(clean)
-                
+            if len(found) >= 5:
+                break
+
         if found:
-            logger.info(f"✅ Праздники (RSS 2): {found[:5]}")
+            logger.info(f"✅ Праздники (Забавные): {found[:5]}")
             return ", ".join(found[:5])
     except Exception as e:
-        logger.warning(f"Ошибка RSS 2: {e}")
+        logger.warning(f"Ошибка calend.ru/unusual: {e}")
+        
+    # === 2. Прямой RSS-запрос на запасной сайт (без менюшек) ===
+    try:
+        res = requests.get('https://my-calend.ru/rss', headers=headers, timeout=10)
+        res.encoding = 'utf-8'
+        matches = re.findall(r'<title>(.*?)</title>', res.text, re.I)
+        for m in matches:
+            clean = re.sub(r'<[^>]+>', '', m).replace('<![CDATA[', '').replace(']]>', '').strip()
+            if is_good(clean) and clean not in found and "календар" not in clean.lower() and "my-calend" not in clean.lower():
+                found.append(clean)
+            if len(found) >= 5:
+                break
+                
+        if found:
+            logger.info(f"✅ Праздники (RSS my-calend): {found[:5]}")
+            return ", ".join(found[:5])
+    except Exception as e:
+        logger.warning(f"Ошибка RSS my-calend: {e}")
 
     # === 3. ЖЕЛЕЗОБЕТОННЫЙ РЕЗЕРВ ===
-    logger.warning("🌐 RSS недоступны! Включаю встроенную заначку.")
+    logger.warning("🌐 Парсеры недоступны! Включаю встроенную заначку.")
     backup_holidays = [
         "День спонтанных сюрпризов", "День горячих поцелуев", "День мужской солидарности",
         "День беззаботности и лени", "День откровенных разговоров", "День экспериментов в постели",
