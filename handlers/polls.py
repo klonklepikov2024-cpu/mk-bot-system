@@ -45,8 +45,7 @@ def generate_and_send_daily_poll(is_test=False):
     real_holidays = get_todays_holidays()
     
     # ================= 2. ЖЕСТКИЙ ПРОМПТ И СИСТЕМНОЕ СООБЩЕНИЕ =================
-    # Системный промпт заставляет модель отключить "болтливость"
-    system_prompt = "You are an API that ONLY outputs valid, raw JSON. Do not output any conversational text. Do not use markdown code blocks (like ```json). Just the raw JSON object."
+    system_prompt = "You are a strict data API. Your only purpose is to generate JSON. You must reply with a valid, raw JSON object starting with { and ending with }. No intro, no outro, no markdown formatting."
     
     user_prompt = f"""
     Сегодня {today_str}. В календаре: {real_holidays}.
@@ -58,10 +57,24 @@ def generate_and_send_daily_poll(is_test=False):
     2. ВАРИАНТЫ ОТВЕТОВ (РОВНО 10 штук, каждый до 100 символов): 
        - Используй базовый сленг (актив, пассив, универсал).
        - Сделай ответы жизненными, смешными, с сексуальным подтекстом, но без жесткой порнографии.
-       - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО ставь подходящий эмодзи (например: 🍑, 🍆, 💦, 😈, 🔥, 🥵, 😏, 🔞).
+       - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО ставь подходящий эмодзи.
 
-    ВЫВЕДИ СТРОГО СЛЕДУЮЩИЙ JSON И БОЛЬШЕ НИЧЕГО:
-    {{"question": "текст вопроса", "options": ["вариант 1", "вариант 2", "...", "вариант 10"]}}
+    ВЫВЕДИ ТОЛЬКО JSON В ФОРМАТЕ НИЖЕ:
+    {{
+      "question": "текст вопроса",
+      "options": [
+        "вариант 1",
+        "вариант 2",
+        "вариант 3",
+        "вариант 4",
+        "вариант 5",
+        "вариант 6",
+        "вариант 7",
+        "вариант 8",
+        "вариант 9",
+        "вариант 10"
+      ]
+    }}
     """
 
     ai_data = None
