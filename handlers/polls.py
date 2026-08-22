@@ -30,10 +30,11 @@ def get_todays_holidays():
     }
 
     stop_words = [
-        'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памяти',
+        'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памят',
         'христ', 'господ', 'богородиц', 'апостол', 'преподоб', 'религ', 'жертв',
         'трагед', 'войн', 'смерт', 'погибш', 'скорб', 'террор', 'ислам', 'аллах', 'иудей',
-        'именин', 'день ангела', 'календарь', 'праздник'
+        'именин', 'ангел', 'календар', 'праздник', 'гороскоп', 'зодиак', 'сонник',
+        'гадан', 'примет', 'лунн', 'астролог', 'имен', 'совместимост', 'солнц', 'выбор'
     ]
 
     def is_good_holiday(text: str) -> bool:
@@ -161,7 +162,7 @@ def generate_and_send_daily_poll(is_test=False):
 
     Правила:
     - Вопрос: ОБЯЗАТЕЛЬНО используй РОВНО ТУ ТЕМУ, которую я тебе дал ({selected_holiday}). НЕ ВЫДУМЫВАЙ свои праздники (никаких гороскопов и знаков зодиака!). Сделай горячую подводку к этой теме и добавь эмодзи.
-    - Ровно 10 вариантов ответа (каждый начинается с эмодзи). ОЧЕНЬ КОРОТКО! Максимум 10-12 слов на ответ. Телеграм запрещает ответы длиннее 100 символов, будь лаконичен!
+    - Ровно 12 вариантов ответа (каждый начинается с эмодзи). ОЧЕНЬ КОРОТКО! Максимум 10-12 слов на ответ. Телеграм запрещает ответы длиннее 100 символов, будь лаконичен!
     - Используй сленг чата знакомств (актив, пассив, универсал, топ, боттом).
     - Сделай ответы жизненными, смешными и с явным интимным подтекстом (18+).
     - ВАЖНО: Будь пошлым и сексуальным, но БЕЗ откровенной чернухи, токсичности и прямых оскорблений. Держи баланс между страстью и юмором!
@@ -179,7 +180,9 @@ def generate_and_send_daily_poll(is_test=False):
         "вариант 7",
         "вариант 8",
         "вариант 9",
-        "вариант 10"
+        "вариант 10",
+        "вариант 11",
+        "вариант 12"
       ]
     }}
     """
@@ -241,16 +244,18 @@ def generate_and_send_daily_poll(is_test=False):
                     last_error = f"[{model}] Пустой контент"
                     continue
                     
-                content = content.strip()
-                
-                if content.startswith("```"):
-                    content = re.sub(r"^```(?:json)?\s*", "", content)
-                    content = re.sub(r"\s*```$", "", content)
+                # 🔥 УМНЫЙ ПОИСК JSON 🔥
+                # Ищем всё, что находится между первой { и последней }
+                match = re.search(r'\{[\s\S]*\}', content)
+                if match:
+                    clean_json_str = match.group(0)
+                else:
+                    clean_json_str = content # Если не нашли скобок, пробуем как есть
                     
                 try:
-                    ai_data = json.loads(content)
+                    ai_data = json.loads(clean_json_str)
                 except json.JSONDecodeError:
-                    last_error = f"[{model}] Невалидный JSON от модели: {content[:100]}"
+                    last_error = f"[{model}] Невалидный JSON от модели: {clean_json_str[:100]}"
                     logger.warning(last_error)
                     continue 
                 
@@ -258,8 +263,9 @@ def generate_and_send_daily_poll(is_test=False):
                 if len(ai_data.get("question", "")) > 255:
                     ai_data["question"] = ai_data["question"][:250] + "..."
                 
+                # 2. Режем ответы, если они больше 100 символов (и берем максимум 12)
                 safe_options = []
-                for opt in ai_data.get("options", [])[:10]:
+                for opt in ai_data.get("options", [])[:12]: # <-- ЗДЕСЬ СТАВИМ 12
                     if len(opt) > 100:
                         safe_options.append(opt[:96] + "...")
                     else:
@@ -293,7 +299,7 @@ def generate_and_send_daily_poll(is_test=False):
         poll_msg = bot.send_poll(
             chat_id=DONOR_GROUP_ID,
             question=ai_data["question"],
-            options=ai_data["options"][:10],
+            options=ai_data["options"][:12], # <-- И ЗДЕСЬ СТАВИМ 12
             is_anonymous=False,
             allows_multiple_answers=True,
             close_date=close_time
