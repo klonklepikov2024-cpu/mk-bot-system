@@ -32,7 +32,7 @@ def get_todays_holidays():
 def test_poll_cmd(message):
     if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != 479938867:
         return
-    bot.reply_to(message, "⏳ *Скайнет обходит цензуру, ищет праздники и готовит опрос... Ждите.*", parse_mode="Markdown")
+    bot.reply_to(message, "⏳ *Скайнет получил по шапке, ищет праздники и готовит чистый JSON... Ждите.*", parse_mode="Markdown")
     generate_and_send_daily_poll(is_test=True)
 # ====================================================
 
@@ -44,8 +44,11 @@ def generate_and_send_daily_poll(is_test=False):
     # 1. Получаем список реальных праздников
     real_holidays = get_todays_holidays()
     
-    # ================= 2. ИГРИВЫЙ ПРОМПТ (ОБХОД ЦЕНЗУРЫ) =================
-    prompt = f"""
+    # ================= 2. ЖЕСТКИЙ ПРОМПТ И СИСТЕМНОЕ СООБЩЕНИЕ =================
+    # Системный промпт заставляет модель отключить "болтливость"
+    system_prompt = "You are an API that ONLY outputs valid, raw JSON. Do not output any conversational text. Do not use markdown code blocks (like ```json). Just the raw JSON object."
+    
+    user_prompt = f"""
     Сегодня {today_str}. В календаре: {real_holidays}.
     
     ТВОЯ ЗАДАЧА: Выбери ОДИН забавный праздник из списка и придумай к нему провокационный опрос для мужского чата знакомств (18+).
@@ -53,12 +56,12 @@ def generate_and_send_daily_poll(is_test=False):
     ТРЕБОВАНИЯ:
     1. ВОПРОС (до 255 символов): Упомяни выбранный праздник. Сделай подводку с легким флиртом, юмором и интимным подтекстом. Обязательно используй эмодзи!
     2. ВАРИАНТЫ ОТВЕТОВ (РОВНО 10 штук, каждый до 100 символов): 
-       - Используй базовый сленг знакомств (актив, пассив, универсал).
-       - Сделай ответы жизненными, смешными, с двусмысленным сексуальным подтекстом. Избегай откровенной порнографии, чтобы не сработал фильтр цензуры, но делай ответы горячими.
+       - Используй базовый сленг (актив, пассив, универсал).
+       - Сделай ответы жизненными, смешными, с сексуальным подтекстом, но без жесткой порнографии.
        - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО ставь подходящий эмодзи (например: 🍑, 🍆, 💦, 😈, 🔥, 🥵, 😏, 🔞).
 
-    Верни ответ СТРОГО в формате JSON без лишнего текста:
-    {{"question": "текст вопроса", "options": ["вариант 1", "вариант 2", ..., "вариант 10"]}}
+    ВЫВЕДИ СТРОГО СЛЕДУЮЩИЙ JSON И БОЛЬШЕ НИЧЕГО:
+    {{"question": "текст вопроса", "options": ["вариант 1", "вариант 2", "...", "вариант 10"]}}
     """
 
     ai_data = None
@@ -67,12 +70,15 @@ def generate_and_send_daily_poll(is_test=False):
     for key in GROQ_API_KEYS:
         try:
             res = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
+                "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={
                     "model": "openai/gpt-oss-120b", 
                     "response_format": {"type": "json_object"},
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
                     "temperature": 0.7,
                     "max_tokens": 800
                 },
@@ -89,10 +95,9 @@ def generate_and_send_daily_poll(is_test=False):
             logger.warning(f"Сбой сети при генерации опроса: {e}")
             continue
 
-    # Логируем конкретную причину, если ИИ всё же отказался
     if not ai_data or "question" not in ai_data:
         logger.error(f"❌ Скайнет не смог сгенерировать опрос. Последняя ошибка: {last_error}")
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка: Скайнет не смог сгенерировать опрос.\nДетали: `{last_error[:200]}`", parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка JSON: Скайнет не смог сгенерировать опрос.\nДетали: `{last_error[:200]}`", parse_mode="Markdown")
         except: pass
         return
 
@@ -110,13 +115,13 @@ def generate_and_send_daily_poll(is_test=False):
         )
     except Exception as e:
         logger.error(f"❌ Ошибка публикации опроса: {e}")
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (возможно, слишком длинный текст): {e}")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (проверьте длину текста): {e}")
         except: pass
         return
 
     # 🔥 ЗАЩИТА ПРИ ТЕСТЕ 🔥
     if is_test:
-        try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован (на основе реальных праздников!), рассылка ОТКЛЮЧЕНА.", parse_mode="Markdown")
+        try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован, рассылка ОТКЛЮЧЕНА.", parse_mode="Markdown")
         except: pass
         try: bot.send_message(STAFF_GROUP_ID, "✅ **Тестовый опрос готов!**\nПосмотрите результат в группе-доноре.", parse_mode="Markdown")
         except: pass
