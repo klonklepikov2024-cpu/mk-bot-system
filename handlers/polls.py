@@ -1,18 +1,16 @@
 import time
 import datetime
 import requests
-import random
 import json
 import re
+import random
+import threading
 from telebot.apihelper import ApiTelegramException
 
 from core.bot import bot
 from core.scheduler import scheduler
-from config import GROQ_API_KEYS, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, STAFF_GROUP_ID
+from config import GROQ_API_KEYS, OPENROUTER_API_KEY, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, STAFF_GROUP_ID
 from utils.logger import logger
-import os
-
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
 DONOR_GROUP_ID = -1003107308525 
@@ -26,67 +24,103 @@ def get_todays_holidays():
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
     }
 
-    # 🔥 СТОП-СЛОВА: убираем религию, трагедии, дни памяти и ИМЕНИНЫ
     stop_words = [
         'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памяти',
         'христ', 'господ', 'богородиц', 'апостол', 'преподоб', 'религ', 'жертв',
         'трагед', 'войн', 'смерт', 'погибш', 'скорб', 'террор', 'ислам', 'аллах', 'иудей',
-        'именин', 'день ангела' # <--- Добавили вот эти два слова
+        'именин', 'день ангела', 'календарь', 'праздник'
     ]
 
-    def filter_holidays(h_list):
-        valid = []
-        for h in h_list:
-            h_clean = re.sub(r'<[^>]+>', '', h).strip()
-            h_lower = h_clean.lower()
-            
-            # 🔥 Защита от мусорных заголовков сайта
-            is_garbage = "календарь" in h_lower or "202" in h_lower or "праздник" in h_lower
-            
-            # Проверяем длину, отсутствие стоп-слов и мусора
-            if len(h_clean) > 5 and len(h_clean) < 60 and not is_garbage and not any(stop in h_lower for stop in stop_words):
-                # Добавляем "День" в начало, если это просто слово
-                if not h_clean.lower().startswith("день"):
-                    h_clean = f"День: {h_clean}"
-                valid.append(h_clean)
-        return valid
+    def is_good_holiday(text: str) -> bool:
+        text = text.strip()
+        if len(text) < 6 or len(text) > 70:
+            return False
+        lower = text.lower()
+        if any(sw in lower for sw in stop_words):
+            return False
+        if "202" in text:  # год
+            return False
+        return True
 
-    # Попытка 1: Основной сайт
+    found = []
+
+    # === 1. Основной сайт ===
     try:
-        res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=5)
+        res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=8)
         res.encoding = 'utf-8'
-        
-        holidays = re.findall(r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>', res.text)
-        if not holidays:
-             holidays = re.findall(r'<h4[^>]*>(.*?)</h4>', res.text)
-             
-        if holidays:
-            valid_holidays = filter_holidays(holidays)
-            if valid_holidays:
-                return ", ".join(valid_holidays[:5])
-    except Exception as e:
-        logger.warning(f"Ошибка парсинга kakoysegodnyaprazdnik: {e}")
+        html = res.text
 
-    # Попытка 2: Запасной сайт
+        patterns = [
+            r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>',
+            r'<h2[^>]*class="[^"]*holiday[^"]*"[^>]*>(.*?)</h2>',
+            r'<div[^>]*class="[^"]*holiday-name[^"]*"[^>]*>(.*?)</div>',
+            r'<li[^>]*class="[^"]*holiday[^"]*"[^>]*>.*?<a[^>]*>(.*?)</a>',
+            r'<h3[^>]*>(.*?)</h3>',
+            r'<h4[^>]*>(.*?)</h4>',
+        ]
+
+        for pat in patterns:
+            matches = re.findall(pat, html, re.IGNORECASE | re.DOTALL)
+            for m in matches:
+                clean = re.sub(r'<[^>]+>', '', m).strip()
+                if is_good_holiday(clean) and clean not in found:
+                    found.append(clean)
+            if len(found) >= 5:
+                break
+
+        if found:
+            logger.info(f"Праздники с kakoysegodnyaprazdnik: {found[:5]}")
+            return ", ".join(found[:5])
+
+    except Exception as e:
+        logger.warning(f"Ошибка kakoysegodnyaprazdnik: {e}")
+
+    # === 2. Запасной сайт ===
     try:
-        res = requests.get('https://my-calend.ru/holidays', headers=headers, timeout=5)
+        res = requests.get('https://my-calend.ru/holidays', headers=headers, timeout=8)
         res.encoding = 'utf-8'
-        
-        holidays = re.findall(r'<li[^>]*><a[^>]*>(.*?)</a></li>', res.text)
-        
-        if holidays:
-            valid_holidays = filter_holidays(holidays)
-            if valid_holidays:
-                return ", ".join(valid_holidays[:5])
-    except Exception as e:
-        logger.warning(f"Ошибка парсинга my-calend: {e}")
+        html = res.text
 
-    # Попытка 3: Экстренный резерв
+        matches = re.findall(r'<li[^>]*>.*?<a[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
+        for m in matches:
+            clean = re.sub(r'<[^>]+>', '', m).strip()
+            if is_good_holiday(clean) and clean not in found:
+                found.append(clean)
+            if len(found) >= 5:
+                break
+
+        if found:
+            logger.info(f"Праздники с my-calend: {found[:5]}")
+            return ", ".join(found[:5])
+
+    except Exception as e:
+        logger.warning(f"Ошибка my-calend: {e}")
+
+    # === 3. Ещё один запасной ===
+    try:
+        res = requests.get('https://www.calend.ru/holidays/', headers=headers, timeout=8)
+        res.encoding = 'utf-8'
+        matches = re.findall(r'<a[^>]*href="/holidays/[^"]*"[^>]*>(.*?)</a>', res.text)
+        for m in matches:
+            clean = re.sub(r'<[^>]+>', '', m).strip()
+            if is_good_holiday(clean) and clean not in found:
+                found.append(clean)
+            if len(found) >= 5:
+                break
+
+        if found:
+            logger.info(f"Праздники с calend.ru: {found[:5]}")
+            return ", ".join(found[:5])
+
+    except Exception as e:
+        logger.warning(f"Ошибка calend.ru: {e}")
+
+    # Если ничего не нашли — честный fallback
+    logger.warning("Не удалось спарсить реальные праздники, использую fallback")
     now = datetime.datetime.now()
-    months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
-    today_date = f"{now.day} {months[now.month - 1]}"
-    
-    return f"День спонтанных сюрпризов, День отличного настроения, День общения ({today_date})"
+    months = ["января", "февраля", "марта", "апреля", "мая", "июня",
+              "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+    return f"День мужской силы, Ночь откровений, День без запретов ({now.day} {months[now.month-1]})"
 
 # ================= ТЕСТОВАЯ КОМАНДА =================
 @bot.message_handler(commands=['test_poll'])
@@ -96,7 +130,6 @@ def test_poll_cmd(message):
     bot.reply_to(message, "⏳ *Скайнет получил по шапке... Генерирую в фоне*", parse_mode="Markdown")
     
     # запускаем в отдельном потоке, чтобы webhook не висел
-    import threading
     threading.Thread(target=generate_and_send_daily_poll, args=(True,), daemon=True).start()
 # ====================================================
 
@@ -107,8 +140,8 @@ def generate_and_send_daily_poll(is_test=False):
     
     # 1. Получаем список реальных праздников и ВЫБИРАЕМ ОДИН СЛУЧАЙНЫЙ
     all_holidays_str = get_todays_holidays()
-    holidays_list = [h.strip() for h in all_holidays_str.split(",")]
-    selected_holiday = random.choice(holidays_list) # <-- Магия рандома здесь
+    holidays_list = [h.strip() for h in all_holidays_str.split(",") if h.strip()]
+    selected_holiday = random.choice(holidays_list) if holidays_list else "День без запретов"
     
     # ================= 2. ЖЕСТКИЙ ПРОМПТ И СИСТЕМНОЕ СООБЩЕНИЕ =================
     system_prompt = (
@@ -122,7 +155,7 @@ def generate_and_send_daily_poll(is_test=False):
     ТВОЯ РОЛЬ: Ты — харизматичный и дерзкий ведущий в закрытом мужском клубе (18+). Тебе нужно написать провокационный опрос для участников. Твой стиль: взрослый юмор, флирт, сарказм и клубный сленг.
 
     Правила:
-    - Вопрос: ОБЯЗАТЕЛЬНО упомяни праздник ({selected_holiday}), сделай горячую подводку к опросу и добавь эмодзи.
+    - Вопрос: ОБЯЗАТЕЛЬНО используй РОВНО ТУ ТЕМУ, которую я тебе дал ({selected_holiday}). НЕ ВЫДУМЫВАЙ свои праздники (никаких гороскопов и знаков зодиака!). Сделай горячую подводку к этой теме и добавь эмодзи.
     - Ровно 10 вариантов ответа (каждый начинается с эмодзи). ОЧЕНЬ КОРОТКО! Максимум 10-12 слов на ответ. Телеграм запрещает ответы длиннее 100 символов, будь лаконичен!
     - Используй сленг чата знакомств (актив, пассив, универсал, топ, боттом).
     - Сделай ответы жизненными, смешными и с явным интимным подтекстом (18+).
@@ -149,7 +182,6 @@ def generate_and_send_daily_poll(is_test=False):
     ai_data = None
     last_error = ""
 
-    # Ключ берется из окружения (убедись, что он там есть!)
     if not OPENROUTER_API_KEY:
         logger.error("OPENROUTER_API_KEY не найден в переменных окружения")
         try:
@@ -176,8 +208,8 @@ def generate_and_send_daily_poll(is_test=False):
                 headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
-                    "HTTP-Referer": "https://t.me/", # Обязательно для OpenRouter
-                    "X-Title": "Skynet Daily Poll",  # Обязательно для OpenRouter
+                    "HTTP-Referer": "https://t.me/", 
+                    "X-Title": "Skynet Daily Poll",  
                 },
                 json={
                     "model": model,
@@ -187,14 +219,12 @@ def generate_and_send_daily_poll(is_test=False):
                     ],
                     "temperature": 0.55,
                     "max_tokens": 1200,
-                    # OpenRouter тоже поддерживает строгий JSON-режим для многих моделей
                     "response_format": {"type": "json_object"} 
                 },
                 timeout=30
             )
 
             if res.status_code == 200:
-                # Безопасное извлечение контента (защита от KeyError: 'choices')
                 response_data = res.json()
                 if "choices" not in response_data or not response_data["choices"]:
                     last_error = f"[{model}] Нет ключа 'choices' в ответе API"
@@ -208,18 +238,16 @@ def generate_and_send_daily_poll(is_test=False):
                     
                 content = content.strip()
                 
-                # Если модель всё же выдала Markdown-разметку, счищаем её
                 if content.startswith("```"):
                     content = re.sub(r"^```(?:json)?\s*", "", content)
                     content = re.sub(r"\s*```$", "", content)
                     
-                # Безопасная загрузка JSON
                 try:
                     ai_data = json.loads(content)
                 except json.JSONDecodeError:
                     last_error = f"[{model}] Невалидный JSON от модели: {content[:100]}"
                     logger.warning(last_error)
-                    continue # Пробуем следующую модель
+                    continue 
                 
                 # 🔥 НАЧАЛО: АВТОМАТИЧЕСКАЯ ОБРЕЗКА ПОД ЛИМИТЫ ТЕЛЕГРАМА 🔥
                 if len(ai_data.get("question", "")) > 255:
@@ -275,7 +303,7 @@ def generate_and_send_daily_poll(is_test=False):
     if is_test:
         try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован, рассылка ОТКЛЮЧЕНА.", parse_mode="Markdown")
         except: pass
-        try: bot.send_message(STAFF_GROUP_ID, "✅ **Тестовый опрос готов!**\nПосмотрите результат в группе-доноре.", parse_mode="Markdown")
+        try: bot.send_message(STAFF_GROUP_ID, f"✅ **Тестовый опрос готов!**\nТема: {selected_holiday}\nПосмотрите результат в группе-доноре.", parse_mode="Markdown")
         except: pass
         return
 
@@ -300,7 +328,7 @@ def generate_and_send_daily_poll(is_test=False):
             pass
 
     # ================= 5. ОТЧЕТ АДМИНАМ =================
-    report_text = f"✅ **Авто-Опрос запущен!**\nСкайнет успешно сгенерировал опрос дня и разослал его в {success_count} чатов.\nОн закроется автоматически через 24 часа."
+    report_text = f"✅ **Авто-Опрос запущен!**\nТема: {selected_holiday}\nСкайнет разослал его в {success_count} чатов."
     try: bot.send_message(DONOR_GROUP_ID, report_text, parse_mode="Markdown")
     except: pass
     try: bot.send_message(STAFF_GROUP_ID, report_text, parse_mode="Markdown")
