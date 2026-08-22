@@ -157,13 +157,15 @@ def generate_and_send_daily_poll(is_test=False):
             pass
         return
 
-    # Список бесплатных моделей OpenRouter, которые поддерживают JSON
+    # 🔥 Актуальный список бесплатных моделей OpenRouter
     models_to_try = [
-        "nvidia/nemotron-3-ultra-550b-a55b:free", # Надежный работяга
-        "nvidia/nemotron-3.5-lightning:free",     # Быстрый дублер
-        "meta-llama/llama-3.3-70b-instruct:free", # Классика, отлично пишет JSON
-        "z-ai/glm-5.2:free",                      # Резерв
-        "openrouter/free",                        # Рулетка на самый крайний случай
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "google/gemma-4-31b-it:free",
+        "google/gemma-4-26b-a4b-it:free",
+        "z-ai/glm-5.2:free",
+        "poolside/laguna-s-2.1:free",
+        "openrouter/free",
     ]
 
     for model in models_to_try:
@@ -191,7 +193,18 @@ def generate_and_send_daily_poll(is_test=False):
             )
 
             if res.status_code == 200:
-                content = res.json()["choices"][0]["message"]["content"]
+                # Безопасное извлечение контента (защита от KeyError: 'choices')
+                response_data = res.json()
+                if "choices" not in response_data or not response_data["choices"]:
+                    last_error = f"[{model}] Нет ключа 'choices' в ответе API"
+                    logger.warning(f"Ошибка парсинга ответа: {response_data}")
+                    continue
+                
+                content = response_data["choices"][0]["message"]["content"]
+                if not content:
+                    last_error = f"[{model}] Пустой контент"
+                    continue
+                    
                 content = content.strip()
                 
                 # Если модель всё же выдала Markdown-разметку, счищаем её
@@ -199,14 +212,18 @@ def generate_and_send_daily_poll(is_test=False):
                     content = re.sub(r"^```(?:json)?\s*", "", content)
                     content = re.sub(r"\s*```$", "", content)
                     
-                ai_data = json.loads(content)
+                # Безопасная загрузка JSON
+                try:
+                    ai_data = json.loads(content)
+                except json.JSONDecodeError:
+                    last_error = f"[{model}] Невалидный JSON от модели: {content[:100]}"
+                    logger.warning(last_error)
+                    continue # Пробуем следующую модель
                 
                 # 🔥 НАЧАЛО: АВТОМАТИЧЕСКАЯ ОБРЕЗКА ПОД ЛИМИТЫ ТЕЛЕГРАМА 🔥
-                # 1. Режем вопрос, если он больше 255 символов
                 if len(ai_data.get("question", "")) > 255:
                     ai_data["question"] = ai_data["question"][:250] + "..."
                 
-                # 2. Режем ответы, если они больше 100 символов
                 safe_options = []
                 for opt in ai_data.get("options", [])[:10]:
                     if len(opt) > 100:
@@ -223,7 +240,7 @@ def generate_and_send_daily_poll(is_test=False):
                 logger.warning(f"Ошибка OpenRouter: {last_error}")
 
         except Exception as e:
-            last_error = f"[{model}] {str(e)}"
+            last_error = f"[{model}] {type(e).__name__}: {str(e)}"
             logger.warning(f"Сбой: {last_error}")
             continue
                 
