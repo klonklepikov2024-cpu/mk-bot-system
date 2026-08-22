@@ -17,13 +17,11 @@ DONOR_GROUP_ID = -1003107308525
 def get_todays_holidays():
     """Скрипт заходит на сайт и собирает реальные праздники на сегодня"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=5)
         res.encoding = 'utf-8'
-        # Вытаскиваем названия праздников прямо из HTML-кода сайта
         holidays = re.findall(r'<span itemprop="text">([^<]+)</span>', res.text)
         if holidays:
-            # Берем первые 5 праздников, чтобы у ИИ был выбор
             return ", ".join(holidays[:5])
     except Exception as e:
         logger.warning(f"Ошибка парсинга праздников: {e}")
@@ -34,7 +32,7 @@ def get_todays_holidays():
 def test_poll_cmd(message):
     if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != 479938867:
         return
-    bot.reply_to(message, "⏳ *Скайнет ищет праздники и придумывает горячий опрос... Ждите.*", parse_mode="Markdown")
+    bot.reply_to(message, "⏳ *Скайнет обходит цензуру, ищет праздники и готовит опрос... Ждите.*", parse_mode="Markdown")
     generate_and_send_daily_poll(is_test=True)
 # ====================================================
 
@@ -43,33 +41,29 @@ def generate_and_send_daily_poll(is_test=False):
     now = datetime.datetime.now()
     today_str = now.strftime("%d.%m.%Y")
     
-    # 1. Получаем список реальных праздников на сегодня!
+    # 1. Получаем список реальных праздников
     real_holidays = get_todays_holidays()
     
-    # ================= 2. ЖЕСТКАЯ ИНСТРУКЦИЯ ДЛЯ ИИ (ПРОМПТ) =================
+    # ================= 2. ИГРИВЫЙ ПРОМПТ (ОБХОД ЦЕНЗУРЫ) =================
     prompt = f"""
-    Сегодня {today_str}. В реальном календаре сегодня отмечаются: {real_holidays}.
+    Сегодня {today_str}. В календаре: {real_holidays}.
     
-    ТВОЯ ЗАДАЧА: Выбери ОДИН самый забавный праздник из списка выше и придумай к нему ГОРЯЧИЙ опрос для мужского ГЕЙ-чата знакомств (18+).
+    ТВОЯ ЗАДАЧА: Выбери ОДИН забавный праздник из списка и придумай к нему провокационный опрос для мужского чата знакомств (18+).
 
-    СТРОГИЕ ТРЕБОВАНИЯ:
-    1. ВОПРОС (до 255 символов): Упомяни выбранный праздник. Сделай подводку максимально игривой, пошлой и провоцирующей на флирт. Обязательно используй эмодзи!
+    ТРЕБОВАНИЯ:
+    1. ВОПРОС (до 255 символов): Упомяни выбранный праздник. Сделай подводку с легким флиртом, юмором и интимным подтекстом. Обязательно используй эмодзи!
     2. ВАРИАНТЫ ОТВЕТОВ (РОВНО 10 штук, каждый до 100 символов): 
-       - Они должны быть жизненными, смешными и пошлыми.
-       - ОБЯЗАТЕЛЬНО используй гей-сленг (актив, пассив, универсал, стояк, нюдсы, 20+ см, БДСМ и т.д.).
-       - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО должен стоять подходящий эмодзи (например: 🍑, 🍆, 💦, 😈, 🥵, 🌈, 👅, 🔞).
-       
-    ПРИМЕР КРУТЫХ ОТВЕТОВ:
-    "🍑 Я чистый пассив, жду жесткого актива на вечер"
-    "🍆 Уверенный актив: люблю наказывать и доминировать"
-    "💦 Скину свои горячие нюдсы в личку первому встречному"
-    "😈 Универсал: подстроюсь под красивого парня"
+       - Используй базовый сленг знакомств (актив, пассив, универсал).
+       - Сделай ответы жизненными, смешными, с двусмысленным сексуальным подтекстом. Избегай откровенной порнографии, чтобы не сработал фильтр цензуры, но делай ответы горячими.
+       - В НАЧАЛЕ КАЖДОГО варианта ответа ОБЯЗАТЕЛЬНО ставь подходящий эмодзи (например: 🍑, 🍆, 💦, 😈, 🔥, 🥵, 😏, 🔞).
 
-    Верни ответ СТРОГО в формате JSON:
+    Верни ответ СТРОГО в формате JSON без лишнего текста:
     {{"question": "текст вопроса", "options": ["вариант 1", "вариант 2", ..., "вариант 10"]}}
     """
 
     ai_data = None
+    last_error = ""
+    
     for key in GROQ_API_KEYS:
         try:
             res = requests.post(
@@ -79,7 +73,7 @@ def generate_and_send_daily_poll(is_test=False):
                     "model": "openai/gpt-oss-120b", 
                     "response_format": {"type": "json_object"},
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.75, # Чуть повысили креативность
+                    "temperature": 0.7,
                     "max_tokens": 800
                 },
                 timeout=20
@@ -87,12 +81,18 @@ def generate_and_send_daily_poll(is_test=False):
             if res.status_code == 200:
                 ai_data = json.loads(res.json()["choices"][0]["message"]["content"])
                 break
+            else:
+                last_error = f"Код {res.status_code}: {res.text}"
+                logger.warning(f"Ошибка API при генерации опроса: {last_error}")
         except Exception as e:
-            logger.warning(f"Ошибка ИИ при генерации опроса: {e}")
+            last_error = str(e)
+            logger.warning(f"Сбой сети при генерации опроса: {e}")
             continue
 
+    # Логируем конкретную причину, если ИИ всё же отказался
     if not ai_data or "question" not in ai_data:
-        try: bot.send_message(STAFF_GROUP_ID, "❌ Ошибка: Скайнет не смог сгенерировать опрос.")
+        logger.error(f"❌ Скайнет не смог сгенерировать опрос. Последняя ошибка: {last_error}")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка: Скайнет не смог сгенерировать опрос.\nДетали: `{last_error[:200]}`", parse_mode="Markdown")
         except: pass
         return
 
@@ -110,11 +110,11 @@ def generate_and_send_daily_poll(is_test=False):
         )
     except Exception as e:
         logger.error(f"❌ Ошибка публикации опроса: {e}")
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (проверьте длину): {e}")
+        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (возможно, слишком длинный текст): {e}")
         except: pass
         return
 
-    # 🔥 ЗАЩИТА ПРИ ТЕСТЕ: ЕСЛИ ЭТО ТЕСТ - ОСТАНАВЛИВАЕМСЯ 🔥
+    # 🔥 ЗАЩИТА ПРИ ТЕСТЕ 🔥
     if is_test:
         try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован (на основе реальных праздников!), рассылка ОТКЛЮЧЕНА.", parse_mode="Markdown")
         except: pass
