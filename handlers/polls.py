@@ -9,6 +9,9 @@ from core.bot import bot
 from core.scheduler import scheduler
 from config import GROQ_API_KEYS, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, STAFF_GROUP_ID
 from utils.logger import logger
+import os
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
 DONOR_GROUP_ID = -1003107308525 
@@ -92,68 +95,74 @@ def generate_and_send_daily_poll(is_test=False):
 
     ai_data = None
     last_error = ""
-    
-    for key in GROQ_API_KEYS:
+
+    # Ключ берется из окружения (убедись, что он там есть!)
+    if not OPENROUTER_API_KEY:
+        logger.error("OPENROUTER_API_KEY не найден в переменных окружения")
+        try:
+            bot.send_message(STAFF_GROUP_ID, "❌ Нет ключа OpenRouter в env")
+        except:
+            pass
+        return
+
+    # Список бесплатных моделей OpenRouter, которые поддерживают JSON
+    models_to_try = [
+        "meta-llama/llama-3.3-70b-instruct:free", # Llama лучше всего понимает JSON
+        "nvidia/nemotron-4-340b-instruct:free",   # Запасная мощная модель
+        "qwen/qwen-2-72b-instruct:free"           # Хорошо понимает русский и менее цензурирована
+    ]
+
+    for model in models_to_try:
         try:
             res = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
+                "https://openrouter.ai/api/v1/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json"
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://t.me/", # Обязательно для OpenRouter
+                    "X-Title": "Skynet Daily Poll",  # Обязательно для OpenRouter
                 },
                 json={
-                    "model": "openai/gpt-oss-120b",  # <-- АКТУАЛЬНАЯ МОДЕЛЬ
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    "temperature": 0.4,
+                    "temperature": 0.55,
                     "max_tokens": 1200,
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "daily_poll",
-                            "strict": True,
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "question": {
-                                        "type": "string",
-                                        "description": "Текст вопроса опроса (до 255 символов)"
-                                    },
-                                    "options": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "minItems": 10,
-                                        "maxItems": 10,
-                                        "description": "Ровно 10 вариантов ответа"
-                                    }
-                                },
-                                "required": ["question", "options"],
-                                "additionalProperties": False
-                            }
-                        }
-                    }
+                    # OpenRouter тоже поддерживает строгий JSON-режим для многих моделей
+                    "response_format": {"type": "json_object"} 
                 },
-                timeout=25
+                timeout=30
             )
-            
+
             if res.status_code == 200:
-                ai_data = json.loads(res.json()["choices"][0]["message"]["content"])
+                content = res.json()["choices"][0]["message"]["content"]
+                content = content.strip()
+                
+                # Если модель всё же выдала Markdown-разметку, счищаем её
+                if content.startswith("```"):
+                    content = re.sub(r"^```(?:json)?\s*", "", content)
+                    content = re.sub(r"\s*```$", "", content)
+                    
+                ai_data = json.loads(content)
+                logger.info(f"✅ Успех на модели: {model}")
                 break
             else:
-                last_error = f"Код {res.status_code}: {res.text}"
-                logger.warning(f"Ошибка API при генерации опроса: {last_error}")
-                
-        except Exception as e:
-            last_error = str(e)
-            logger.warning(f"Сбой сети при генерации опроса: {e}")
-            continue
+                last_error = f"[{model}] Код {res.status_code}: {res.text[:300]}"
+                logger.warning(f"Ошибка OpenRouter: {last_error}")
 
+        except Exception as e:
+            last_error = f"[{model}] {str(e)}"
+            logger.warning(f"Сбой: {last_error}")
+            continue
+                
     if not ai_data or "question" not in ai_data:
         logger.error(f"❌ Скайнет не смог сгенерировать опрос. Последняя ошибка: {last_error}")
-        try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка JSON: Скайнет не смог сгенерировать опрос.\nДетали: `{last_error[:200]}`", parse_mode="Markdown")
-        except: pass
+        try: 
+            bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка JSON: Скайнет не смог сгенерировать опрос.\nДетали: `{last_error[:200]}`", parse_mode="Markdown")
+        except: 
+            pass
         return
 
     # ================= 3. ПУБЛИКАЦИЯ В ГРУППУ-ДОНОР =================
