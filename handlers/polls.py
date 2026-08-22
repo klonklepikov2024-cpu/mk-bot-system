@@ -93,7 +93,7 @@ def generate_and_send_daily_poll(is_test=False):
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama3-70b-8192",  # <-- ИСПРАВЛЕНА МОДЕЛЬ ДЛЯ GROQ
+                    "model": "openai/gpt-oss-120b",  # <-- ИСПРАВЛЕНА МОДЕЛЬ ДЛЯ GROQ
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
