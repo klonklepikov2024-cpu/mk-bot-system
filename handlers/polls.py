@@ -24,21 +24,18 @@ DONOR_GROUP_ID = -1003107308525
 # ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ =================
 def get_todays_holidays():
     """Скрипт заходит на сайты и собирает реальные праздники на сегодня"""
-    # Заголовки для запасных сайтов
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
     }
 
+    # Оставляем только базовые фильтры, так как на нормальных сайтах нет менюшек
     stop_words = [
         'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памят',
         'христ', 'господ', 'богородиц', 'апостол', 'преподоб', 'религ', 'жертв',
         'трагед', 'войн', 'смерт', 'погибш', 'скорб', 'террор', 'ислам', 'аллах', 'иудей',
-        'именин', 'ангел', 'календар', 'праздник', 'гороскоп', 'зодиак', 'сонник',
-        'гадан', 'примет', 'астролог', 'имен', 'совместимост', 'солнц', 'выбор',
-        'фаз', 'лун', 'сервис', 'магнит', 'погод', 'бур', 
-        'книг', 'судьб', 'таро', 'рун', 'нумеролог', 'эзотер', 'маги', 'онлайн', 'китайск'
+        'именин', 'ангел'
     ]
 
     def is_good_holiday(text: str) -> bool:
@@ -57,28 +54,18 @@ def get_todays_holidays():
     # === 1. Основной сайт (ВЗЛОМ CLOUDFLARE) ===
     try:
         scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'desktop': True
-            }
+            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
         )
-        
         res = scraper.get('https://kakoysegodnyaprazdnik.ru/', timeout=10)
         res.encoding = 'utf-8'
-        html = res.text
-
+        
         patterns = [
             r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>',
-            r'<h2[^>]*class="[^"]*holiday[^"]*"[^>]*>(.*?)</h2>',
-            r'<div[^>]*class="[^"]*holiday-name[^"]*"[^>]*>(.*?)</div>',
-            r'<li[^>]*class="[^"]*holiday[^"]*"[^>]*>.*?<a[^>]*>(.*?)</a>',
-            r'<h3[^>]*>(.*?)</h3>',
-            r'<h4[^>]*>(.*?)</h4>',
+            r'<h4[^>]*>(.*?)</h4>'
         ]
 
         for pat in patterns:
-            matches = re.findall(pat, html, re.IGNORECASE | re.DOTALL)
+            matches = re.findall(pat, res.text, re.IGNORECASE | re.DOTALL)
             for m in matches:
                 clean = re.sub(r'<[^>]+>', '', m).strip()
                 if is_good_holiday(clean) and clean not in found:
@@ -89,39 +76,23 @@ def get_todays_holidays():
         if found:
             logger.info(f"Праздники с kakoysegodnyaprazdnik: {found[:5]}")
             return ", ".join(found[:5])
-
     except Exception as e:
-        logger.warning(f"Ошибка kakoysegodnyaprazdnik (взлом не удался): {e}")
+        logger.warning(f"Ошибка kakoysegodnyaprazdnik: {e}")
 
-    # === 2. Запасной сайт ===
-    try:
-        res = requests.get('https://my-calend.ru/holidays', headers=headers, timeout=8)
-        res.encoding = 'utf-8'
-        html = res.text
-
-        matches = re.findall(r'<li[^>]*>.*?<a[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
-        for m in matches:
-            clean = re.sub(r'<[^>]+>', '', m).strip()
-            if is_good_holiday(clean) and clean not in found:
-                found.append(clean)
-            if len(found) >= 5:
-                break
-
-        if found:
-            logger.info(f"Праздники с my-calend: {found[:5]}")
-            return ", ".join(found[:5])
-
-    except Exception as e:
-        logger.warning(f"Ошибка my-calend: {e}")
-
-    # === 3. Ещё один запасной ===
+    # === 2. ЗАПАСНОЙ САЙТ (Надежный calend.ru без мусорных меню) ===
     try:
         res = requests.get('https://www.calend.ru/holidays/', headers=headers, timeout=8)
         res.encoding = 'utf-8'
-        matches = re.findall(r'<a[^>]*href="/holidays/[^"]*"[^>]*>(.*?)</a>', res.text)
+        
+        # Ищем строго названия праздников в карточках
+        matches = re.findall(r'<span class="title"[^>]*><a[^>]*>(.*?)</a></span>', res.text)
+        if not matches:
+             matches = re.findall(r'<a[^>]*href="/holidays/[^"]*"[^>]*>(.*?)</a>', res.text)
+             
         for m in matches:
             clean = re.sub(r'<[^>]+>', '', m).strip()
-            if is_good_holiday(clean) and clean not in found:
+            # Отсекаем слова-паразиты сайта calend.ru
+            if is_good_holiday(clean) and clean not in found and "календарь" not in clean.lower():
                 found.append(clean)
             if len(found) >= 5:
                 break
@@ -129,11 +100,10 @@ def get_todays_holidays():
         if found:
             logger.info(f"Праздники с calend.ru: {found[:5]}")
             return ", ".join(found[:5])
-
     except Exception as e:
         logger.warning(f"Ошибка calend.ru: {e}")
 
-    # Если ничего не нашли — честный fallback
+    # Если всё упало
     logger.warning("Не удалось спарсить реальные праздники, использую fallback")
     now = datetime.datetime.now()
     months = ["января", "февраля", "марта", "апреля", "мая", "июня",
