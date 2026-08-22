@@ -44,8 +44,11 @@ def get_todays_holidays():
 def test_poll_cmd(message):
     if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != 479938867:
         return
-    bot.reply_to(message, "⏳ *Скайнет получил по шапке, ищет праздники и готовит чистый JSON... Ждите.*", parse_mode="Markdown")
-    generate_and_send_daily_poll(is_test=True)
+    bot.reply_to(message, "⏳ *Скайнет получил по шапке... Генерирую в фоне*", parse_mode="Markdown")
+    
+    # запускаем в отдельном потоке, чтобы webhook не висел
+    import threading
+    threading.Thread(target=generate_and_send_daily_poll, args=(True,), daemon=True).start()
 # ====================================================
 
 def generate_and_send_daily_poll(is_test=False):
