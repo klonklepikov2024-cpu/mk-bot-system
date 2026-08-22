@@ -21,16 +21,15 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
 DONOR_GROUP_ID = -1003107308525 
 
-# ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ =================
+# ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ (RSS) =================
 def get_todays_holidays():
-    """Скрипт заходит на сайты и собирает реальные праздники на сегодня"""
+    """Неубиваемый парсер через RSS-ленты (никаких меню и стран)"""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml'
     }
 
-    # Оставляем только базовые фильтры, так как на нормальных сайтах нет менюшек
+    # Наш выстраданный фильтр от религии и трагедий
     stop_words = [
         'свят', 'церков', 'православ', 'икон', 'бог', 'собор', 'мученик', 'памят',
         'христ', 'господ', 'богородиц', 'апостол', 'преподоб', 'религ', 'жертв',
@@ -38,77 +37,65 @@ def get_todays_holidays():
         'именин', 'ангел'
     ]
 
-    def is_good_holiday(text: str) -> bool:
+    def is_good(text: str) -> bool:
         text = text.strip()
-        if len(text) < 6 or len(text) > 70:
+        # Если строка слишком короткая — это мусор (реальные праздники длиннее 8 букв)
+        if len(text) < 8 or len(text) > 80:
             return False
         lower = text.lower()
         if any(sw in lower for sw in stop_words):
             return False
-        if "202" in text:  # год
+        if "202" in text:
             return False
         return True
 
     found = []
 
-    # === 1. Основной сайт (ВЗЛОМ CLOUDFLARE) ===
+    # === 1. RSS главного сайта ===
     try:
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-        )
-        res = scraper.get('https://kakoysegodnyaprazdnik.ru/', timeout=10)
+        res = requests.get('https://kakoysegodnyaprazdnik.ru/rss/', headers=headers, timeout=10)
         res.encoding = 'utf-8'
         
-        patterns = [
-            r'<span[^>]*itemprop="text"[^>]*>(.*?)</span>',
-            r'<h4[^>]*>(.*?)</h4>'
-        ]
-
-        for pat in patterns:
-            matches = re.findall(pat, res.text, re.IGNORECASE | re.DOTALL)
-            for m in matches:
-                clean = re.sub(r'<[^>]+>', '', m).strip()
-                if is_good_holiday(clean) and clean not in found:
-                    found.append(clean)
-            if len(found) >= 5:
-                break
-
-        if found:
-            logger.info(f"Праздники с kakoysegodnyaprazdnik: {found[:5]}")
-            return ", ".join(found[:5])
-    except Exception as e:
-        logger.warning(f"Ошибка kakoysegodnyaprazdnik: {e}")
-
-    # === 2. ЗАПАСНОЙ САЙТ (Надежный calend.ru без мусорных меню) ===
-    try:
-        res = requests.get('https://www.calend.ru/holidays/', headers=headers, timeout=8)
-        res.encoding = 'utf-8'
-        
-        # Ищем строго названия праздников в карточках
-        matches = re.findall(r'<span class="title"[^>]*><a[^>]*>(.*?)</a></span>', res.text)
-        if not matches:
-             matches = re.findall(r'<a[^>]*href="/holidays/[^"]*"[^>]*>(.*?)</a>', res.text)
-             
+        # В RSS названия лежат строго в тегах <title> внутри <item>
+        matches = re.findall(r'<item>\s*<title>(.*?)</title>', res.text, re.IGNORECASE | re.DOTALL)
         for m in matches:
-            clean = re.sub(r'<[^>]+>', '', m).strip()
-            # Отсекаем слова-паразиты сайта calend.ru
-            if is_good_holiday(clean) and clean not in found and "календарь" not in clean.lower():
+            clean = re.sub(r'<[^>]+>', '', m).replace('<![CDATA[', '').replace(']]>', '').strip()
+            if is_good(clean) and clean not in found:
                 found.append(clean)
-            if len(found) >= 5:
-                break
-
+                
         if found:
-            logger.info(f"Праздники с calend.ru: {found[:5]}")
+            logger.info(f"✅ Праздники (RSS 1): {found[:5]}")
             return ", ".join(found[:5])
     except Exception as e:
-        logger.warning(f"Ошибка calend.ru: {e}")
+        logger.warning(f"Ошибка RSS 1: {e}")
 
-    # Если всё упало
-    logger.warning("Не удалось спарсить реальные праздники, использую fallback")
-    now = datetime.datetime.now()
-    months = ["января", "февраля", "марта", "апреля", "мая", "июня",
-              "июля", "августа", "сентября", "октября", "ноября", "декабря"]
-    return f"День мужской силы, Ночь откровений, День без запретов ({now.day} {months[now.month-1]})"
+    # === 2. RSS Calend.ru ===
+    try:
+        res = requests.get('https://www.calend.ru/img/export/calend.rss', headers=headers, timeout=10)
+        res.encoding = 'utf-8'
+        
+        matches = re.findall(r'<item>\s*<title>(.*?)</title>', res.text, re.IGNORECASE | re.DOTALL)
+        for m in matches:
+            clean = re.sub(r'<[^>]+>', '', m).replace('<![CDATA[', '').replace(']]>', '').strip()
+            if is_good(clean) and clean not in found:
+                found.append(clean)
+                
+        if found:
+            logger.info(f"✅ Праздники (RSS 2): {found[:5]}")
+            return ", ".join(found[:5])
+    except Exception as e:
+        logger.warning(f"Ошибка RSS 2: {e}")
+
+    # === 3. ЖЕЛЕЗОБЕТОННЫЙ РЕЗЕРВ ===
+    logger.warning("🌐 RSS недоступны! Включаю встроенную заначку.")
+    backup_holidays = [
+        "День спонтанных сюрпризов", "День горячих поцелуев", "День мужской солидарности",
+        "День беззаботности и лени", "День откровенных разговоров", "День экспериментов в постели",
+        "Ночь тайных желаний", "День без запретов и правил"
+    ]
+    import random
+    selected = random.sample(backup_holidays, 3)
+    return ", ".join(selected)
 
 # ================= ТЕСТОВАЯ КОМАНДА =================
 @bot.message_handler(commands=['test_poll'])
