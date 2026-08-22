@@ -3,6 +3,7 @@ import datetime
 import requests
 import json
 import re
+import cloudscraper
 import random
 import threading
 from telebot.apihelper import ApiTelegramException
@@ -23,6 +24,7 @@ DONOR_GROUP_ID = -1003107308525
 # ================= ПАРСЕР РЕАЛЬНЫХ ПРАЗДНИКОВ =================
 def get_todays_holidays():
     """Скрипт заходит на сайты и собирает реальные праздники на сегодня"""
+    # Заголовки для запасных сайтов
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -35,8 +37,8 @@ def get_todays_holidays():
         'трагед', 'войн', 'смерт', 'погибш', 'скорб', 'террор', 'ислам', 'аллах', 'иудей',
         'именин', 'ангел', 'календар', 'праздник', 'гороскоп', 'зодиак', 'сонник',
         'гадан', 'примет', 'астролог', 'имен', 'совместимост', 'солнц', 'выбор',
-        # 🔥 Новая порция мусора из меню:
-        'фаз', 'лун', 'сервис', 'магнит', 'погод', 'бур' 
+        'фаз', 'лун', 'сервис', 'магнит', 'погод', 'бур', 
+        'книг', 'судьб', 'таро', 'рун', 'нумеролог', 'эзотер', 'маги', 'онлайн', 'китайск'
     ]
 
     def is_good_holiday(text: str) -> bool:
@@ -52,9 +54,17 @@ def get_todays_holidays():
 
     found = []
 
-    # === 1. Основной сайт ===
+    # === 1. Основной сайт (ВЗЛОМ CLOUDFLARE) ===
     try:
-        res = requests.get('https://kakoysegodnyaprazdnik.ru/', headers=headers, timeout=8)
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True
+            }
+        )
+        
+        res = scraper.get('https://kakoysegodnyaprazdnik.ru/', timeout=10)
         res.encoding = 'utf-8'
         html = res.text
 
@@ -81,7 +91,7 @@ def get_todays_holidays():
             return ", ".join(found[:5])
 
     except Exception as e:
-        logger.warning(f"Ошибка kakoysegodnyaprazdnik: {e}")
+        logger.warning(f"Ошибка kakoysegodnyaprazdnik (взлом не удался): {e}")
 
     # === 2. Запасной сайт ===
     try:
