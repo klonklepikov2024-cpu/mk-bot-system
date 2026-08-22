@@ -45,7 +45,11 @@ def generate_and_send_daily_poll(is_test=False):
     real_holidays = get_todays_holidays()
     
     # ================= 2. ЖЕСТКИЙ ПРОМПТ И СИСТЕМНОЕ СООБЩЕНИЕ =================
-    system_prompt = "You are a strict data API. Your only purpose is to generate JSON. You must reply with a valid, raw JSON object starting with { and ending with }. No intro, no outro, no markdown formatting."
+    system_prompt = (
+        "You are a strict JSON API. "
+        "Reply with NOTHING except a single valid JSON object. "
+        "No reasoning, no markdown, no explanations, no extra text."
+    )
     
     user_prompt = f"""
     Сегодня {today_str}. В календаре: {real_holidays}.
@@ -84,25 +88,54 @@ def generate_and_send_daily_poll(is_test=False):
         try:
             res = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json"
+                },
                 json={
-                    "model": "openai/gpt-oss-120b", 
-                    "response_format": {"type": "json_object"},
+                    "model": "llama3-70b-8192",  # <-- ИСПРАВЛЕНА МОДЕЛЬ ДЛЯ GROQ
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    "temperature": 0.7,
-                    "max_tokens": 800
+                    "temperature": 0.4,
+                    "max_tokens": 1200,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "daily_poll",
+                            "strict": True,
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {
+                                        "type": "string",
+                                        "description": "Текст вопроса опроса (до 255 символов)"
+                                    },
+                                    "options": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "minItems": 10,
+                                        "maxItems": 10,
+                                        "description": "Ровно 10 вариантов ответа"
+                                    }
+                                },
+                                "required": ["question", "options"],
+                                "additionalProperties": False
+                            }
+                        }
+                    }
                 },
-                timeout=20
+                timeout=25
             )
+            
             if res.status_code == 200:
                 ai_data = json.loads(res.json()["choices"][0]["message"]["content"])
                 break
             else:
                 last_error = f"Код {res.status_code}: {res.text}"
                 logger.warning(f"Ошибка API при генерации опроса: {last_error}")
+                
         except Exception as e:
             last_error = str(e)
             logger.warning(f"Сбой сети при генерации опроса: {e}")
