@@ -177,7 +177,7 @@ def generate_and_send_daily_poll(is_test=False):
 
     try:
         # Обращаемся напрямую к мозгу Gemini 1.5 Pro
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-002:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key={GEMINI_API_KEY}"
         
         # Специальный формат запроса для Google API
         payload = {
