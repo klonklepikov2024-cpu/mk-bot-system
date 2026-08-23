@@ -11,7 +11,7 @@ from telebot.apihelper import ApiTelegramException
 from core.bot import bot
 from core.scheduler import scheduler
 # УБРАЛИ КЛЮЧ ИЗ ИМПОРТА ОТСЮДА 👇
-from config import GROQ_API_KEYS, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, STAFF_GROUP_ID
+from config import GROQ_API_KEYS, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
 from utils.logger import logger
 import os
 
@@ -275,9 +275,13 @@ def generate_and_send_daily_poll(is_test=False):
     all_target_chats.extend(chat_ids_parni.values())
     all_target_chats.extend(chat_ids_ns.values())
     all_target_chats.extend(chat_ids_gayznak.values())
+    all_target_chats.extend(chat_ids_rainbow.values()) # <--- ДОБАВИЛИ РАДУГУ 🌈
+    
+    # 🔥 УБИРАЕМ ВСЕ ДУБЛИКАТЫ ЧАТОВ 🔥
+    unique_chats = set(all_target_chats)
     
     success_count = 0
-    for chat_id in all_target_chats:
+    for chat_id in unique_chats:
         try:
             bot.forward_message(
                 chat_id=chat_id,
