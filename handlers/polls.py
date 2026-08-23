@@ -15,8 +15,9 @@ from config import GROQ_API_KEYS, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat
 from utils.logger import logger
 import os
 
-# Скайнет сам возьмет ключ из настроек Render 👇 (И ПОЛУЧИТ ЕГО ЗДЕСЬ)
+# Скайнет сам возьмет ключ из настроек Render 👇 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # <--- ДОБАВИЛИ ЭТУ СТРОКУ
 
 # 👇 ID ТВОЕЙ ГРУППЫ "Ваше мнение, очень важно для нас 😁"
 DONOR_GROUP_ID = -1003107308525 
@@ -120,11 +121,8 @@ def generate_and_send_daily_poll(is_test=False):
     holidays_list = [h.strip() for h in all_holidays_str.split(",") if h.strip()]
     selected_holiday = random.choice(holidays_list) if holidays_list else "День без запретов"
     
-    # ================= 2. ЖЕСТКИЙ ПРОМПТ С ШАБЛОНАМИ =================
-    system_prompt = (
-        "You are an API strictly generating raw JSON. "
-        "Output ONLY valid JSON. No markdown, no preambles, no explanations."
-    )
+    # ================= 2. ЖЕСТКИЙ ПРОМПТ И СИСТЕМНОЕ СООБЩЕНИЕ =================
+    system_prompt = "You are an API generating raw JSON. Respond with valid JSON only."
 
     user_prompt = f"""
     Сегодня {today_str}. Тема дня: {selected_holiday}.
@@ -173,99 +171,69 @@ def generate_and_send_daily_poll(is_test=False):
     ai_data = None
     last_error = ""
 
-    if not OPENROUTER_API_KEY:
-        logger.error("OPENROUTER_API_KEY не найден в переменных окружения")
-        try:
-            bot.send_message(STAFF_GROUP_ID, "❌ Нет ключа OpenRouter в env")
-        except:
-            pass
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY не найден в переменных окружения")
         return
 
-    # 🔥 Актуальный список бесплатных моделей OpenRouter
-    models_to_try = [
-        "nvidia/nemotron-3-ultra-550b-a55b:free",
-        "nvidia/nemotron-3.5-lightning:free",
-        "google/gemma-4-31b-it:free",
-        "google/gemma-4-26b-a4b-it:free",
-        "z-ai/glm-5.2:free",
-        "poolside/laguna-s-2.1:free",
-        "openrouter/free",
-    ]
+    try:
+        # Обращаемся напрямую к мозгу Gemini 1.5 Pro
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        
+        # Специальный формат запроса для Google API
+        payload = {
+            "systemInstruction": {
+                "parts": [{"text": system_prompt}]
+            },
+            "contents": [{
+                "parts": [{"text": user_prompt}]
+            }],
+            "generationConfig": {
+                "temperature": 0.8, # Делаем его чуть более креативным
+                "responseMimeType": "application/json" # 🔥 МАГИЯ: Заставляем выдавать чистый JSON!
+            }
+        }
 
-    for model in models_to_try:
-        try:
-            res = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://t.me/", 
-                    "X-Title": "Skynet Daily Poll",  
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    "temperature": 0.55,
-                    "max_tokens": 1200,
-                    "response_format": {"type": "json_object"} 
-                },
-                timeout=30
-            )
+        res = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=30
+        )
 
-            if res.status_code == 200:
-                response_data = res.json()
-                if "choices" not in response_data or not response_data["choices"]:
-                    last_error = f"[{model}] Нет ключа 'choices' в ответе API"
-                    logger.warning(f"Ошибка парсинга ответа: {response_data}")
-                    continue
-                
-                content = response_data["choices"][0]["message"]["content"]
-                if not content:
-                    last_error = f"[{model}] Пустой контент"
-                    continue
-                    
-                # 🔥 УМНЫЙ ПОИСК JSON 🔥
-                # Ищем всё, что находится между первой { и последней }
-                match = re.search(r'\{[\s\S]*\}', content)
-                if match:
-                    clean_json_str = match.group(0)
-                else:
-                    clean_json_str = content # Если не нашли скобок, пробуем как есть
-                    
-                try:
-                    ai_data = json.loads(clean_json_str)
-                except json.JSONDecodeError:
-                    last_error = f"[{model}] Невалидный JSON от модели: {clean_json_str[:100]}"
-                    logger.warning(last_error)
-                    continue 
+        if res.status_code == 200:
+            response_data = res.json()
+            
+            # Вытаскиваем текст ответа из структуры Gemini
+            content = response_data["candidates"][0]["content"]["parts"][0]["text"]
+            
+            try:
+                ai_data = json.loads(content)
                 
                 # 🔥 НАЧАЛО: АВТОМАТИЧЕСКАЯ ОБРЕЗКА ПОД ЛИМИТЫ ТЕЛЕГРАМА 🔥
                 if len(ai_data.get("question", "")) > 255:
                     ai_data["question"] = ai_data["question"][:250] + "..."
                 
-                # 2. Режем ответы, если они больше 100 символов (и берем максимум 12)
                 safe_options = []
-                for opt in ai_data.get("options", [])[:12]: # <-- ЗДЕСЬ СТАВИМ 12
+                for opt in ai_data.get("options", [])[:12]:
                     if len(opt) > 100:
                         safe_options.append(opt[:96] + "...")
                     else:
                         safe_options.append(opt)
                 ai_data["options"] = safe_options
                 # 🔥 КОНЕЦ ОБРЕЗКИ 🔥
+                
+                logger.info("✅ Успех: Опрос сгенерирован через Gemini API!")
+                
+            except json.JSONDecodeError:
+                last_error = "Невалидный JSON от модели"
+                logger.warning(last_error)
+        else:
+            last_error = f"Код {res.status_code}: {res.text[:300]}"
+            logger.warning(f"Ошибка Gemini API: {last_error}")
 
-                logger.info(f"✅ Успех на модели: {model}")
-                break
-            else:
-                last_error = f"[{model}] Код {res.status_code}: {res.text[:300]}"
-                logger.warning(f"Ошибка OpenRouter: {last_error}")
-
-        except Exception as e:
-            last_error = f"[{model}] {type(e).__name__}: {str(e)}"
-            logger.warning(f"Сбой: {last_error}")
-            continue
+    except Exception as e:
+        last_error = f"{type(e).__name__}: {str(e)}"
+        logger.warning(f"Сбой: {last_error}")
                 
     if not ai_data or "question" not in ai_data:
         logger.error(f"❌ Скайнет не смог сгенерировать опрос. Последняя ошибка: {last_error}")
