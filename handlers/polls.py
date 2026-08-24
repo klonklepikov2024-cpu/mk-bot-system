@@ -135,19 +135,20 @@ def generate_and_send_daily_poll(is_test=False):
        - Сделай креативную подводку к теме.
 
     2. СЕКРЕТ КРЕАТИВНЫХ ОТВЕТОВ (РОВНО 12 штук):
-       - НЕ зацикливайся на одном и том же! Никаких шаблонов "только диван" или "только секс". 
+       - ГЛАВНОЕ ПРАВИЛО: КАЖДЫЙ ДЕНЬ ПРИДУМЫВАЙ НОВЫЕ СИТУАЦИИ! Абсолютный рандом. Не используй одни и те же сценарии каждый раз. 
        - Обыгрывай тему праздника через МЕТАФОРЫ в самых РАЗНЫХ сферах жизни.
        - В НАЧАЛЕ КАЖДОГО варианта ставь подходящий эмодзи. Длина ответа — до 100 символов.
        
-       Используй этот микс сфер (адаптируй их под праздник {selected_holiday}):
-       * Активный отдых: выезды с палатками, рыбалка, жарка мяса на шампурах у костра.
-       * Уютные хобби: залипание на рыбок в аквариуме, домашний ремонт и обустройство, готовка классных ужинов.
-       * Контент: просмотр напряженных триллеров или драм под одеялом.
-       * Отношения: уютный домашний вечер с любимым парнем.
-       * Игривый флирт (18+): поиск актива/пассива на вечер, грязные переписки, обмен горячими фото.
-       * Самоирония: рабочие дедлайны, абсолютная лень или когда всё идет не по плану.
+       Темы для микса (ВЫБИРАЙ РАЗНЫЕ КАЖДЫЙ РАЗ, не пытайся впихнуть всё сразу):
+       * Быт и рутина: уборка, стирка, пробки на дорогах, поход в супермаркет.
+       * Уют и еда: готовка классных ужинов (от жареной картошечки до мяса в духовке), доставка пиццы, игры с котом, залипание на рыбок в аквариуме.
+       * Отдых вне дома: музыкальные фестивали, выезды на озера с палатками, жарка шашлыков, бары, долгие прогулки.
+       * Контент и хобби: исторические драмы, детективы, видеоигры, спортзал, домашний ремонт.
+       * Отношения: романтика с парнем, совместный быт, планирование отпуска.
+       * Игривый флирт (18+): поиск актива/пассива на вечер, грязные переписки, нюдсы.
+       * Работа и усталость: дедлайны, злой босс, абсолютная лень, кофе литрами.
 
-    ПРИМЕР ЛОГИКИ: Если праздник "День Ветра", то ответ про хобби: "🐟 В голове гуляет ветер, просто сижу и залипаю на свой аквариум", а про отношения: "🌪 Сносит крышу от чувств, провожу время со своим парнем".
+    ПРИМЕР ЛОГИКИ: Если праздник "День Ветра", то ответ про работу: "🌪 Ношусь по офису как ураган, дедлайны сдувают крышу". НЕ используй этот пример в своем ответе! Адаптируйся под {selected_holiday}.
 
     Выведи ТОЛЬКО JSON В ФОРМАТЕ НИЖЕ:
     {{
@@ -175,66 +176,69 @@ def generate_and_send_daily_poll(is_test=False):
         logger.error("GEMINI_API_KEY не найден в переменных окружения")
         return
 
-    try:
-        # Обращаемся напрямую к мозгу Gemini 1.5 Pro
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key={GEMINI_API_KEY}"
+    # 🔥 СИСТЕМА ЗАПАСНЫХ ПАРАШЮТОВ 🔥
+    # Сначала стучимся в самую умную, если она лежит - идем к проверенным
+    models_queue = [
+        "gemini-3.7-flash", # Новинка (самая умная)
+        "gemini-2.5-flash", # Надежный танк (квоты 100% есть)
+    ]
+
+    for model_name in models_queue:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
         
-        # Специальный формат запроса для Google API
-        payload = {
-            "systemInstruction": {
-                "parts": [{"text": system_prompt}]
-            },
-            "contents": [{
-                "parts": [{"text": user_prompt}]
-            }],
-            "generationConfig": {
-                "temperature": 0.8, # Делаем его чуть более креативным
-                "responseMimeType": "application/json" # 🔥 МАГИЯ: Заставляем выдавать чистый JSON!
-            }
-        }
-
-        res = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            timeout=30
-        )
-
-        if res.status_code == 200:
-            response_data = res.json()
-            
-            # Вытаскиваем текст ответа из структуры Gemini
-            content = response_data["candidates"][0]["content"]["parts"][0]["text"]
-            
+        # Делаем до 3 попыток для каждой модели
+        for attempt in range(3):
             try:
-                ai_data = json.loads(content)
-                
-                # 🔥 НАЧАЛО: АВТОМАТИЧЕСКАЯ ОБРЕЗКА ПОД ЛИМИТЫ ТЕЛЕГРАМА 🔥
-                if len(ai_data.get("question", "")) > 255:
-                    ai_data["question"] = ai_data["question"][:250] + "..."
-                
-                safe_options = []
-                for opt in ai_data.get("options", [])[:12]:
-                    if len(opt) > 100:
-                        safe_options.append(opt[:96] + "...")
-                    else:
-                        safe_options.append(opt)
-                ai_data["options"] = safe_options
-                # 🔥 КОНЕЦ ОБРЕЗКИ 🔥
-                
-                logger.info("✅ Успех: Опрос сгенерирован через Gemini API!")
-                
-            except json.JSONDecodeError:
-                last_error = "Невалидный JSON от модели"
-                logger.warning(last_error)
-        else:
-            last_error = f"Код {res.status_code}: {res.text[:300]}"
-            logger.warning(f"Ошибка Gemini API: {last_error}")
+                payload = {
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"parts": [{"text": user_prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.8, 
+                        "responseMimeType": "application/json"
+                    }
+                }
 
-    except Exception as e:
-        last_error = f"{type(e).__name__}: {str(e)}"
-        logger.warning(f"Сбой: {last_error}")
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=40)
+
+                if res.status_code == 200:
+                    response_data = res.json()
+                    content = response_data["candidates"][0]["content"]["parts"][0]["text"]
+                    
+                    try:
+                        ai_data = json.loads(content)
+                        
+                        # Автоматическая обрезка под лимиты Телеграма
+                        if len(ai_data.get("question", "")) > 255:
+                            ai_data["question"] = ai_data["question"][:250] + "..."
+                        
+                        safe_options = [opt[:96] + "..." if len(opt) > 100 else opt for opt in ai_data.get("options", [])[:12]]
+                        ai_data["options"] = safe_options
+                        
+                        logger.info(f"✅ Успех: Опрос сгенерирован через модель {model_name} (попытка {attempt + 1})")
+                        break # Успех! Вырываемся из цикла попыток
+
+                    except json.JSONDecodeError:
+                        last_error = "Невалидный JSON от модели"
+                        logger.warning(last_error)
+                        
+                elif res.status_code in [503, 429]:
+                    last_error = f"Код {res.status_code} на {model_name}. Ждем 15 сек..."
+                    logger.warning(last_error)
+                    time.sleep(15) # Ждем пока Гугл продышится
+                else:
+                    last_error = f"Код {res.status_code}: {res.text[:300]}"
+                    logger.warning(f"Ошибка Gemini API ({model_name}): {last_error}")
+                    break # Если ошибка другая (например, 404) - сразу идем к следующей модели
+
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {str(e)}"
+                logger.warning(f"Сбой подключения ({model_name}): {last_error}")
+                time.sleep(5)
                 
+        if ai_data:
+            break # Вырываемся из цикла моделей, если всё получилось!
+
+    # 🔥 ВОТ ЭТОТ БЛОК НУЖНО ВЕРНУТЬ 🔥
     if not ai_data or "question" not in ai_data:
         logger.error(f"❌ Скайнет не смог сгенерировать опрос. Последняя ошибка: {last_error}")
         try: 
@@ -242,6 +246,7 @@ def generate_and_send_daily_poll(is_test=False):
         except: 
             pass
         return
+    # 🔥 КОНЕЦ БЛОКА 🔥
 
     # ================= 3. ПУБЛИКАЦИЯ В ГРУППУ-ДОНОР =================
     close_time = int(time.time()) + 86400
