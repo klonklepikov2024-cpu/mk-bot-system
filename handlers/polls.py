@@ -178,10 +178,9 @@ def generate_and_send_daily_poll(is_test=False):
         return
 
     # 🔥 СИСТЕМА ЗАПАСНЫХ ПАРАШЮТОВ 🔥
-    # Сначала стучимся в самую умную, если она лежит - идем к проверенным
     models_queue = [
         "gemini-3.7-flash", # Новинка (самая умная)
-        "gemini-2.5-flash", # Надежный танк (квоты 100% есть)
+        "gemini-3.6-flash", # <--- ЗАМЕНИЛИ 2.5 на 3.6 (надежный запасной танк)
     ]
 
     for model_name in models_queue:
@@ -199,7 +198,7 @@ def generate_and_send_daily_poll(is_test=False):
                     }
                 }
 
-                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=40)
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=90)
 
                 if res.status_code == 200:
                     response_data = res.json()
