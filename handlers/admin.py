@@ -1499,7 +1499,7 @@ def check_face_in_thumbnail(thumb_file_id):
         )
         
         data = {
-            "model": "qwen/qwen3.6-27b",
+            "model": "qwen/qwen3.8-27b",
             "messages": [
                 {
                     "role": "user",
@@ -1584,7 +1584,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
         )
 
         data = {
-            "model": "qwen/qwen3.6-27b",
+            "model": "qwen/qwen3.8-27b",
             "messages": [
                 {
                     "role": "user",
