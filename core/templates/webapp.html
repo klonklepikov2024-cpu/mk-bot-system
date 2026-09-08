@@ -223,6 +223,42 @@
         </div>
     </div>
 
+    <!-- 4. ПОЛНОЭКРАННОЕ ОКНО БИЛЕТОВ (Как на скрине) -->
+    <div id="ticketsModal" class="hidden fixed inset-0 bg-[#1a1b1f] z-[400] flex flex-col p-4 transition-opacity">
+        <div class="flex justify-between items-center mb-6 pt-2">
+            <button onclick="document.getElementById('ticketsModal').classList.add('hidden')" class="text-gray-400 hover:text-white text-3xl font-light active:scale-90 transition-transform">←</button>
+            <h2 class="text-white font-bold text-xl flex-1 text-center">Билеты розыгрыша</h2>
+            <div class="w-8"></div> <!-- Пустой блок для центровки заголовка -->
+        </div>
+
+        <div class="surface rounded-2xl p-4 mb-4 border border-gray-700/50 shadow-lg">
+            <p class="text-xs text-gray-300 leading-relaxed">
+                🎰 Победителя определяет случайный номер билета. <br>
+                Найдите номер ниже — увидите, чей это билет. Все прозрачно.
+            </p>
+        </div>
+
+        <!-- Контейнер для списка (занимает все оставшееся место) -->
+        <div class="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar pb-6" id="ticketsModalList">
+            <!-- Сюда будут падать билеты -->
+        </div>
+
+        <button id="ticketsLoadMoreBtn" class="surface w-full py-3 mt-2 rounded-xl font-bold text-white border border-gray-600 active:scale-95 transition-transform hidden">
+            Показать еще билеты
+        </button>
+    </div>
+
+    <!-- 5. КАСТОМНЫЙ ПОПАП ДЛЯ РУЛЕТКИ -->
+    <div id="rouletteModal" class="hidden fixed inset-0 bg-black/80 z-[500] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity">
+        <div class="surface w-full max-w-sm rounded-2xl p-6 shadow-2xl border border-blue-500/50 text-center relative overflow-hidden">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
+            <div class="text-6xl mb-4 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]" id="rouletteModalIcon">🎰</div>
+            <h3 class="font-bold text-2xl mb-2 text-white">Результат</h3>
+            <p id="rouletteModalText" class="text-gray-300 mb-6 text-sm whitespace-pre-wrap leading-relaxed">Текст приза...</p>
+            <button onclick="closeRouletteModal()" class="w-full bg-blue-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Отлично!</button>
+        </div>
+    </div>
+
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
     <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-4 z-50">
         <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 w-1/5">
@@ -388,10 +424,46 @@
                 let html = '';
                 data.forEach(gw => {
                     if (gw.status === 'active') {
-                        html += `<div class="surface rounded-2xl p-4 border border-gray-700 relative overflow-hidden"><div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">АКТИВЕН</div><h3 class="font-bold text-lg mb-1 mt-2">${gw.title}</h3><p class="text-sm text-gray-400 mb-3">🎫 ${gw.price} Очков • ⏳ ${gw.time_left}</p><div class="flex items-center space-x-2 mb-3 bg-black/20 p-1 rounded-xl border border-gray-600/30"><button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">-</button><div id="count_${gw.id}" class="flex-1 text-center font-bold text-xl" data-val="1">1</div><button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">+</button></div><button onclick="buyTickets('${gw.id}', ${gw.price})" class="accent w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">🎟 Получить за <span id="price_${gw.id}">${gw.price}</span> 💎</button><p class="text-[10px] text-center text-gray-500 mt-2">Уже куплено билетов: ${gw.total}</p></div>`;
+                        html += `
+                        <div class="surface rounded-2xl p-4 border border-gray-700 relative overflow-hidden shadow-lg">
+                            <div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg shadow-md">АКТИВЕН</div>
+                            <h3 class="font-bold text-xl mb-1 mt-2 text-white">${gw.title}</h3>
+                            <p class="text-sm text-gray-400 mb-4 flex items-center">🎟 <span class="text-blue-400 font-bold ml-1">${gw.price} Очков</span> <span class="mx-2">•</span> ⏳ ${gw.time_left}</p>
+                            
+                            <div class="flex items-center space-x-2 mb-4 bg-black/30 p-1.5 rounded-xl border border-gray-600/50">
+                                <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-12 h-10 rounded-lg font-bold text-2xl active:scale-90 bg-gray-800 text-gray-300 hover:text-white">-</button>
+                                <div id="count_${gw.id}" class="flex-1 text-center font-black text-2xl text-white" data-val="1">1</div>
+                                <button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-12 h-10 rounded-lg font-bold text-2xl active:scale-90 bg-gray-800 text-gray-300 hover:text-white">+</button>
+                            </div>
+                            
+                            <button onclick="buyTickets('${gw.id}', ${gw.price})" class="accent w-full py-3 rounded-xl font-bold text-white shadow-[0_0_15px_rgba(43,107,243,0.4)] active:scale-95 transition-transform mb-3">
+                                Получить билеты за <span id="price_${gw.id}">${gw.price}</span> 💎
+                            </button>
+                            
+                            <div class="flex justify-between items-center bg-black/20 p-3 rounded-xl border border-gray-700/50">
+                                <span class="text-xs text-gray-400">Всего билетов: <b class="text-white">${gw.total}</b></span>
+                                <button onclick="openTicketsModal('${gw.id}')" class="text-xs font-bold text-blue-400 active:scale-90 transition-transform">
+                                    Показать таблицу ➔
+                                </button>
+                            </div>
+                        </div>`;
                     } else {
                         let winText = gw.winning_number ? `Победитель: ${gw.winner_name} (Билет №${gw.winning_number})` : gw.winner_name;
-                        html += `<div class="surface rounded-2xl p-4 border border-gray-800 relative overflow-hidden opacity-90"><div class="absolute top-0 right-0 bg-gray-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">ЗАВЕРШЕН</div><h3 class="font-bold text-lg mb-1 mt-2 text-gray-300">${gw.title}</h3><p class="text-sm text-gray-500 mb-3">Всего билетов: ${gw.total}</p><div class="bg-yellow-900/30 border border-yellow-700/50 rounded-xl p-3 text-center"><p class="text-[10px] text-yellow-500 uppercase font-bold mb-1">Итоги розыгрыша</p><p class="font-bold text-sm text-yellow-400">${winText}</p></div></div>`;
+                        html += `
+                        <div class="surface rounded-2xl p-4 border border-gray-800 relative overflow-hidden opacity-90 shadow-lg">
+                            <div class="absolute top-0 right-0 bg-gray-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">ЗАВЕРШЕН</div>
+                            <h3 class="font-bold text-xl mb-1 mt-2 text-gray-300">${gw.title}</h3>
+                            <p class="text-sm text-gray-500 mb-4">Участвовало билетов: ${gw.total}</p>
+                            
+                            <div class="bg-yellow-900/20 border border-yellow-700/40 rounded-xl p-4 mb-3 text-center">
+                                <p class="text-[10px] text-yellow-600 uppercase tracking-widest font-bold mb-2">🏆 Итоги розыгрыша</p>
+                                <p class="font-black text-lg text-yellow-500">${winText}</p>
+                            </div>
+
+                            <button onclick="openTicketsModal('${gw.id}')" class="w-full bg-gray-800 py-3 rounded-xl text-sm font-bold text-gray-300 active:scale-95 transition-transform border border-gray-700">
+                                📄 Посмотреть таблицу билетов
+                            </button>
+                        </div>`;
                     }
                 });
                 container.innerHTML = html;
@@ -409,6 +481,86 @@
             apiCall('/api/buy_ticket', {amount: amount, giveaway_id: gw_id}).then(data => {
                 if (data.error) { customAlert(data.error, "Ошибка", "❌"); } 
                 else { customAlert(`Выданы билеты с №${data.start} по №${data.end}.`, "Успех!", "✅"); loadProfile(); loadGiveaways(); }
+            });
+        }
+
+      // --- ПРОЗРАЧНАЯ ТАБЛИЦА БИЛЕТОВ (НОВЫЙ МОДАЛ) ---
+        let currentGwIdForModal = null; // Запоминаем открытый розыгрыш
+
+        function openTicketsModal(gw_id) {
+            safeHaptic('impact', 'light');
+            currentGwIdForModal = gw_id;
+            
+            const modal = document.getElementById('ticketsModal');
+            const listContainer = document.getElementById('ticketsModalList');
+            const loadMoreBtn = document.getElementById('ticketsLoadMoreBtn');
+            
+            // Очищаем старые данные
+            modal.dataset.offset = "0";
+            listContainer.innerHTML = '<div class="text-center text-gray-400 text-sm py-10">⏳ Загрузка базы...</div>';
+            loadMoreBtn.classList.add('hidden');
+            
+            // Показываем окно
+            modal.classList.remove('hidden');
+
+            fetchParticipantsForModal(gw_id, 0);
+        }
+
+        function loadMoreParticipants() {
+            safeHaptic('impact', 'light');
+            const modal = document.getElementById('ticketsModal');
+            const offset = parseInt(modal.dataset.offset);
+            const btn = document.getElementById('ticketsLoadMoreBtn');
+            
+            btn.innerText = "⏳ Загрузка...";
+            btn.disabled = true;
+            
+            fetchParticipantsForModal(currentGwIdForModal, offset);
+        }
+
+        function fetchParticipantsForModal(gw_id, offset) {
+            apiCall('/api/get_giveaway_participants', {giveaway_id: gw_id, offset: offset}).then(data => {
+                const listContainer = document.getElementById('ticketsModalList');
+                const loadMoreBtn = document.getElementById('ticketsLoadMoreBtn');
+                const modal = document.getElementById('ticketsModal');
+                
+                if (data.error) {
+                    listContainer.innerHTML = `<div class="text-red-400 text-sm text-center py-10">${data.error}</div>`;
+                    return;
+                }
+                
+                if (offset === 0 && data.participants.length === 0) {
+                    listContainer.innerHTML = '<div class="text-gray-500 text-sm text-center py-10">🪹 Билетов пока нет. Будьте первым!</div>';
+                    return;
+                }
+                
+                if (offset === 0) listContainer.innerHTML = ''; // Убираем надпись загрузки
+                
+                let html = '';
+                data.participants.forEach(p => {
+                    // Генерируем крутой дизайн строчки как на скрине
+                    html += `
+                    <div class="flex items-center justify-between bg-black/40 p-3 rounded-2xl border border-gray-800">
+                        <div class="flex items-center space-x-3 overflow-hidden">
+                            <span class="font-black text-white text-lg min-w-[60px]">№${p.num}</span>
+                            <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs shadow-md">👤</div>
+                            <span class="text-gray-200 text-sm font-medium truncate whitespace-nowrap">${p.name}</span>
+                        </div>
+                        <span class="text-gray-500 text-[10px] whitespace-nowrap ml-2">${p.date}</span>
+                    </div>`;
+                });
+                
+                listContainer.insertAdjacentHTML('beforeend', html);
+                
+                // Обработка кнопки "Загрузить еще"
+                if (data.next_offset !== null) {
+                    modal.dataset.offset = data.next_offset;
+                    loadMoreBtn.classList.remove('hidden');
+                    loadMoreBtn.innerText = "Показать еще билеты";
+                    loadMoreBtn.disabled = false;
+                } else {
+                    loadMoreBtn.classList.add('hidden');
+                }
             });
         }
 
