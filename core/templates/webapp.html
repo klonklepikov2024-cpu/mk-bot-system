@@ -8,11 +8,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
-            background-color: var(--tg-theme-bg-color, #1a1b1f);
-            color: var(--tg-theme-text-color, #ffffff);
-            font-family: -apple-system, sans-serif;
-            /* 👇 Увеличили отступ со 80px до 120px + добавили поддержку "челки" снизу на iPhone */
-            padding-bottom: calc(120px + env(safe-area-inset-bottom)); 
+    background-color: var(--tg-theme-bg-color, #1a1b1f);
+    color: var(--tg-theme-text-color, #ffffff);
+    font-family: -apple-system, sans-serif;
+    /* Увеличен отступ до 180px, чтобы контент не перекрывался меню и панелью Telegram */
+    padding-bottom: calc(180px + env(safe-area-inset-bottom)); 
         }
         .surface { background-color: var(--tg-theme-secondary-bg-color, #27282d); }
         .accent { background-color: var(--tg-theme-button-color, #2b6bf3); }
