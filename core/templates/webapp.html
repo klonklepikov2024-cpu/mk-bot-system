@@ -95,22 +95,34 @@
     <div id="tab-inventory" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Рюкзак & Наковальня</h2>
         
+        <!-- 1. ВЕРХНИЙ РЯД: Ресурсы -->
         <div class="flex space-x-2 mb-4">
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50">
+                <div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div>
+            </div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50">
+                <div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div>
+            </div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50">
+                <div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div>
+            </div>
+        </div>
 
-        <!-- Использование Артефактов -->
+        <!-- 2. ВТОРОЙ РЯД: Использование Артефактов -->
         <div class="grid grid-cols-2 gap-2 mb-6">
-            <button onclick="openModal('angel')" class="surface p-3 rounded-xl border border-yellow-500/30 active:scale-95 transition-transform">
-                <div class="text-2xl mb-1">👼</div><div class="font-bold text-sm text-yellow-500">Призвать Ангела</div><div class="text-[9px] text-gray-400">Сжечь 1 щит (Разбан друга)</div>
+            <button onclick="openModal('angel')" class="surface p-3 rounded-xl border border-yellow-500/30 active:scale-95 transition-transform shadow-md">
+                <div class="text-2xl mb-1">👼</div>
+                <div class="font-bold text-sm text-yellow-500">Призвать Ангела</div>
+                <div class="text-[9px] text-gray-400">Сжечь 1 щит (Разбан друга)</div>
             </button>
-            <button onclick="openModal('arrest')" class="surface p-3 rounded-xl border border-red-500/30 active:scale-95 transition-transform">
-                <div class="text-2xl mb-1">🚓</div><div class="font-bold text-sm text-red-500">Ордер на Арест</div><div class="text-[9px] text-gray-400">Мут на 1 час (Указать цель)</div>
+            <button onclick="openModal('arrest')" class="surface p-3 rounded-xl border border-red-500/30 active:scale-95 transition-transform shadow-md">
+                <div class="text-2xl mb-1">🚓</div>
+                <div class="font-bold text-sm text-red-500">Ордер на Арест</div>
+                <div class="text-[9px] text-gray-400">Мут на 1 час (Указать цель)</div>
             </button>
-        </div>
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
         </div>
 
+        <!-- 3. ТРЕТИЙ РЯД: Крафт -->
         <div class="space-y-3 mb-6">
             <button onclick="craft('shards')" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-blue-500/30 active:scale-95 transition-transform">
                 <div class="text-left"><div class="font-bold">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: 50 🧩</div></div><div class="text-2xl">✨</div>
@@ -120,12 +132,12 @@
             </button>
         </div>
 
-        <!-- Секретный сундук -->
+        <!-- 4. ЧЕТВЕРТЫЙ РЯД: Секретный сундук -->
         <div class="surface rounded-2xl p-4 mb-6 text-center shadow-lg border border-yellow-600/50">
             <div class="flex justify-between items-center mb-2">
                 <div class="text-left">
                     <h3 class="font-bold text-lg text-yellow-500 flex items-center"><span id="chestIcon" class="text-2xl mr-2">📦</span> Секретный Сундук</h3>
-                    <p class="text-[10px] text-gray-400">VIP, Щиты, Деньги или Кот-Воришка!</p>
+                    <p class="text-[10px] text-gray-400">VIP, Щиты, Деньги или Кот!</p>
                 </div>
                 <button id="chestBtn" onclick="openChest()" class="bg-yellow-600 px-4 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform text-sm">
                     Открыть (1000 💎)
@@ -133,6 +145,7 @@
             </div>
         </div>
 
+        <!-- 5. ПЯТЫЙ РЯД: Личные промокоды -->
         <h3 class="font-bold text-lg mb-2">Ваши промокоды</h3>
         <div id="promos-container" class="space-y-2"><p class="text-gray-400 text-sm">Нет активных купонов.</p></div>
     </div>
