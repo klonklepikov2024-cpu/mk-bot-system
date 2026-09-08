@@ -537,6 +537,35 @@ def api_payout():
         
     return jsonify({"success": True, "msg": "Заявка отправлена в финотдел!"})
 
+@app.route('/api/get_stars_invoice', methods=['POST'])
+def api_get_stars_invoice():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    stars_amount = int(data.get('stars_amount', 50))
+    points_reward = int(data.get('points_reward', 100))
+    
+    try:
+        # Генерируем ссылку на оплату звездами (provider_token пустой для Stars)
+        from core.bot import bot
+        from telebot.types import LabeledPrice
+        
+        invoice_link = bot.create_invoice_link(
+            title="Покупка Очков Бдительности",
+            description=f"Пакет: {points_reward} Очков",
+            payload=f"webapp_points_{uid}_{points_reward}", # Уникальный пейлоад для обработчика
+            provider_token="", 
+            currency="XTR",
+            prices=[LabeledPrice(label="Очки", amount=stars_amount)]
+        )
+        return jsonify({"success": True, "url": invoice_link})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db

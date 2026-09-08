@@ -114,6 +114,19 @@
     <div id="tab-finance" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Финансы & Сеть</h2>
         
+        <!-- ⭐ Покупка очков -->
+        <h3 class="font-bold text-lg mb-2">⭐ Покупка очков</h3>
+        <div class="grid grid-cols-2 gap-2 mb-6">
+            <button id="buy_pts_btn_50" onclick="buyPointsWithStars(50, 100)" class="surface p-2 rounded-xl border border-yellow-700/50 active:scale-95">
+                <div class="font-bold">Купить 100💎</div>
+                <div class="text-[10px] text-yellow-400">за 50 ⭐️</div>
+            </button>
+            <button id="buy_pts_btn_250" onclick="buyPointsWithStars(250, 500)" class="surface p-2 rounded-xl border border-yellow-700/50 active:scale-95">
+                <div class="font-bold">Купить 500💎</div>
+                <div class="text-[10px] text-yellow-400">за 250 ⭐️</div>
+            </button>
+        </div>
+
         <!-- Обменник -->
         <h3 class="font-bold text-lg mb-2">💱 Обменник кэшбэка</h3>
         <div class="grid grid-cols-2 gap-2 mb-6">
@@ -377,6 +390,32 @@
         }
 
         // --- ФИНАНСЫ (Обмен и Вывод) ---
+        function buyPointsWithStars(starsCost, pointsReward) {
+            tg.HapticFeedback.impactOccurred('medium');
+            const btn = document.getElementById(`buy_pts_btn_${starsCost}`);
+            const originalText = btn.innerHTML;
+            btn.innerText = "⏳ Загрузка..."; btn.disabled = true;
+
+            apiCall('/api/get_stars_invoice', {stars_amount: starsCost, points_reward: pointsReward}).then(data => {
+                btn.innerHTML = originalText; btn.disabled = false;
+                
+                if (data.error) {
+                    tg.showAlert(data.error);
+                } else if (data.url) {
+                    tg.openInvoice(data.url, function(status) {
+                        if (status === 'paid') {
+                            tg.HapticFeedback.notificationOccurred('success');
+                            tg.showAlert(`✅ Успешно! Вам начислено ${pointsReward} 💎.`);
+                            loadProfile(); 
+                        } else if (status === 'failed') {
+                            tg.HapticFeedback.notificationOccurred('error');
+                            tg.showAlert("❌ Ошибка при оплате.");
+                        }
+                    });
+                }
+            });
+        }
+
         function exchange(cost, reward) {
             tg.HapticFeedback.impactOccurred('medium');
             tg.showConfirm(`Обменять ${cost}₽ на ${reward}💎?`, function(c) {

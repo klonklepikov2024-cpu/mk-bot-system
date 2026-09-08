@@ -262,6 +262,39 @@ def successful_payment(message):
     # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА (Отчисляем 20% от любого платежа в Фонд)
     db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": amount * 0.20}}, upsert=True)
 
+    # 👇👇👇 ВСТАВЛЯЕМ НАШ НОВЫЙ БЛОК ДЛЯ WEB APP СЮДА 👇👇👇
+    if payload.startswith("webapp_points_"):
+        parts = payload.split('_')
+        points_reward = int(parts[3])
+        
+        # Добавляем в Z-отчет (чтобы статистика считала эти деньги)
+        db['daily_revenue'].insert_one({
+            "type": "points_shop", 
+            "amount": amount, 
+            "timestamp": time.time(), 
+            "date": datetime.datetime.now().strftime("%d.%m.%Y")
+        })
+        
+        # Начисляем очки пользователю в базу данных
+        paid_collection.update_one(
+            {"uid": uid}, 
+            {"$inc": {"bounty_points": points_reward}}, 
+            upsert=True
+        )
+        
+        # Уведомляем юзера
+        try:
+            bot.send_message(
+                uid, 
+                f"🎉 **Покупка в Web App успешна!**\nВам начислено **{points_reward} 💎**.", 
+                parse_mode="Markdown"
+            )
+            bot.send_message(STAFF_GROUP_ID, f"🤑 **WEB-МАГАЗИН:** Пользователь `{uid}` купил {points_reward} очков за {amount}⭐️!", parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Ошибка уведомления о покупке из Web App: {e}")
+        return # Важно сделать return, чтобы код не пошел проверять другие условия
+    # 👆👆👆 КОНЕЦ НОВОГО БЛОКА 👆👆👆
+
     # 1. ДОНАТ
     if payload.startswith("donation_"):
         db['daily_revenue'].insert_one({"type": "donation", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
