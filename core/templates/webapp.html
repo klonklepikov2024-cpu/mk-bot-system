@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Скайнет Кабинет</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: var(--tg-theme-bg-color, #1a1b1f);
+            color: var(--tg-theme-text-color, #ffffff);
+            font-family: -apple-system, sans-serif;
+            padding-bottom: 80px; /* Отступ для нижнего меню */
+        }
+        .surface { background-color: var(--tg-theme-secondary-bg-color, #27282d); }
+        .accent { background-color: var(--tg-theme-button-color, #2b6bf3); }
+        .nav-item.active { color: var(--tg-theme-button-color, #2b6bf3); }
+        
+        /* Скрываем неактивные вкладки */
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body class="p-4">
+
+    <!-- ================= ВКЛАДКА 1: ПРОФИЛЬ (ГЛАВНАЯ) ================= -->
+    <div id="tab-profile" class="tab-content active">
+        <div class="flex items-center space-x-3 mb-6">
+            <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden">👤</div>
+            <div>
+                <h1 class="font-bold text-lg leading-tight" id="userName">Скайнет</h1>
+                <p class="text-xs text-gray-400" id="userId">ID: ...</p>
+            </div>
+        </div>
+
+        <div class="surface rounded-2xl p-4 mb-6 shadow-lg">
+            <div class="flex justify-between divide-x divide-gray-600">
+                <div class="flex-1 text-center">
+                    <p class="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Рубли (Кэшбэк)</p>
+                    <p class="text-2xl font-black"><span id="rubBalance">0</span><span class="text-sm text-gray-400 ml-1">₽</span></p>
+                </div>
+                <div class="flex-1 text-center">
+                    <p class="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Очки</p>
+                    <p class="text-2xl font-black"><span id="ptsBalance">0</span><span class="text-sm text-gray-400 ml-1">💎</span></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="surface rounded-2xl p-4 mb-4 text-center">
+            <div class="text-4xl mb-2">🎰</div>
+            <h2 class="font-bold text-lg">Гача-Рулетка</h2>
+            <p class="text-sm text-gray-400 mb-3">Испытай удачу! Стоимость: 50💎</p>
+            <button id="spinBtn" onclick="spinRoulette()" class="accent w-full py-3 rounded-xl font-bold text-white active:scale-95 transition-transform flex justify-center items-center">
+                Крутить барабан
+            </button>
+        </div>
+    </div>
+
+    <!-- ================= ВКЛАДКА 2: РОЗЫГРЫШИ ================= -->
+    <div id="tab-giveaways" class="tab-content">
+        <h2 class="font-bold text-2xl mb-4">Розыгрыши</h2>
+        <div id="giveaways-container" class="space-y-4">
+            <!-- Сюда JS будет вставлять карточки розыгрышей -->
+            <p class="text-gray-400 text-center py-4">Загрузка активных розыгрышей...</p>
+        </div>
+    </div>
+
+<!-- ================= ВКЛАДКА 3: РЫНОК ================= -->
+    <div id="tab-market" class="tab-content">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="font-bold text-2xl">Черный Рынок</h2>
+            <button onclick="loadMarket()" class="bg-gray-700 px-3 py-1 rounded-lg text-sm active:scale-90 transition-transform">🔄 Обновить</button>
+        </div>
+        <p class="text-xs text-gray-400 mb-4">Покупайте артефакты у других игроков. Комиссия рынка: 10%.</p>
+        <div id="market-container" class="space-y-4">
+            <!-- Сюда JS будет вставлять карточки лотов -->
+            <p class="text-gray-400 text-center py-4">Загрузка лотов...</p>
+        </div>
+    </div>
+
+    <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
+    <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-around pb-safe pt-2 pb-3 px-2 z-50">
+        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-2 w-1/4">
+            <span class="text-2xl mb-1">👤</span>
+            <span class="text-[10px] font-bold">Профиль</span>
+        </button>
+        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-2 w-1/4">
+            <span class="text-2xl mb-1">🎁</span>
+            <span class="text-[10px] font-bold">Розыгрыши</span>
+        </button>
+        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-2 w-1/4">
+            <span class="text-2xl mb-1">⚖️</span>
+            <span class="text-[10px] font-bold">Рынок</span>
+        </button>
+        <button onclick="tg.close()" class="nav-item text-gray-500 flex flex-col items-center p-2 w-1/4">
+            <span class="text-2xl mb-1">❌</span>
+            <span class="text-[10px] font-bold">Закрыть</span>
+        </button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        const user = tg.initDataUnsafe?.user;
+        if (user) {
+            document.getElementById('userName').innerText = user.first_name;
+            document.getElementById('userId').innerText = 'ID: ' + user.id;
+            if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
+        }
+
+        function switchTab(tabId, btnElement) {
+            tg.HapticFeedback.impactOccurred('light');
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => {
+                el.classList.remove('active');
+                el.classList.add('text-gray-500');
+            });
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+            btnElement.classList.add('active');
+            btnElement.classList.remove('text-gray-500');
+
+            if(tabId === 'giveaways') loadGiveaways();
+            if(tabId === 'market') loadMarket(); // Загружаем рынок при переключении
+        }
+
+        function loadProfile() {
+            fetch('/api/profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ initData: tg.initData })
+            }).then(res => res.json()).then(data => {
+                document.getElementById('ptsBalance').innerText = data.points || 0;
+                document.getElementById('rubBalance').innerText = data.rubles || 0;
+            });
+        }
+
+        function loadGiveaways() {
+            fetch('/api/get_giveaways', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ initData: tg.initData })
+            }).then(res => res.json()).then(data => {
+                const container = document.getElementById('giveaways-container');
+                if (data.error || data.length === 0) {
+                    container.innerHTML = `<div class="surface rounded-2xl p-6 text-center text-gray-400">Сейчас нет активных розыгрышей.</div>`;
+                    return;
+                }
+                let html = '';
+                data.forEach(gw => {
+                    html += `
+                    <div class="surface rounded-2xl p-4 border border-gray-700 relative overflow-hidden">
+                        <div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">АКТИВЕН</div>
+                        <h3 class="font-bold text-lg mb-1 mt-2">${gw.title}</h3>
+                        <p class="text-sm text-gray-400 mb-3">🎫 ${gw.price} Очков • ⏳ ${gw.time_left}</p>
+                        <div class="flex items-center space-x-2 mb-3 bg-black/20 p-1 rounded-xl">
+                            <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-10 h-10 rounded-lg bg-gray-700 font-bold text-xl active:scale-90">-</button>
+                            <div id="count_${gw.id}" class="flex-1 text-center font-bold text-xl" data-val="1">1</div>
+                            <button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-10 h-10 rounded-lg bg-gray-700 font-bold text-xl active:scale-90">+</button>
+                        </div>
+                        <button onclick="buyTickets('${gw.id}', ${gw.price})" class="accent w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">
+                            🎟 Получить за <span id="price_${gw.id}">${gw.price}</span> 💎
+                        </button>
+                        <p class="text-xs text-center text-gray-500 mt-2">Уже куплено билетов: ${gw.total}</p>
+                    </div>`;
+                });
+                container.innerHTML = html;
+            });
+        }
+
+        // Загрузка Черного Рынка
+        function loadMarket() {
+            const container = document.getElementById('market-container');
+            container.innerHTML = '<p class="text-gray-400 text-center py-4">Связь со Скайнетом...</p>';
+            
+            fetch('/api/get_market', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ initData: tg.initData })
+            }).then(res => res.json()).then(data => {
+                if (data.error || data.length === 0) {
+                    container.innerHTML = `<div class="surface rounded-2xl p-6 text-center text-gray-400"><div class="text-4xl mb-2">🕸</div>Пусто. Никто ничего не продает.</div>`;
+                    return;
+                }
+
+                let html = '';
+                data.forEach(lot => {
+                    // Если лот выставил сам юзер, скрываем кнопки покупки
+                    let isMine = (lot.seller_uid == user.id);
+                    
+                    let buyButtons = isMine ? 
+                        `<p class="text-center text-sm text-gray-500 font-bold py-2 mt-2 bg-black/20 rounded-xl">Это ваш лот</p>` : 
+                        `<div class="flex space-x-2 mt-3">
+                            <button onclick="buyLot('${lot.id}', 'rub')" class="flex-1 bg-green-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center">
+                                <span class="text-lg">${lot.price_rub} ₽</span>
+                                <span class="text-[10px] font-normal">Купить за кэшбэк</span>
+                            </button>
+                            <button onclick="buyLot('${lot.id}', 'pts')" class="flex-1 bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center">
+                                <span class="text-lg">${lot.price_pts} 💎</span>
+                                <span class="text-[10px] font-normal">Купить за очки</span>
+                            </button>
+                        </div>`;
+
+                    html += `
+                    <div class="surface rounded-2xl p-4 shadow-lg border border-gray-700/50">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-md leading-tight">${lot.title}</h3>
+                            <span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2">Продавец:<br>${lot.seller}</span>
+                        </div>
+                        ${buyButtons}
+                    </div>`;
+                });
+                container.innerHTML = html;
+            }).catch(() => {
+                container.innerHTML = '<p class="text-red-400 text-center py-4">Ошибка загрузки. Попробуйте позже.</p>';
+            });
+        }
+
+        function changeTickets(id, delta, price) {
+            let el = document.getElementById(`count_${id}`);
+            let val = parseInt(el.getAttribute('data-val')) + delta;
+            if (val < 1) val = 1; 
+            el.setAttribute('data-val', val);
+            el.innerText = val;
+            document.getElementById(`price_${id}`).innerText = val * price;
+            tg.HapticFeedback.impactOccurred('light');
+        }
+
+        function buyTickets(gw_id, price) {
+            let amount = parseInt(document.getElementById(`count_${gw_id}`).getAttribute('data-val'));
+            tg.HapticFeedback.impactOccurred('medium');
+            
+            fetch('/api/buy_ticket', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ initData: tg.initData, amount: amount, giveaway_id: gw_id })
+            }).then(res => res.json()).then(data => {
+                if (data.error) {
+                    tg.showAlert(data.error); 
+                    tg.HapticFeedback.notificationOccurred('error');
+                } else {
+                    tg.HapticFeedback.notificationOccurred('success');
+                    tg.showAlert(`✅ Выданы билеты с №${data.start} по №${data.end}.`);
+                    loadProfile(); loadGiveaways(); 
+                }
+            });
+        }
+
+        // Функция Рулетки
+        function spinRoulette() {
+            const btn = document.getElementById('spinBtn');
+            // Делаем кнопку неактивной, пока крутится
+            btn.innerText = "⏳ Барабан крутится...";
+            btn.disabled = true;
+            btn.classList.add('opacity-70');
+            tg.HapticFeedback.impactOccurred('heavy'); // Сильная вибрация
+
+            fetch('/api/spin_roulette', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ initData: tg.initData })
+            }).then(res => res.json()).then(data => {
+                // Возвращаем кнопку в норму
+                btn.innerText = "🎰 Крутить барабан";
+                btn.disabled = false;
+                btn.classList.remove('opacity-70');
+                
+                if (data.error) {
+                    tg.showAlert(data.error);
+                    tg.HapticFeedback.notificationOccurred('error');
+                } else {
+                    tg.HapticFeedback.notificationOccurred('success');
+                    // Показываем красивое всплывающее окно Telegram с призом
+                    tg.showPopup({
+                        title: "Результат",
+                        message: data.message,
+                        buttons: [{type: "ok"}]
+                    });
+                    loadProfile(); // Обновляем баланс очков на экране
+                }
+            }).catch(() => {
+                btn.innerText = "🎰 Крутить барабан";
+                btn.disabled = false;
+                btn.classList.remove('opacity-70');
+            });
+        }
+
+        // Покупка лота на Рынке
+        function buyLot(lotId, currency) {
+            tg.HapticFeedback.impactOccurred('medium');
+            let currencyName = currency === 'rub' ? 'рубли' : 'очки';
+            
+            tg.showConfirm(`Подтверждаете покупку за ${currencyName}?`, function(confirmed) {
+                if(confirmed) {
+                    fetch('/api/buy_market', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ initData: tg.initData, lot_id: lotId, currency: currency })
+                    }).then(res => res.json()).then(data => {
+                        if(data.error) {
+                            tg.showAlert(data.error);
+                            tg.HapticFeedback.notificationOccurred('error');
+                        } else {
+                            tg.HapticFeedback.notificationOccurred('success');
+                            tg.showAlert(`✅ Успешно! Артефакт куплен.\nВаш код: ${data.promo_id}`);
+                            loadProfile(); // Обновляем баланс
+                            loadMarket();  // Обновляем список лотов (купленный исчезнет)
+                        }
+                    });
+                }
+            });
+        }
+
+        loadProfile();
+    </script>
+</body>
+</html>

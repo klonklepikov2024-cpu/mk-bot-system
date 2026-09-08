@@ -1,5 +1,7 @@
 import random
 import string
+from telebot.types import WebAppInfo
+from config import APP_URL
 import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
@@ -42,7 +44,7 @@ def handle_security_menu(call):
             upsert=True
         )
         
-    # ================= 🎰 ГЛАВНЫЙ ИГРОВОЙ ХАБ =================
+# ================= 🎰 ГЛАВНЫЙ ИГРОВОЙ ХАБ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'btn_game_club')
 def handle_game_club(call):
     uid = call.from_user.id
@@ -52,6 +54,15 @@ def handle_game_club(call):
     cb_balance = user_data.get("cashback_balance", 0)
 
     markup = InlineKeyboardMarkup(row_width=2)
+    
+    # 👇 ВОТ ОНА — НАША НОВАЯ КНОПКА КАБИНЕТА (WEB APP) 👇
+    markup.add(
+        InlineKeyboardButton(
+            "📱 Открыть Личный Кабинет", 
+            web_app=WebAppInfo(url=f"{APP_URL}/webapp")
+        )
+    )
+    
     # 1 ряд: Рулетка и Призы
     markup.add(
         InlineKeyboardButton("🎰 Рулетка (-50)", callback_data="play_roulette_btn"),
@@ -67,11 +78,10 @@ def handle_game_club(call):
         InlineKeyboardButton("🛒 Магазин скидок", callback_data="shop_rewards_menu"),
         InlineKeyboardButton("🔗 Заработать (CPA)", callback_data="cpa_menu")
     )
-    # 👇 НОВОЕ: ЧЕРНЫЙ РЫНОК 👇
     markup.add(
         InlineKeyboardButton("⚖️ Черный Рынок (P2P)", callback_data="market_main")
     )
-    # 👇 ИЗМЕНЕНИЯ ЗДЕСЬ: Добавляем кнопку обменника 👇
+    
     if cb_balance > 0:
         markup.add(
             InlineKeyboardButton("💱 Обменник (Рубли ➔ Очки)", callback_data="exchange_cb_menu")

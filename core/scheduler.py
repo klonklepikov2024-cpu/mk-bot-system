@@ -40,3 +40,65 @@ def delete_task_executor(chat_id, message_id):
         bot.delete_message(chat_id, message_id)
     except Exception:
         pass
+
+import random
+from database.mongo import db
+
+def check_giveaways_task():
+    """Фоновый судья: проверяет дедлайны и крутит барабан розыгрышей"""
+    now = datetime.datetime.now()
+    
+    # Ищем активные розыгрыши, у которых вышло время
+    ended_gws = db['giveaways'].find({"status": "active", "end_date": {"$lte": now}})
+    
+    for gw in ended_gws:
+        gw_id = gw["_id"]
+        last_ticket = gw.get("last_ticket_num", 0)
+        
+        if last_ticket == 0:
+            # Никто не купил билеты
+            db['giveaways'].update_one({"_id": gw_id}, {"$set": {"status": "completed", "winner": "Нет участников"}})
+            continue
+            
+        # 1. ГЕНЕРИРУЕМ ЧЕСТНЫЙ ВЫИГРЫШНЫЙ НОМЕР
+        winning_number = random.randint(1, last_ticket)
+        
+        # 2. Ищем, кому принадлежит этот номер (Прозрачная таблица)
+        # Логика: номер должен быть больше или равен началу диапазона (start_num)
+        # Так как мы сохранили range как строку "1-10", проще найти победителя перебором последних транзакций
+        tickets = db['tickets_history'].find({"giveaway_id": gw_id})
+        winner_uid = None
+        winner_name = None
+        
+        for t in tickets:
+            r_start, r_end = map(int, t['range'].split('-'))
+            if r_start <= winning_number <= r_end:
+                winner_uid = t['uid']
+                winner_name = t['name']
+                break
+                
+        # 3. Закрываем розыгрыш
+        db['giveaways'].update_one(
+            {"_id": gw_id}, 
+            {"$set": {"status": "completed", "winner_uid": winner_uid, "winning_number": winning_number}}
+        )
+        
+        # 4. Уведомляем админов и победителя!
+        from core.bot import bot
+        from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+        
+        msg = f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\nПриз: {gw['title']}\n🎟 Выиграл билет № **{winning_number}**!\nПобедитель: {winner_name} (`{winner_uid}`)"
+        
+        try:
+            bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
+            bot.send_message(winner_uid, f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{winning_number} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
+        except:
+            pass
+
+# Добавляем джобу в твой start_scheduler():
+def start_scheduler():
+    if not scheduler.running:
+        scheduler.start()
+        # Добавляем проверку розыгрышей каждую минуту
+        scheduler.add_job(check_giveaways_task, 'interval', minutes=1, id='gw_checker', replace_existing=True)
+        print("⏰ APScheduler запущен (Память: MongoDB, Пояс: МСК)!")

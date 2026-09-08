@@ -8,6 +8,10 @@ import json
 import time
 import base64
 import threading
+import datetime
+from database.mongo import db
+from core.bot import bot
+from config import STAFF_GROUP_ID, OWNER_ID
 from config import GROQ_API_KEY, GROQ_API_KEYS
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -2783,3 +2787,62 @@ def handle_revenue_audit(message):
         text += f"Тип: `{item['_id']}`\nСумма: **{item['total']}⭐️** (Чеков: {item['count']})\n\n"
         
     bot.reply_to(message, text, parse_mode="Markdown")
+
+
+# ================= СОЗДАНИЕ РОЗЫГРЫШЕЙ =================
+@bot.message_handler(commands=['new_gw', 'розыгрыш'])
+def create_giveaway_start(message):
+    # Проверка на админа
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
+        return
+        
+    msg = bot.send_message(message.chat.id, "🎉 **Создание нового розыгрыша (Web App)**\n\nВведите название приза (например: `Сертификат Озон на 1000₽`):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_gw_title)
+
+def process_gw_title(message):
+    if message.text.startswith('/'): return
+    title = message.text
+    
+    msg = bot.send_message(message.chat.id, f"Приз: **{title}**\n\nТеперь введите стоимость одного билета в Очках Бдительности (только цифру, например: `50`):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_gw_price, title=title)
+
+def process_gw_price(message, title):
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ Нужно ввести число. Начните заново: /new_gw")
+        return
+    price = int(message.text)
+    
+    msg = bot.send_message(message.chat.id, f"Билет: **{price} очков**\n\nЧерез сколько ЧАСОВ подвести итоги? (Введите число, например: `24` для суток или `48` для двух дней):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_gw_hours, title=title, price=price)
+
+def process_gw_hours(message, title, price):
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ Нужно ввести число. Начните заново: /new_gw")
+        return
+    hours = int(message.text)
+    
+    # Считаем дату завершения
+    end_date = datetime.datetime.now() + datetime.timedelta(hours=hours)
+    gw_id = f"gw_{int(datetime.datetime.now().timestamp())}" # Уникальный ID
+    
+    # Сохраняем в базу
+    db['giveaways'].insert_one({
+        "_id": gw_id,
+        "title": title,
+        "ticket_price": price,
+        "last_ticket_num": 0,
+        "total_tickets": 0,
+        "status": "active",
+        "end_date": end_date
+    })
+    
+    end_date_str = end_date.strftime("%d.%m.%Y в %H:%M")
+    bot.send_message(
+        message.chat.id, 
+        f"✅ **Розыгрыш успешно запущен и уже появился в Web App!**\n\n"
+        f"🎁 Приз: **{title}**\n"
+        f"🎟 Цена билета: **{price} очк.**\n"
+        f"⏳ Итоги: **{end_date_str}**\n\n"
+        f"_Скайнет автоматически выберет победителя, когда время выйдет._",
+        parse_mode="Markdown"
+    )
