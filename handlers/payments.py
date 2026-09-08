@@ -275,10 +275,20 @@ def successful_payment(message):
             "date": datetime.datetime.now().strftime("%d.%m.%Y")
         })
         
-        # Начисляем очки пользователю в базу данных
+        # Формируем данные для обновления
+        update_data = {"$inc": {"bounty_points": points_reward}}
+        
+        # Если купили пакет на 1000 очков — даем 1 щит
+        if points_reward == 1000:
+            update_data["$inc"]["immunity"] = 1
+        # Если купили пакет кита на 3000 очков — даем 3 щита
+        elif points_reward == 3000:
+            update_data["$inc"]["immunity"] = 3
+            
+        # Начисляем пользователю в базу данных
         paid_collection.update_one(
             {"uid": uid}, 
-            {"$inc": {"bounty_points": points_reward}}, 
+            update_data, 
             upsert=True
         )
         

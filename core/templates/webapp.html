@@ -8,11 +8,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
-    background-color: var(--tg-theme-bg-color, #1a1b1f);
-    color: var(--tg-theme-text-color, #ffffff);
-    font-family: -apple-system, sans-serif;
-    /* Увеличен отступ до 180px, чтобы контент не перекрывался меню и панелью Telegram */
-    padding-bottom: calc(180px + env(safe-area-inset-bottom)); 
+            background-color: var(--tg-theme-bg-color, #1a1b1f);
+            color: var(--tg-theme-text-color, #ffffff);
+            font-family: -apple-system, sans-serif;
+            /* !important запрещает Tailwind сбрасывать этот отступ */
+            padding-bottom: calc(140px + env(safe-area-inset-bottom)) !important; 
         }
         .surface { background-color: var(--tg-theme-secondary-bg-color, #27282d); }
         .accent { background-color: var(--tg-theme-button-color, #2b6bf3); }
@@ -117,13 +117,34 @@
         <!-- ⭐ Покупка очков -->
         <h3 class="font-bold text-lg mb-2">⭐ Покупка очков</h3>
         <div class="grid grid-cols-2 gap-2 mb-6">
-            <button id="buy_pts_btn_50" onclick="buyPointsWithStars(50, 100)" class="surface p-2 rounded-xl border border-yellow-700/50 active:scale-95">
-                <div class="font-bold">Купить 100💎</div>
-                <div class="text-[10px] text-yellow-400">за 50 ⭐️</div>
+            <!-- Мелкие пакеты (по 2 в ряд) -->
+            <button id="buy_pts_btn_50" onclick="buyPointsWithStars(50, 50)" class="surface p-2 rounded-xl border border-gray-700/50 active:scale-95">
+                <div class="font-bold">50 💎</div>
+                <div class="text-[10px] text-gray-400">за 50 ⭐️</div>
             </button>
-            <button id="buy_pts_btn_250" onclick="buyPointsWithStars(250, 500)" class="surface p-2 rounded-xl border border-yellow-700/50 active:scale-95">
-                <div class="font-bold">Купить 500💎</div>
-                <div class="text-[10px] text-yellow-400">за 250 ⭐️</div>
+            <button id="buy_pts_btn_125" onclick="buyPointsWithStars(125, 150)" class="surface p-2 rounded-xl border border-blue-700/50 active:scale-95">
+                <div class="font-bold">150 💎</div>
+                <div class="text-[10px] text-blue-400">за 125 ⭐️</div>
+            </button>
+            
+            <button id="buy_pts_btn_200" onclick="buyPointsWithStars(200, 300)" class="surface p-2 rounded-xl border border-green-700/50 active:scale-95">
+                <div class="font-bold">300 💎</div>
+                <div class="text-[10px] text-green-400">за 200 ⭐️</div>
+            </button>
+            <button id="buy_pts_btn_350" onclick="buyPointsWithStars(350, 600)" class="surface p-2 rounded-xl border border-yellow-700/50 active:scale-95">
+                <div class="font-bold">600 💎</div>
+                <div class="text-[10px] text-yellow-400">за 350 ⭐️</div>
+            </button>
+
+            <!-- Крупные VIP пакеты (широкие кнопки на всю ширину: col-span-2) -->
+            <button id="buy_pts_btn_500" onclick="buyPointsWithStars(500, 1000)" class="surface col-span-2 p-3 rounded-xl border border-purple-500/60 active:scale-95">
+                <div class="font-bold text-lg">1000 💎 + 🛡 Щит</div>
+                <div class="text-xs text-purple-400">Супер-пакет за 500 ⭐️</div>
+            </button>
+            
+            <button id="buy_pts_btn_1200" onclick="buyPointsWithStars(1200, 3000)" class="surface col-span-2 p-3 rounded-xl border border-red-500/60 active:scale-95 shadow-[0_0_15px_rgba(239,68,68,0.2)]">
+                <div class="font-bold text-lg text-red-400">3000 💎 + 3 🛡 Щита</div>
+                <div class="text-xs text-gray-400">Для настоящих китов за 1200 ⭐️</div>
             </button>
         </div>
 
