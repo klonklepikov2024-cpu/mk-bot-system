@@ -294,25 +294,59 @@
                 }
                 let html = '';
                 data.forEach(gw => {
-                    html += `
-                    <div class="surface rounded-2xl p-4 border border-gray-700 relative overflow-hidden">
-                        <div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">АКТИВЕН</div>
-                        <h3 class="font-bold text-lg mb-1 mt-2">${gw.title}</h3>
-                        <p class="text-sm text-gray-400 mb-3">🎫 ${gw.price} Очков • ⏳ ${gw.time_left}</p>
-                        <div class="flex items-center space-x-2 mb-3 bg-black/20 p-1 rounded-xl border border-gray-600/30">
-                            <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">-</button>
-                            <div id="count_${gw.id}" class="flex-1 text-center font-bold text-xl" data-val="1">1</div>
-                            <button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">+</button>
-                        </div>
-                        <button onclick="buyTickets('${gw.id}', ${gw.price})" class="accent w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">
-                            🎟 Получить за <span id="price_${gw.id}">${gw.price}</span> 💎
-                        </button>
-                        <p class="text-[10px] text-center text-gray-500 mt-2">Уже куплено билетов: ${gw.total}</p>
-                    </div>`;
+                    if (gw.status === 'active') {
+                        html += `
+                        <div class="surface rounded-2xl p-4 border border-gray-700 relative overflow-hidden">
+                            <div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">АКТИВЕН</div>
+                            <h3 class="font-bold text-lg mb-1 mt-2">${gw.title}</h3>
+                            <p class="text-sm text-gray-400 mb-3">🎫 ${gw.price} Очков • ⏳ ${gw.time_left}</p>
+                            <div class="flex items-center space-x-2 mb-3 bg-black/20 p-1 rounded-xl border border-gray-600/30">
+                                <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">-</button>
+                                <div id="count_${gw.id}" class="flex-1 text-center font-bold text-xl" data-val="1">1</div>
+                                <button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">+</button>
+                            </div>
+                            <button onclick="buyTickets('${gw.id}', ${gw.price})" class="accent w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">
+                                🎟 Получить за <span id="price_${gw.id}">${gw.price}</span> 💎
+                            </button>
+                            <p class="text-[10px] text-center text-gray-500 mt-2">Уже куплено билетов: ${gw.total}</p>
+                            
+                            <button onclick="showParticipants('${gw.id}')" class="mt-3 w-full bg-gray-800/80 py-2 rounded-xl text-xs font-bold text-gray-300 active:scale-95 transition-transform flex justify-center items-center border border-gray-700/50">
+                                📄 Таблица всех билетов (прозрачно)
+                            </button>
+                            <!-- КОНТЕЙНЕР ДЛЯ СПИСКА С ПАГИНАЦИЕЙ -->
+                            <div id="participants_${gw.id}" class="hidden mt-3 space-y-1" data-offset="0">
+                                <div id="participants_list_${gw.id}" class="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar"></div>
+                                <button id="load_more_${gw.id}" onclick="loadMoreParticipants('${gw.id}')" class="hidden w-full py-2 mt-2 bg-gray-700 rounded-lg text-xs font-bold text-gray-300 active:scale-95">Загрузить еще</button>
+                            </div>
+                        </div>`;
+                    } else {
+                        // Отрисовка ЗАВЕРШЕННОГО розыгрыша
+                        let winText = gw.winning_number ? `Победитель: ${gw.winner_name} (Билет №${gw.winning_number})` : gw.winner_name;
+                        html += `
+                        <div class="surface rounded-2xl p-4 border border-gray-800 relative overflow-hidden opacity-90">
+                            <div class="absolute top-0 right-0 bg-gray-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">ЗАВЕРШЕН</div>
+                            <h3 class="font-bold text-lg mb-1 mt-2 text-gray-300">${gw.title}</h3>
+                            <p class="text-sm text-gray-500 mb-3">Всего билетов: ${gw.total}</p>
+                            
+                            <div class="bg-yellow-900/30 border border-yellow-700/50 rounded-xl p-3 mb-3 text-center">
+                                <p class="text-[10px] text-yellow-500 uppercase font-bold mb-1">Итоги розыгрыша</p>
+                                <p class="font-bold text-sm text-yellow-400">${winText}</p>
+                            </div>
+
+                            <button onclick="showParticipants('${gw.id}')" class="w-full bg-gray-800 py-2 rounded-xl text-xs font-bold text-gray-400 active:scale-95 transition-transform border border-gray-700">
+                                📄 Посмотреть кто участвовал
+                            </button>
+                            <div id="participants_${gw.id}" class="hidden mt-3 space-y-1" data-offset="0">
+                                <div id="participants_list_${gw.id}" class="space-y-1 max-h-60 overflow-y-auto pr-1 custom-scrollbar"></div>
+                                <button id="load_more_${gw.id}" onclick="loadMoreParticipants('${gw.id}')" class="hidden w-full py-2 mt-2 bg-gray-700 rounded-lg text-xs font-bold text-gray-300 active:scale-95">Загрузить еще</button>
+                            </div>
+                        </div>`;
+                    }
                 });
                 container.innerHTML = html;
             });
         }
+        
         function changeTickets(id, delta, price) {
             let el = document.getElementById(`count_${id}`);
             let val = parseInt(el.getAttribute('data-val')) + delta;
@@ -322,12 +356,90 @@
             document.getElementById(`price_${id}`).innerText = val * price;
             tg.HapticFeedback.impactOccurred('light');
         }
+        
         function buyTickets(gw_id, price) {
             let amount = parseInt(document.getElementById(`count_${gw_id}`).getAttribute('data-val'));
             tg.HapticFeedback.impactOccurred('medium');
             apiCall('/api/buy_ticket', {amount: amount, giveaway_id: gw_id}).then(data => {
                 if (data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
                 else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(`✅ Выданы билеты с №${data.start} по №${data.end}.`); loadProfile(); loadGiveaways(); }
+            });
+        }
+
+        function showParticipants(gw_id) {
+            tg.HapticFeedback.impactOccurred('light');
+            const container = document.getElementById(`participants_${gw_id}`);
+            const listContainer = document.getElementById(`participants_list_${gw_id}`);
+            const loadMoreBtn = document.getElementById(`load_more_${gw_id}`);
+            
+            // Сворачиваем "гармошку"
+            if (!container.classList.contains('hidden')) {
+                container.classList.add('hidden');
+                return;
+            }
+            
+            // Сброс и загрузка с нуля
+            container.dataset.offset = "0";
+            listContainer.innerHTML = '<p class="text-center text-gray-400 text-xs py-2">⏳ Поиск в базе...</p>';
+            loadMoreBtn.classList.add('hidden');
+            container.classList.remove('hidden');
+
+            fetchParticipants(gw_id, 0);
+        }
+
+        function loadMoreParticipants(gw_id) {
+            tg.HapticFeedback.impactOccurred('light');
+            const container = document.getElementById(`participants_${gw_id}`);
+            const offset = parseInt(container.dataset.offset);
+            const btn = document.getElementById(`load_more_${gw_id}`);
+            btn.innerText = "⏳ Загрузка...";
+            btn.disabled = true;
+            
+            fetchParticipants(gw_id, offset);
+        }
+
+        function fetchParticipants(gw_id, offset) {
+            apiCall('/api/get_giveaway_participants', {giveaway_id: gw_id, offset: offset}).then(data => {
+                const listContainer = document.getElementById(`participants_list_${gw_id}`);
+                const loadMoreBtn = document.getElementById(`load_more_${gw_id}`);
+                const container = document.getElementById(`participants_${gw_id}`);
+                
+                if (data.error) {
+                    listContainer.innerHTML = `<p class="text-red-400 text-xs text-center">${data.error}</p>`;
+                    return;
+                }
+                
+                if (offset === 0 && data.participants.length === 0) {
+                    listContainer.innerHTML = '<p class="text-gray-500 text-xs text-center pb-2">Пока никто не купил билеты.</p>';
+                    return;
+                }
+                
+                if (offset === 0) listContainer.innerHTML = ''; // Очищаем "⏳ Поиск..."
+                
+                let html = '';
+                data.participants.forEach(p => {
+                    html += `
+                    <div class="flex justify-between items-center bg-black/40 p-2 rounded-lg border border-gray-700/50">
+                        <div class="flex items-center space-x-2">
+                            <span class="font-black text-white text-sm w-12">№${p.num}</span>
+                            <div class="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] shadow-sm">👤</div>
+                            <span class="text-gray-300 text-xs font-bold truncate max-w-[100px]">${p.name}</span>
+                        </div>
+                        <span class="text-gray-500 text-[10px]">${p.date}</span>
+                    </div>`;
+                });
+                
+                // Добавляем новые элементы В КОНЕЦ списка
+                listContainer.insertAdjacentHTML('beforeend', html);
+                
+                if (data.next_offset !== null) {
+                    container.dataset.offset = data.next_offset;
+                    loadMoreBtn.classList.remove('hidden');
+                    loadMoreBtn.innerText = "Загрузить еще";
+                    loadMoreBtn.disabled = false;
+                } else {
+                    loadMoreBtn.classList.add('hidden');
+                }
             });
         }
 

@@ -180,26 +180,46 @@ def api_get_giveaways():
     import datetime
     now = datetime.datetime.now()
     
-    # Достаем все активные розыгрыши
-    gws = list(db['giveaways'].find({"status": "active"}).sort("end_date", 1))
+    # Берем активные (сортировка по дате окончания, старые сверху)
+    active_gws = list(db['giveaways'].find({"status": "active"}).sort("end_date", 1))
+    # Берем завершенные (новые сверху, лимит 5 штук, чтобы не засорять экран)
+    completed_gws = list(db['giveaways'].find({"status": "completed"}).sort("end_date", -1).limit(5))
+    
+    gws = active_gws + completed_gws
     
     result = []
     for gw in gws:
-        # Считаем, сколько осталось времени
-        time_left = gw['end_date'] - now
-        days = time_left.days
-        hours = time_left.seconds // 3600
-        
-        if days > 0: time_str = f"Осталось {days} д. {hours} ч."
-        elif hours > 0: time_str = f"Осталось {hours} ч."
-        else: time_str = "Скоро итоги!"
+        time_left_str = ""
+        if gw['status'] == 'active':
+            time_left = gw['end_date'] - now
+            days = time_left.days
+            hours = time_left.seconds // 3600
+            if days > 0: time_left_str = f"Осталось {days} д. {hours} ч."
+            elif hours > 0: time_left_str = f"Осталось {hours} ч."
+            else: time_left_str = "Скоро итоги!"
+        else:
+            time_left_str = "Завершен"
+            
+        # Ищем имя победителя, если он есть
+        winner_name = "Нет участников"
+        if gw.get('winner_uid'):
+            win_tx = db['tickets_history'].find_one({"giveaway_id": gw["_id"], "uid": gw["winner_uid"]})
+            if win_tx:
+                winner_name = win_tx.get('name', f"ID {gw['winner_uid']}")
+            else:
+                winner_name = f"ID {gw['winner_uid']}"
+        elif gw.get('winner') == "Нет участников":
+            winner_name = "Никто не участвовал"
 
         result.append({
             "id": str(gw["_id"]),
             "title": gw["title"],
             "price": gw["ticket_price"],
             "total": gw.get("total_tickets", 0),
-            "time_left": time_str
+            "time_left": time_left_str,
+            "status": gw["status"],
+            "winner_name": winner_name,
+            "winning_number": gw.get("winning_number")
         })
         
     return jsonify(result)
@@ -565,6 +585,36 @@ def api_get_stars_invoice():
         return jsonify({"success": True, "url": invoice_link})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/get_giveaway_participants', methods=['POST'])
+def api_get_giveaway_participants():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+        
+    gw_id = data.get('giveaway_id')
+    offset = int(data.get('offset', 0))
+    
+    # Берем транзакции порциями по 15 штук
+    tickets_history = list(db['tickets_history'].find({"giveaway_id": gw_id}).sort("timestamp", -1).skip(offset).limit(15))
+    
+    import datetime
+    result = []
+    for t in tickets_history:
+        r_start, r_end = map(int, t['range'].split('-'))
+        dt = datetime.datetime.fromtimestamp(t['timestamp']).strftime('%d.%m %H:%M')
+        
+        for i in range(r_end, r_start - 1, -1):
+            result.append({
+                "num": i,
+                "name": t['name'],
+                "date": dt
+            })
+            
+    # Если мы достали 15 транзакций, значит, скорее всего, есть еще
+    next_offset = offset + 15 if len(tickets_history) == 15 else None
+    
+    return jsonify({"participants": result, "next_offset": next_offset})
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
