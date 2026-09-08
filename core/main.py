@@ -319,8 +319,8 @@ def api_spin_roulette():
     parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
-    
-    # 🔥 ИСПРАВЛЕНО: Безопасное получение юзернейма для базы
+
+    # Безопасное получение юзернейма
     username = user_info.get('username')
     username_str = f"@{username}" if username else f"ID {uid}"
     first_name = user_info.get('first_name', 'Аноним')
@@ -341,7 +341,6 @@ def api_spin_roulette():
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
     premium_cost_stars = 1500
 
-    # 🔥 ТЕПЕРЬ ТУТ АБСОЛЮТНО ВСЕ ПРИЗЫ ИЗ CASINO.PY 🔥
     if val == 63 and bank_data.get("balance", 0) >= premium_cost_stars:
         db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
         prize_msg = "🏆 ГЛАВНЫЙ СУПЕР-ПРИЗ!!!\nВы выиграли Telegram Premium (3 мес.)!\nЗаявка отправлена админам."
@@ -355,9 +354,10 @@ def api_spin_roulette():
         })
         try:
             from core.bot import bot
-            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID, APP_URL
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"{APP_URL}/glaz"))
+            # 🔥 ЖЕСТКО ВШИВАЕМ ПРАВИЛЬНЫЙ АДРЕС ЦУПА 🔥
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
             bot.send_message(
                 STAFF_GROUP_ID, 
                 f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
@@ -487,7 +487,7 @@ def api_craft():
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
-    # 🔥 ИСПРАВЛЕНО: Безопасное получение юзернейма для базы
+    # Безопасное получение юзернейма
     username = user_info.get('username')
     username_str = f"@{username}" if username else f"ID {uid}"
     first_name = user_info.get('first_name', 'Аноним')
@@ -510,7 +510,6 @@ def api_craft():
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
             return jsonify({"success": True, "msg": "🛡 Вы сковали Щит Иммунитета!"})
         else:
-            # 🔥 ИСПРАВЛЕНИЕ: ОТПРАВЛЯЕМ ЗАЯВКУ В БАЗУ ДЛЯ ПАНЕЛИ 🔥
             import time
             db['premium_claims'].insert_one({
                 "uid": uid,
@@ -519,12 +518,12 @@ def api_craft():
                 "status": "pending"
             })
             
-            # Уведомляем админов
             try:
                 from core.bot import bot
-                from config import STAFF_GROUP_ID, PRIZES_THREAD_ID, APP_URL
+                from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
                 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"{APP_URL}/glaz"))
+                # 🔥 ЖЕСТКО ВШИВАЕМ ПРАВИЛЬНЫЙ АДРЕС ЦУПА 🔥
+                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
                 bot.send_message(
                     STAFF_GROUP_ID, 
                     f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
