@@ -26,7 +26,7 @@ import handlers.polls       # <--- ДОБАВИТЬ ЭТУ СТРОКУ СЮДА
 import handlers.market  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
 import handlers.start_menu # <--- ГЛАВНОЕ МЕНЮ ВСЕГДА В САМОМ НИЗУ!
 
-app = Flask(__name__, template_folder='core/templates')
+app = Flask(__name__, template_folder='templates')
 
 is_setup_done = False
 
