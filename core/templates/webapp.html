@@ -95,20 +95,12 @@
     <div id="tab-inventory" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Рюкзак & Наковальня</h2>
         
-        <!-- 1. ВЕРХНИЙ РЯД: Ресурсы -->
         <div class="flex space-x-2 mb-4">
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50">
-                <div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div>
-            </div>
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50">
-                <div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div>
-            </div>
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50">
-                <div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div>
-            </div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
         </div>
 
-        <!-- 2. ВТОРОЙ РЯД: Использование Артефактов -->
         <div class="grid grid-cols-2 gap-2 mb-6">
             <button onclick="openModal('angel')" class="surface p-3 rounded-xl border border-yellow-500/30 active:scale-95 transition-transform shadow-md">
                 <div class="text-2xl mb-1">👼</div>
@@ -122,7 +114,6 @@
             </button>
         </div>
 
-        <!-- 3. ТРЕТИЙ РЯД: Крафт -->
         <div class="space-y-3 mb-6">
             <button onclick="craft('shards')" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-blue-500/30 active:scale-95 transition-transform">
                 <div class="text-left"><div class="font-bold">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: 50 🧩</div></div><div class="text-2xl">✨</div>
@@ -132,12 +123,12 @@
             </button>
         </div>
 
-        <!-- 4. ЧЕТВЕРТЫЙ РЯД: Секретный сундук -->
+        <!-- Секретный сундук -->
         <div class="surface rounded-2xl p-4 mb-6 text-center shadow-lg border border-yellow-600/50">
             <div class="flex justify-between items-center mb-2">
                 <div class="text-left">
                     <h3 class="font-bold text-lg text-yellow-500 flex items-center"><span id="chestIcon" class="text-2xl mr-2">📦</span> Секретный Сундук</h3>
-                    <p class="text-[10px] text-gray-400">VIP, Щиты, Деньги или Кот!</p>
+                    <p class="text-[10px] text-gray-400">VIP, Щиты, Деньги или Кот-Воришка!</p>
                 </div>
                 <button id="chestBtn" onclick="openChest()" class="bg-yellow-600 px-4 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform text-sm">
                     Открыть (1000 💎)
@@ -145,7 +136,6 @@
             </div>
         </div>
 
-        <!-- 5. ПЯТЫЙ РЯД: Личные промокоды -->
         <h3 class="font-bold text-lg mb-2">Ваши промокоды</h3>
         <div id="promos-container" class="space-y-2"><p class="text-gray-400 text-sm">Нет активных купонов.</p></div>
     </div>
@@ -154,41 +144,28 @@
     <div id="tab-finance" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Финансы & Сеть</h2>
         
-        <!-- ⭐ Покупка очков -->
         <h3 class="font-bold text-lg mb-2">⭐ Покупка очков</h3>
         <div class="grid grid-cols-2 gap-2 mb-6">
-            <!-- Мелкие пакеты (по 2 в ряд) -->
             <button id="buy_pts_btn_50" onclick="buyPointsWithStars(50, 50)" class="surface p-2 rounded-xl border border-gray-700/50 active:scale-95">
-                <div class="font-bold">50 💎</div>
-                <div class="text-[10px] text-gray-400">за 50 ⭐️</div>
+                <div class="font-bold">50 💎</div><div class="text-[10px] text-gray-400">за 50 ⭐️</div>
             </button>
             <button id="buy_pts_btn_125" onclick="buyPointsWithStars(125, 150)" class="surface p-2 rounded-xl border border-blue-700/50 active:scale-95">
-                <div class="font-bold">150 💎</div>
-                <div class="text-[10px] text-blue-400">за 125 ⭐️</div>
+                <div class="font-bold">150 💎</div><div class="text-[10px] text-blue-400">за 125 ⭐️</div>
             </button>
-            
             <button id="buy_pts_btn_200" onclick="buyPointsWithStars(200, 300)" class="surface p-2 rounded-xl border border-green-700/50 active:scale-95">
-                <div class="font-bold">300 💎</div>
-                <div class="text-[10px] text-green-400">за 200 ⭐️</div>
+                <div class="font-bold">300 💎</div><div class="text-[10px] text-green-400">за 200 ⭐️</div>
             </button>
             <button id="buy_pts_btn_350" onclick="buyPointsWithStars(350, 600)" class="surface p-2 rounded-xl border border-yellow-700/50 active:scale-95">
-                <div class="font-bold">600 💎</div>
-                <div class="text-[10px] text-yellow-400">за 350 ⭐️</div>
+                <div class="font-bold">600 💎</div><div class="text-[10px] text-yellow-400">за 350 ⭐️</div>
             </button>
-
-            <!-- Крупные VIP пакеты (широкие кнопки на всю ширину: col-span-2) -->
             <button id="buy_pts_btn_500" onclick="buyPointsWithStars(500, 1000)" class="surface col-span-2 p-3 rounded-xl border border-purple-500/60 active:scale-95">
-                <div class="font-bold text-lg">1000 💎 + 🛡 Щит</div>
-                <div class="text-xs text-purple-400">Супер-пакет за 500 ⭐️</div>
+                <div class="font-bold text-lg">1000 💎 + 🛡 Щит</div><div class="text-xs text-purple-400">Супер-пакет за 500 ⭐️</div>
             </button>
-            
             <button id="buy_pts_btn_1200" onclick="buyPointsWithStars(1200, 3000)" class="surface col-span-2 p-3 rounded-xl border border-red-500/60 active:scale-95 shadow-[0_0_15px_rgba(239,68,68,0.2)]">
-                <div class="font-bold text-lg text-red-400">3000 💎 + 3 🛡 Щита</div>
-                <div class="text-xs text-gray-400">Для настоящих китов за 1200 ⭐️</div>
+                <div class="font-bold text-lg text-red-400">3000 💎 + 3 🛡 Щита</div><div class="text-xs text-gray-400">Для настоящих китов за 1200 ⭐️</div>
             </button>
         </div>
 
-        <!-- Обменник -->
         <h3 class="font-bold text-lg mb-2">💱 Обменник кэшбэка</h3>
         <div class="grid grid-cols-2 gap-2 mb-6">
             <button onclick="exchange(50, 50)" class="surface p-2 rounded-xl border border-gray-700 active:scale-95"><div class="font-bold">50₽ ➔ 50💎</div><div class="text-[10px] text-gray-400">1:1</div></button>
@@ -197,7 +174,6 @@
             <button onclick="exchange(500, 650)" class="surface p-2 rounded-xl border border-purple-700/50 active:scale-95"><div class="font-bold">500₽ ➔ 650💎</div><div class="text-[10px] text-purple-400">Выгода 30%</div></button>
         </div>
 
-        <!-- Вывод средств -->
         <h3 class="font-bold text-lg mb-2">💸 Вывод средств</h3>
         <div class="surface rounded-2xl p-4 mb-6 shadow-lg border border-gray-700/50">
             <select id="payoutMethod" class="w-full text-white rounded-lg p-3 mb-2 outline-none appearance-none">
@@ -210,7 +186,6 @@
             <button id="payoutBtn" onclick="requestPayout()" class="bg-green-600 w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Создать заявку</button>
         </div>
 
-        <!-- CPA Сеть -->
         <h3 class="font-bold text-lg mb-2">🔗 CPA-Партнерка</h3>
         <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700/50">
             <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Одобрено (Лиды):</span> <span class="font-bold text-green-400" id="cpaApproved">0</span></div>
@@ -224,8 +199,9 @@
         </div>
     </div>
 
-    <!-- УНИВЕРСАЛЬНОЕ ОКНО ВВОДА (Для Ангела и Ареста) -->
-    <div id="actionModal" class="hidden fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+    <!-- ================= МОДАЛКИ ================= -->
+    <!-- 1. Модалка для Ангела и Ордера -->
+    <div id="actionModal" class="hidden fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity">
         <div class="surface w-full max-w-sm rounded-2xl p-5 shadow-2xl border border-gray-700">
             <h3 id="modalTitle" class="font-bold text-xl mb-2">Действие</h3>
             <p id="modalDesc" class="text-xs text-gray-400 mb-4">Опишите действие.</p>
@@ -234,6 +210,17 @@
                 <button id="modalSubmitBtn" class="flex-1 bg-blue-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Подтвердить</button>
                 <button onclick="document.getElementById('actionModal').classList.add('hidden')" class="bg-gray-700 px-4 py-3 rounded-xl font-bold text-white active:scale-95 transition-transform">Отмена</button>
             </div>
+        </div>
+    </div>
+
+    <!-- 🔥 2. КАСТОМНЫЙ ПОПАП ДЛЯ РУЛЕТКИ (НАДЕЖНЫЙ НА 100%) 🔥 -->
+    <div id="rouletteModal" class="hidden fixed inset-0 bg-black/80 z-[200] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity">
+        <div class="surface w-full max-w-sm rounded-2xl p-6 shadow-2xl border border-blue-500/50 text-center relative overflow-hidden">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
+            <div class="text-6xl mb-4 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]" id="rouletteModalIcon">🎰</div>
+            <h3 class="font-bold text-2xl mb-2 text-white">Результат</h3>
+            <p id="rouletteModalText" class="text-gray-300 mb-6 text-sm whitespace-pre-wrap leading-relaxed">Текст приза...</p>
+            <button onclick="closeRouletteModal()" class="w-full bg-blue-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Отлично!</button>
         </div>
     </div>
 
@@ -268,7 +255,7 @@
             if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
         }
 
-        // --- УТИЛИТА ЗАПРОСОВ (ЖЕЛЕЗНАЯ ЗАЩИТА) ---
+        // --- УТИЛИТА ЗАПРОСОВ (БРОНЕБОЙНАЯ) ---
         async function apiCall(endpoint, payload = {}) {
             payload.initData = tg.initData;
             try {
@@ -280,9 +267,8 @@
                 if (!response.ok) throw new Error("HTTP Error " + response.status);
                 return await response.json();
             } catch (e) {
-                // Если пропал интернет или сервер упал — мы больше не умираем молча!
                 console.error("API Error:", e);
-                return {error: "⚠️ Ошибка связи со Скайнетом. Попробуйте еще раз!"};
+                return {error: "⚠️ Ошибка связи со Скайнетом. Проверьте интернет!"};
             }
         }
 
@@ -311,7 +297,12 @@
             });
         }
 
-        // --- ПРОФИЛЬ: РУЛЕТКА ---
+        // --- ПРОФИЛЬ: НАДЕЖНАЯ РУЛЕТКА ---
+        function closeRouletteModal() {
+            tg.HapticFeedback.impactOccurred('light');
+            document.getElementById('rouletteModal').classList.add('hidden');
+        }
+
         function spinRoulette() {
             const btn = document.getElementById('spinBtn');
             const slotIcon = document.getElementById('slotIcon');
@@ -327,7 +318,6 @@
                 tick++;
             }, 150); 
 
-            // Запрашиваем сервер
             apiCall('/api/spin_roulette').then(data => {
                 setTimeout(() => {
                     clearInterval(spinInterval);
@@ -342,17 +332,31 @@
                     } else {
                         tg.HapticFeedback.notificationOccurred('success'); 
                         
-                        // 🔥 ВОЗВРАЩЕНО НАДЕЖНОЕ ВСПЛЫВАЮЩЕЕ ОКНО 🔥
-                        tg.showPopup({
-                            title: "Результат розыгрыша", 
-                            message: data.message, 
-                            buttons: [{type: "ok"}]
-                        });
+                        // Определяем красивую иконку для нашего окна
+                        let icon = '🎁';
+                        if (data.message.includes('ДЖЕКПОТ')) icon = '💎';
+                        else if (data.message.includes('НАЛОГОВАЯ')) icon = '💀';
+                        else if (data.message.includes('АРТЕФАКТ')) icon = '🚓';
+                        else if (data.message.includes('ЭПИЧЕСКИЙ')) icon = '🔥';
+                        else if (data.message.includes('Осколок')) icon = '🧩';
+                        else if (data.message.includes('КРУПНЫЙ КУШ')) icon = '💸';
+
+                        // Показываем наш НАДЕЖНЫЙ HTML-модал
+                        document.getElementById('rouletteModalIcon').innerText = icon;
+                        document.getElementById('rouletteModalText').innerText = data.message;
+                        document.getElementById('rouletteModal').classList.remove('hidden');
+                        
                         loadProfile();
                     }
                 }, 2000); 
-            }); 
-            // Мы убрали лишний .catch() отсюда, так как apiCall уже сам ловит все ошибки сети!
+            }).catch((e) => { 
+                console.error("Spin error:", e);
+                clearInterval(spinInterval); 
+                slotIcon.innerText = '🎰'; 
+                btn.disabled = false; 
+                btn.classList.remove('opacity-70'); 
+                tg.showAlert("Скайнет моргнул! Ошибка связи. Ваши очки в безопасности.");
+            });
         }
 
         // --- РОЗЫГРЫШИ ---
@@ -391,7 +395,6 @@
                             </div>
                         </div>`;
                     } else {
-                        // Отрисовка ЗАВЕРШЕННОГО розыгрыша
                         let winText = gw.winning_number ? `Победитель: ${gw.winner_name} (Билет №${gw.winning_number})` : gw.winner_name;
                         html += `
                         <div class="surface rounded-2xl p-4 border border-gray-800 relative overflow-hidden opacity-90">
@@ -443,13 +446,11 @@
             const listContainer = document.getElementById(`participants_list_${gw_id}`);
             const loadMoreBtn = document.getElementById(`load_more_${gw_id}`);
             
-            // Сворачиваем "гармошку"
             if (!container.classList.contains('hidden')) {
                 container.classList.add('hidden');
                 return;
             }
             
-            // Сброс и загрузка с нуля
             container.dataset.offset = "0";
             listContainer.innerHTML = '<p class="text-center text-gray-400 text-xs py-2">⏳ Поиск в базе...</p>';
             loadMoreBtn.classList.add('hidden');
@@ -485,7 +486,7 @@
                     return;
                 }
                 
-                if (offset === 0) listContainer.innerHTML = ''; // Очищаем "⏳ Поиск..."
+                if (offset === 0) listContainer.innerHTML = '';
                 
                 let html = '';
                 data.participants.forEach(p => {
@@ -500,7 +501,6 @@
                     </div>`;
                 });
                 
-                // Добавляем новые элементы В КОНЕЦ списка
                 listContainer.insertAdjacentHTML('beforeend', html);
                 
                 if (data.next_offset !== null) {
@@ -526,7 +526,6 @@
                 let html = '';
                 data.forEach(lot => {
                     let isMine = (lot.seller_uid == user.id);
-                    // 🔥 ДОБАВЛЕНА КНОПКА СНЯТИЯ ЛОТА 🔥
                     let buyButtons = isMine ? 
                         `<button onclick="actionItem('cancel_lot', '${lot.id}')" class="w-full bg-red-600/80 py-2 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-transform mt-3 border border-red-500/50">❌ Снять с продажи</button>` : 
                         `<div class="flex space-x-2 mt-3">
@@ -540,12 +539,58 @@
         }
         function buyLot(lotId, currency) {
             tg.HapticFeedback.impactOccurred('medium');
-            tg.showConfirm(`Подтверждаете покупку?`, function(confirmed) {
+            let currencyName = currency === 'rub' ? 'рубли' : 'очки';
+            tg.showConfirm(`Подтверждаете покупку за ${currencyName}?`, function(confirmed) {
                 if(confirmed) {
                     apiCall('/api/buy_market', {lot_id: lotId, currency: currency}).then(data => {
                         if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
                         else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(`✅ Артефакт куплен.\nВаш код: ${data.promo_id}`); loadProfile(); loadMarket(); }
                     });
+                }
+            });
+        }
+
+        function showSellForm() {
+            tg.HapticFeedback.impactOccurred('light');
+            const form = document.getElementById('sellLotForm');
+            form.classList.remove('hidden'); 
+            const select = document.getElementById('sellPromoSelect');
+            select.innerHTML = '<option value="">Загрузка...</option>';
+            
+            apiCall('/api/get_my_promos').then(data => {
+                if(data.error) { tg.showAlert(data.error); form.classList.add('hidden'); return; }
+                if(data.length === 0) {
+                    select.innerHTML = '<option value="">У вас нет доступных артефактов 🪹</option>';
+                    return;
+                }
+                let html = '<option value="">Выберите артефакт...</option>';
+                data.forEach(p => { html += `<option value="${p.id}">${p.name}</option>`; });
+                select.innerHTML = html;
+            });
+        }
+        
+        function submitMarketLot() {
+            const promoId = document.getElementById('sellPromoSelect').value;
+            const price = document.getElementById('sellPriceInput').value;
+            
+            if(!promoId || !price) { 
+                tg.showAlert("⚠️ Выберите артефакт и укажите цену!"); 
+                tg.HapticFeedback.notificationOccurred('warning');
+                return; 
+            }
+            
+            tg.HapticFeedback.impactOccurred('medium');
+            
+            apiCall('/api/add_market_lot', {promo_id: promoId, price: price}).then(data => {
+                if(data.error) { 
+                    tg.showAlert(data.error); 
+                    tg.HapticFeedback.notificationOccurred('error'); 
+                } else {
+                    tg.HapticFeedback.notificationOccurred('success');
+                    tg.showAlert("✅ " + data.msg);
+                    document.getElementById('sellLotForm').classList.add('hidden');
+                    document.getElementById('sellPriceInput').value = '';
+                    loadMarket();
                 }
             });
         }
@@ -564,7 +609,6 @@
                 } else {
                     let p_html = '';
                     data.promos.forEach(p => { 
-                        // 🔥 ДОБАВЛЕНА КНОПКА ЛОМБАРДА 🔥
                         p_html += `
                         <div class="bg-black/30 p-3 rounded-lg flex justify-between items-center border border-gray-700/50">
                             <div>
@@ -579,7 +623,6 @@
             });
         }
 
-// Универсальная функция (Снять с рынка / Расплавить)
         function actionItem(actType, itemId) {
             tg.HapticFeedback.impactOccurred('medium');
             let txt = actType === 'cancel_lot' ? "Снять лот с продажи и вернуть в рюкзак?" : "Переплавить купон в осколки рулетки? Это необратимо!";
@@ -598,7 +641,6 @@
             });
         }
 
-        // Модалка для Ангела и Ордера
         function openModal(type) {
             const modal = document.getElementById('actionModal');
             const title = document.getElementById('modalTitle');
@@ -641,6 +683,7 @@
                 }
             });
         }
+
         function craft(type) {
             tg.HapticFeedback.impactOccurred('heavy');
             apiCall('/api/craft', {action: type}).then(data => {
@@ -648,6 +691,7 @@
                 else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(data.msg); loadProfile(); loadInventory(); }
             });
         }
+
         function openChest() {
             const btn = document.getElementById('chestBtn');
             const icon = document.getElementById('chestIcon');
@@ -666,56 +710,6 @@
                     }
                 });
             }, 1500);
-        }
-
-        // --- ПРОДАЖА ЛОТОВ (ФОРМА) ---
-        function showSellForm() {
-            tg.HapticFeedback.impactOccurred('light');
-            const form = document.getElementById('sellLotForm');
-            form.classList.remove('hidden'); // Показываем форму
-            const select = document.getElementById('sellPromoSelect');
-            select.innerHTML = '<option value="">Загрузка...</option>';
-            
-            // Запрашиваем инвентарь юзера
-            apiCall('/api/get_my_promos').then(data => {
-                if(data.error) { tg.showAlert(data.error); form.classList.add('hidden'); return; }
-                if(data.length === 0) {
-                    select.innerHTML = '<option value="">У вас нет доступных артефактов 🪹</option>';
-                    return;
-                }
-                let html = '<option value="">Выберите артефакт...</option>';
-                data.forEach(p => { html += `<option value="${p.id}">${p.name}</option>`; });
-                select.innerHTML = html;
-            });
-        }
-        
-        function submitMarketLot() {
-            const promoId = document.getElementById('sellPromoSelect').value;
-            const price = document.getElementById('sellPriceInput').value;
-            
-            if(!promoId || !price) { 
-                tg.showAlert("⚠️ Выберите артефакт и укажите цену!"); 
-                tg.HapticFeedback.notificationOccurred('warning');
-                return; 
-            }
-            
-            tg.HapticFeedback.impactOccurred('medium');
-            
-            // Отправляем на сервер
-            apiCall('/api/add_market_lot', {promo_id: promoId, price: price}).then(data => {
-                if(data.error) { 
-                    tg.showAlert(data.error); 
-                    tg.HapticFeedback.notificationOccurred('error'); 
-                } else {
-                    tg.HapticFeedback.notificationOccurred('success');
-                    tg.showAlert("✅ " + data.msg);
-                    // Закрываем форму и очищаем поля
-                    document.getElementById('sellLotForm').classList.add('hidden');
-                    document.getElementById('sellPriceInput').value = '';
-                    // Обновляем витрину рынка и рюкзак
-                    loadMarket();
-                }
-            });
         }
 
         // --- ФИНАНСЫ (Обмен и Вывод) ---
@@ -756,6 +750,7 @@
                 }
             });
         }
+
         function requestPayout() {
             const amount = document.getElementById('payoutAmount').value;
             const method = document.getElementById('payoutMethod').value;
@@ -778,6 +773,7 @@
                 }
             });
         }
+
         function loadCpa() {
             apiCall('/api/get_cpa').then(data => {
                 document.getElementById('cpaApproved').innerText = data.approved || 0;
