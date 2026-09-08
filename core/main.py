@@ -348,6 +348,195 @@ def api_spin_roulette():
 
     return jsonify({"success": True, "message": prize_msg})
 
+@app.route('/api/get_inventory', methods=['POST'])
+def api_get_inventory():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    shields = user_data.get("immunity", 0)
+    shards = user_data.get("jackpot_shards", 0)
+    
+    # Ищем артефакты и промокоды
+    promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
+    orders_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "mute")
+    
+    regular_promos = []
+    for p in promos:
+        if p.get("type") != "artifact":
+            t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Услугу"
+            val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
+            regular_promos.append({"id": p["_id"], "desc": f"Скидка {val} на {t_name}"})
+            
+    return jsonify({
+        "shields": shields,
+        "shards": shards,
+        "orders": orders_count,
+        "promos": regular_promos
+    })
+
+@app.route('/api/craft', methods=['POST'])
+def api_craft():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    action = data.get('action')
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if action == 'shards':
+        if user_data.get("jackpot_shards", 0) < 50: return jsonify({"error": "Нужно 50 осколков!"}), 400
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
+        
+        import random
+        chance = random.randint(1, 100)
+        if chance <= 60:
+            code = f"JACKPOT-{random.randint(1000, 9999)}"
+            import datetime
+            db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            return jsonify({"success": True, "msg": f"🎉 Собран Золотой Билет VIP!\nКод: {code}"})
+        elif chance <= 90:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+            return jsonify({"success": True, "msg": "🛡 Вы сковали Щит Иммунитета!"})
+        else:
+            return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ! Вы выиграли Telegram Premium! Напишите админам."})
+
+    elif action == 'beyond':
+        if user_data.get("bounty_points", 0) < 3000 or user_data.get("immunity", 0) < 2:
+            return jsonify({"error": "Нужно 3000 очков и 2 щита!"}), 400
+            
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -3000, "immunity": -2}})
+        u_info = db['users'].find_one({"_id": uid}) or {}
+        
+        if not u_info.get("is_queer"):
+            db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
+            return jsonify({"success": True, "msg": "🏳️‍🌈 Выковано: Статус BEYOND!"})
+        elif not u_info.get("is_vip"):
+            db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
+            return jsonify({"success": True, "msg": "👑 Выковано: Пожизненный VIP!"})
+        else:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 1000}})
+            return jsonify({"success": True, "msg": "💰 Макс. уровень! Ресурсы переплавлены в 1000₽ кэшбэка!"})
+
+@app.route('/api/open_chest', methods=['POST'])
+def api_open_chest():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    PRICE = 1000
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    
+    if points < PRICE: return jsonify({"error": "Нужно 1000 очков!"}), 400
+    
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
+    remaining = points - PRICE
+    
+    import random
+    chance = random.randint(1, 100)
+    if chance <= 45:
+        stolen = int(remaining * random.uniform(0.10, 0.25))
+        if stolen > 0: paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+        return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen} очков, пока убегал!"})
+    elif chance <= 80:
+        shards = random.randint(1, 4)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
+        return jsonify({"success": True, "msg": f"📦 Сундук открыт!\nНайдено пыль и +{shards} Осколок(ка)."})
+    elif chance <= 95:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+        return jsonify({"success": True, "msg": "🛡 ОТЛИЧНЫЙ ДРОП!\nВы нашли Щит Иммунитета!"})
+    else:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+        return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ!!!\nСундук набит деньгами! +500 рублей кэшбэка!"})
+
+@app.route('/api/get_cpa', methods=['POST'])
+def api_get_cpa():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    
+    hold = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "hold"})
+    approved = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "approved"})
+    fraud = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    dupes = user_data.get("cpa_duplicates", 0)
+    
+    return jsonify({"hold": hold, "approved": approved, "fraud": fraud, "duplicates": dupes})
+
+@app.route('/api/exchange', methods=['POST'])
+def api_exchange():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    
+    cost = data.get('cost')
+    reward = data.get('reward')
+    
+    user_db = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": cost}},
+        {"$inc": {"cashback_balance": -cost, "bounty_points": reward}}
+    )
+    if not user_db: return jsonify({"error": "Недостаточно рублей!"}), 400
+    return jsonify({"success": True, "msg": f"✅ Успешно обменяли {cost}₽ на {reward}💎!"})
+
+@app.route('/api/payout', methods=['POST'])
+def api_payout():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    user_info = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])
+    uid = user_info['id']
+    username = user_info.get('username', f"ID {uid}")
+    
+    amount = int(data.get('amount', 0))
+    method = data.get('method')
+    details = data.get('details')
+    
+    if amount < 500: return jsonify({"error": "Минимум 500₽ для вывода!"}), 400
+    if method == "На карту" and amount < 3500: return jsonify({"error": "На карту минимум 3500₽!"}), 400
+    if not details or len(details) < 5: return jsonify({"error": "Укажите корректные реквизиты!"}), 400
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    if user_db.get("cashback_balance", 0) < amount: return jsonify({"error": "Недостаточно средств!"}), 400
+    
+    # Списываем баланс
+    paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -amount}})
+    
+    import time
+    db['withdrawals'].insert_one({
+        "user_id": uid, "amount": amount, "method": method, "details": details, "status": "pending", "timestamp": time.time()
+    })
+    
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, FINANCE_THREAD_ID
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✅ Выплачено", callback_data=f"payout_done_{uid}_{amount}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"payout_cancel_{uid}_{amount}")
+    )
+    safe_username = username.replace('_', '\\_')
+    try:
+        bot.send_message(
+            STAFF_GROUP_ID,
+            f"💰 **ЗАЯВКА НА ВЫПЛАТУ (WEB APP)**\n\n👤 От: @{safe_username} (`{uid}`)\n💵 Сумма: **{amount} руб.**\n🏦 Способ: **{method}**\n📝 Реквизиты:\n`{details}`",
+            reply_markup=markup, parse_mode="Markdown", message_thread_id=FINANCE_THREAD_ID
+        )
+    except Exception as e:
+        logger.error(f"Ошибка уведомления о выплате: {e}")
+        
+    return jsonify({"success": True, "msg": "Заявка отправлена в финотдел!"})
+
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db

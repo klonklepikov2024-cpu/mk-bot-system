@@ -11,20 +11,20 @@
             background-color: var(--tg-theme-bg-color, #1a1b1f);
             color: var(--tg-theme-text-color, #ffffff);
             font-family: -apple-system, sans-serif;
-            padding-bottom: 80px; /* Отступ для нижнего меню */
+            padding-bottom: 80px;
         }
         .surface { background-color: var(--tg-theme-secondary-bg-color, #27282d); }
         .accent { background-color: var(--tg-theme-button-color, #2b6bf3); }
         .nav-item.active { color: var(--tg-theme-button-color, #2b6bf3); }
-        
-        /* Скрываем неактивные вкладки */
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        input, select { background-color: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); }
+        input:focus, select:focus { border-color: var(--tg-theme-button-color, #2b6bf3); }
     </style>
 </head>
 <body class="p-4">
 
-    <!-- ================= ВКЛАДКА 1: ПРОФИЛЬ (ГЛАВНАЯ) ================= -->
+    <!-- ================= ВКЛАДКА 1: ПРОФИЛЬ ================= -->
     <div id="tab-profile" class="tab-content active">
         <div class="flex items-center space-x-3 mb-6">
             <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden">👤</div>
@@ -48,7 +48,7 @@
         </div>
 
         <div class="surface rounded-2xl p-4 mb-4 text-center">
-            <div class="text-4xl mb-2">🎰</div>
+            <div id="slotIcon" class="text-4xl mb-2">🎰</div>
             <h2 class="font-bold text-lg">Гача-Рулетка</h2>
             <p class="text-sm text-gray-400 mb-3">Испытай удачу! Стоимость: 50💎</p>
             <button id="spinBtn" onclick="spinRoulette()" class="accent w-full py-3 rounded-xl font-bold text-white active:scale-95 transition-transform flex justify-center items-center">
@@ -60,42 +60,111 @@
     <!-- ================= ВКЛАДКА 2: РОЗЫГРЫШИ ================= -->
     <div id="tab-giveaways" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Розыгрыши</h2>
-        <div id="giveaways-container" class="space-y-4">
-            <!-- Сюда JS будет вставлять карточки розыгрышей -->
-            <p class="text-gray-400 text-center py-4">Загрузка активных розыгрышей...</p>
-        </div>
+        <div id="giveaways-container" class="space-y-4"></div>
     </div>
 
-<!-- ================= ВКЛАДКА 3: РЫНОК ================= -->
+    <!-- ================= ВКЛАДКА 3: РЫНОК ================= -->
     <div id="tab-market" class="tab-content">
         <div class="flex justify-between items-center mb-4">
             <h2 class="font-bold text-2xl">Черный Рынок</h2>
             <button onclick="loadMarket()" class="bg-gray-700 px-3 py-1 rounded-lg text-sm active:scale-90 transition-transform">🔄 Обновить</button>
         </div>
         <p class="text-xs text-gray-400 mb-4">Покупайте артефакты у других игроков. Комиссия рынка: 10%.</p>
-        <div id="market-container" class="space-y-4">
-            <!-- Сюда JS будет вставлять карточки лотов -->
-            <p class="text-gray-400 text-center py-4">Загрузка лотов...</p>
+        <div id="market-container" class="space-y-4"></div>
+    </div>
+
+    <!-- ================= ВКЛАДКА 4: ИНВЕНТАРЬ & СУНДУК ================= -->
+    <div id="tab-inventory" class="tab-content">
+        <h2 class="font-bold text-2xl mb-4">Рюкзак & Наковальня</h2>
+        
+        <div class="flex space-x-2 mb-4">
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
+            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
+        </div>
+
+        <div class="space-y-3 mb-6">
+            <button onclick="craft('shards')" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-blue-500/30 active:scale-95 transition-transform">
+                <div class="text-left"><div class="font-bold">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: 50 🧩</div></div><div class="text-2xl">✨</div>
+            </button>
+            <button onclick="craft('beyond')" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-purple-500/30 active:scale-95 transition-transform">
+                <div class="text-left"><div class="font-bold">Элитный Крафт (VIP/Beyond)</div><div class="text-xs text-gray-400">Требуется: 3000 💎 + 2 🛡</div></div><div class="text-2xl">🔮</div>
+            </button>
+        </div>
+
+        <!-- Секретный сундук -->
+        <div class="surface rounded-2xl p-4 mb-6 text-center shadow-lg border border-yellow-600/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="text-left">
+                    <h3 class="font-bold text-lg text-yellow-500 flex items-center"><span id="chestIcon" class="text-2xl mr-2">📦</span> Секретный Сундук</h3>
+                    <p class="text-[10px] text-gray-400">VIP, Щиты, Деньги или Кот-Воришка!</p>
+                </div>
+                <button id="chestBtn" onclick="openChest()" class="bg-yellow-600 px-4 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform text-sm">
+                    Открыть (1000 💎)
+                </button>
+            </div>
+        </div>
+
+        <h3 class="font-bold text-lg mb-2">Ваши промокоды</h3>
+        <div id="promos-container" class="space-y-2"><p class="text-gray-400 text-sm">Нет активных купонов.</p></div>
+    </div>
+
+    <!-- ================= ВКЛАДКА 5: ФИНАНСЫ & ПАРТНЕРКА ================= -->
+    <div id="tab-finance" class="tab-content">
+        <h2 class="font-bold text-2xl mb-4">Финансы & Сеть</h2>
+        
+        <!-- Обменник -->
+        <h3 class="font-bold text-lg mb-2">💱 Обменник кэшбэка</h3>
+        <div class="grid grid-cols-2 gap-2 mb-6">
+            <button onclick="exchange(50, 50)" class="surface p-2 rounded-xl border border-gray-700 active:scale-95"><div class="font-bold">50₽ ➔ 50💎</div><div class="text-[10px] text-gray-400">1:1</div></button>
+            <button onclick="exchange(150, 175)" class="surface p-2 rounded-xl border border-green-700/50 active:scale-95"><div class="font-bold">150₽ ➔ 175💎</div><div class="text-[10px] text-green-400">Выгода 15%</div></button>
+            <button onclick="exchange(250, 300)" class="surface p-2 rounded-xl border border-blue-700/50 active:scale-95"><div class="font-bold">250₽ ➔ 300💎</div><div class="text-[10px] text-blue-400">Выгода 20%</div></button>
+            <button onclick="exchange(500, 650)" class="surface p-2 rounded-xl border border-purple-700/50 active:scale-95"><div class="font-bold">500₽ ➔ 650💎</div><div class="text-[10px] text-purple-400">Выгода 30%</div></button>
+        </div>
+
+        <!-- Вывод средств -->
+        <h3 class="font-bold text-lg mb-2">💸 Вывод средств</h3>
+        <div class="surface rounded-2xl p-4 mb-6 shadow-lg border border-gray-700/50">
+            <select id="payoutMethod" class="w-full text-white rounded-lg p-3 mb-2 outline-none appearance-none">
+                <option value="На телефон">📱 На телефон (от 500₽)</option>
+                <option value="USDT TRC20">💎 В крипте USDT (от 500₽)</option>
+                <option value="На карту">💳 На банковскую карту (от 3500₽)</option>
+            </select>
+            <input type="number" id="payoutAmount" placeholder="Сумма (₽)" class="w-full text-white rounded-lg p-3 mb-2 outline-none">
+            <input type="text" id="payoutDetails" placeholder="Реквизиты (Номер/Адрес)" class="w-full text-white rounded-lg p-3 mb-3 outline-none">
+            <button id="payoutBtn" onclick="requestPayout()" class="bg-green-600 w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Создать заявку</button>
+        </div>
+
+        <!-- CPA Сеть -->
+        <h3 class="font-bold text-lg mb-2">🔗 CPA-Партнерка</h3>
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700/50">
+            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Одобрено (Лиды):</span> <span class="font-bold text-green-400" id="cpaApproved">0</span></div>
+            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">В холде (48ч):</span> <span class="font-bold text-yellow-400" id="cpaHold">0</span></div>
+            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Фрод / Боты:</span> <span class="font-bold text-red-400" id="cpaFraud">0</span></div>
+            <div class="flex justify-between"><span class="text-gray-400 text-sm">Дубликаты:</span> <span class="font-bold text-gray-500" id="cpaDupes">0</span></div>
+            
+            <button onclick="tg.showAlert('Перейдите в чат бота и нажмите кнопку «🔗 Заработать (CPA)», чтобы выбрать город и сгенерировать ссылку.')" class="mt-4 w-full bg-gray-700 py-2 rounded-xl font-bold text-white active:scale-95 transition-transform text-sm border border-gray-600">
+                Генерировать инвайт-ссылку
+            </button>
         </div>
     </div>
 
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
-    <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-around pb-safe pt-2 pb-3 px-2 z-50">
-        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-2 w-1/4">
-            <span class="text-2xl mb-1">👤</span>
-            <span class="text-[10px] font-bold">Профиль</span>
+    <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-4 z-50">
+        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 w-1/5">
+            <span class="text-2xl mb-1">👤</span><span class="text-[9px] font-bold">Профиль</span>
         </button>
-        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-2 w-1/4">
-            <span class="text-2xl mb-1">🎁</span>
-            <span class="text-[10px] font-bold">Розыгрыши</span>
+        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
+            <span class="text-2xl mb-1">🎁</span><span class="text-[9px] font-bold">Розыгрыши</span>
         </button>
-        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-2 w-1/4">
-            <span class="text-2xl mb-1">⚖️</span>
-            <span class="text-[10px] font-bold">Рынок</span>
+        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
+            <span class="text-2xl mb-1">⚖️</span><span class="text-[9px] font-bold">Рынок</span>
         </button>
-        <button onclick="tg.close()" class="nav-item text-gray-500 flex flex-col items-center p-2 w-1/4">
-            <span class="text-2xl mb-1">❌</span>
-            <span class="text-[10px] font-bold">Закрыть</span>
+        <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
+            <span class="text-2xl mb-1">🎒</span><span class="text-[9px] font-bold">Рюкзак</span>
+        </button>
+        <button onclick="switchTab('finance', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
+            <span class="text-2xl mb-1">💼</span><span class="text-[9px] font-bold">Финансы</span>
         </button>
     </div>
 
@@ -111,6 +180,17 @@
             if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
         }
 
+        // --- УТИЛИТА ЗАПРОСОВ ---
+        async function apiCall(endpoint, payload = {}) {
+            payload.initData = tg.initData;
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            return response.json();
+        }
+
         function switchTab(tabId, btnElement) {
             tg.HapticFeedback.impactOccurred('light');
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -122,27 +202,56 @@
             btnElement.classList.add('active');
             btnElement.classList.remove('text-gray-500');
 
+            if(tabId === 'profile') loadProfile();
             if(tabId === 'giveaways') loadGiveaways();
-            if(tabId === 'market') loadMarket(); // Загружаем рынок при переключении
+            if(tabId === 'market') loadMarket(); 
+            if(tabId === 'inventory') loadInventory(); 
+            if(tabId === 'finance') { loadProfile(); loadCpa(); }
         }
 
         function loadProfile() {
-            fetch('/api/profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ initData: tg.initData })
-            }).then(res => res.json()).then(data => {
+            apiCall('/api/profile').then(data => {
                 document.getElementById('ptsBalance').innerText = data.points || 0;
                 document.getElementById('rubBalance').innerText = data.rubles || 0;
             });
         }
 
+        // --- ПРОФИЛЬ: РУЛЕТКА ---
+        function spinRoulette() {
+            const btn = document.getElementById('spinBtn');
+            const slotIcon = document.getElementById('slotIcon');
+            btn.innerText = "⏳ Крутим барабан...";
+            btn.disabled = true;
+            btn.classList.add('opacity-70');
+            
+            const emojis = ['🍒', '🍋', '🔔', '💎', '7️⃣', '💀', '🛡', '🧩', '💸'];
+            let spinInterval = setInterval(() => {
+                slotIcon.innerText = emojis[Math.floor(Math.random() * emojis.length)];
+                tg.HapticFeedback.impactOccurred('light'); 
+            }, 100);
+
+            apiCall('/api/spin_roulette').then(data => {
+                setTimeout(() => {
+                    clearInterval(spinInterval);
+                    slotIcon.innerText = '🎰';
+                    btn.innerText = "Крутить барабан";
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-70');
+                    if (data.error) {
+                        tg.showAlert(data.error);
+                        tg.HapticFeedback.notificationOccurred('error');
+                    } else {
+                        tg.HapticFeedback.notificationOccurred('success'); 
+                        tg.showPopup({title: "Результат", message: data.message, buttons: [{type: "ok"}]});
+                        loadProfile();
+                    }
+                }, 2000); 
+            }).catch(() => { clearInterval(spinInterval); slotIcon.innerText = '🎰'; btn.disabled = false; btn.classList.remove('opacity-70'); });
+        }
+
+        // --- РОЗЫГРЫШИ ---
         function loadGiveaways() {
-            fetch('/api/get_giveaways', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ initData: tg.initData })
-            }).then(res => res.json()).then(data => {
+            apiCall('/api/get_giveaways').then(data => {
                 const container = document.getElementById('giveaways-container');
                 if (data.error || data.length === 0) {
                     container.innerHTML = `<div class="surface rounded-2xl p-6 text-center text-gray-400">Сейчас нет активных розыгрышей.</div>`;
@@ -155,69 +264,20 @@
                         <div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">АКТИВЕН</div>
                         <h3 class="font-bold text-lg mb-1 mt-2">${gw.title}</h3>
                         <p class="text-sm text-gray-400 mb-3">🎫 ${gw.price} Очков • ⏳ ${gw.time_left}</p>
-                        <div class="flex items-center space-x-2 mb-3 bg-black/20 p-1 rounded-xl">
-                            <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-10 h-10 rounded-lg bg-gray-700 font-bold text-xl active:scale-90">-</button>
+                        <div class="flex items-center space-x-2 mb-3 bg-black/20 p-1 rounded-xl border border-gray-600/30">
+                            <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">-</button>
                             <div id="count_${gw.id}" class="flex-1 text-center font-bold text-xl" data-val="1">1</div>
-                            <button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-10 h-10 rounded-lg bg-gray-700 font-bold text-xl active:scale-90">+</button>
+                            <button onclick="changeTickets('${gw.id}', 1, ${gw.price})" class="w-10 h-10 rounded-lg font-bold text-xl active:scale-90">+</button>
                         </div>
                         <button onclick="buyTickets('${gw.id}', ${gw.price})" class="accent w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">
                             🎟 Получить за <span id="price_${gw.id}">${gw.price}</span> 💎
                         </button>
-                        <p class="text-xs text-center text-gray-500 mt-2">Уже куплено билетов: ${gw.total}</p>
+                        <p class="text-[10px] text-center text-gray-500 mt-2">Уже куплено билетов: ${gw.total}</p>
                     </div>`;
                 });
                 container.innerHTML = html;
             });
         }
-
-        // Загрузка Черного Рынка
-        function loadMarket() {
-            const container = document.getElementById('market-container');
-            container.innerHTML = '<p class="text-gray-400 text-center py-4">Связь со Скайнетом...</p>';
-            
-            fetch('/api/get_market', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ initData: tg.initData })
-            }).then(res => res.json()).then(data => {
-                if (data.error || data.length === 0) {
-                    container.innerHTML = `<div class="surface rounded-2xl p-6 text-center text-gray-400"><div class="text-4xl mb-2">🕸</div>Пусто. Никто ничего не продает.</div>`;
-                    return;
-                }
-
-                let html = '';
-                data.forEach(lot => {
-                    // Если лот выставил сам юзер, скрываем кнопки покупки
-                    let isMine = (lot.seller_uid == user.id);
-                    
-                    let buyButtons = isMine ? 
-                        `<p class="text-center text-sm text-gray-500 font-bold py-2 mt-2 bg-black/20 rounded-xl">Это ваш лот</p>` : 
-                        `<div class="flex space-x-2 mt-3">
-                            <button onclick="buyLot('${lot.id}', 'rub')" class="flex-1 bg-green-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center">
-                                <span class="text-lg">${lot.price_rub} ₽</span>
-                                <span class="text-[10px] font-normal">Купить за кэшбэк</span>
-                            </button>
-                            <button onclick="buyLot('${lot.id}', 'pts')" class="flex-1 bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center">
-                                <span class="text-lg">${lot.price_pts} 💎</span>
-                                <span class="text-[10px] font-normal">Купить за очки</span>
-                            </button>
-                        </div>`;
-
-                    html += `
-                    <div class="surface rounded-2xl p-4 shadow-lg border border-gray-700/50">
-                        <div class="flex justify-between items-start mb-2">
-                            <h3 class="font-bold text-md leading-tight">${lot.title}</h3>
-                            <span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2">Продавец:<br>${lot.seller}</span>
-                        </div>
-                        ${buyButtons}
-                    </div>`;
-                });
-                container.innerHTML = html;
-            }).catch(() => {
-                container.innerHTML = '<p class="text-red-400 text-center py-4">Ошибка загрузки. Попробуйте позже.</p>';
-            });
-        }
-
         function changeTickets(id, delta, price) {
             let el = document.getElementById(`count_${id}`);
             let val = parseInt(el.getAttribute('data-val')) + delta;
@@ -227,89 +287,134 @@
             document.getElementById(`price_${id}`).innerText = val * price;
             tg.HapticFeedback.impactOccurred('light');
         }
-
         function buyTickets(gw_id, price) {
             let amount = parseInt(document.getElementById(`count_${gw_id}`).getAttribute('data-val'));
             tg.HapticFeedback.impactOccurred('medium');
-            
-            fetch('/api/buy_ticket', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ initData: tg.initData, amount: amount, giveaway_id: gw_id })
-            }).then(res => res.json()).then(data => {
-                if (data.error) {
-                    tg.showAlert(data.error); 
-                    tg.HapticFeedback.notificationOccurred('error');
-                } else {
-                    tg.HapticFeedback.notificationOccurred('success');
-                    tg.showAlert(`✅ Выданы билеты с №${data.start} по №${data.end}.`);
-                    loadProfile(); loadGiveaways(); 
-                }
+            apiCall('/api/buy_ticket', {amount: amount, giveaway_id: gw_id}).then(data => {
+                if (data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(`✅ Выданы билеты с №${data.start} по №${data.end}.`); loadProfile(); loadGiveaways(); }
             });
         }
 
-        // Функция Рулетки
-        function spinRoulette() {
-            const btn = document.getElementById('spinBtn');
-            // Делаем кнопку неактивной, пока крутится
-            btn.innerText = "⏳ Барабан крутится...";
-            btn.disabled = true;
-            btn.classList.add('opacity-70');
-            tg.HapticFeedback.impactOccurred('heavy'); // Сильная вибрация
-
-            fetch('/api/spin_roulette', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ initData: tg.initData })
-            }).then(res => res.json()).then(data => {
-                // Возвращаем кнопку в норму
-                btn.innerText = "🎰 Крутить барабан";
-                btn.disabled = false;
-                btn.classList.remove('opacity-70');
-                
-                if (data.error) {
-                    tg.showAlert(data.error);
-                    tg.HapticFeedback.notificationOccurred('error');
-                } else {
-                    tg.HapticFeedback.notificationOccurred('success');
-                    // Показываем красивое всплывающее окно Telegram с призом
-                    tg.showPopup({
-                        title: "Результат",
-                        message: data.message,
-                        buttons: [{type: "ok"}]
-                    });
-                    loadProfile(); // Обновляем баланс очков на экране
+        // --- РЫНОК ---
+        function loadMarket() {
+            const container = document.getElementById('market-container');
+            container.innerHTML = '<p class="text-gray-400 text-center py-4">Связь со Скайнетом...</p>';
+            apiCall('/api/get_market').then(data => {
+                if (data.error || data.length === 0) {
+                    container.innerHTML = `<div class="surface rounded-2xl p-6 text-center text-gray-400"><div class="text-4xl mb-2">🕸</div>Пусто. Никто ничего не продает.</div>`;
+                    return;
                 }
-            }).catch(() => {
-                btn.innerText = "🎰 Крутить барабан";
-                btn.disabled = false;
-                btn.classList.remove('opacity-70');
+                let html = '';
+                data.forEach(lot => {
+                    let isMine = (lot.seller_uid == user.id);
+                    let buyButtons = isMine ? `<p class="text-center text-xs text-gray-500 font-bold py-2 mt-2 bg-black/20 rounded-xl">Это ваш лот</p>` : 
+                        `<div class="flex space-x-2 mt-3">
+                            <button onclick="buyLot('${lot.id}', 'rub')" class="flex-1 bg-green-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center"><span class="text-lg">${lot.price_rub} ₽</span><span class="text-[10px] font-normal">за кэшбэк</span></button>
+                            <button onclick="buyLot('${lot.id}', 'pts')" class="flex-1 bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center"><span class="text-lg">${lot.price_pts} 💎</span><span class="text-[10px] font-normal">за очки</span></button>
+                        </div>`;
+                    html += `<div class="surface rounded-2xl p-4 shadow-lg border border-gray-700/50"><div class="flex justify-between items-start mb-2"><h3 class="font-bold text-md leading-tight">${lot.title}</h3><span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2">Продавец:<br>${lot.seller}</span></div>${buyButtons}</div>`;
+                });
+                container.innerHTML = html;
             });
         }
-
-        // Покупка лота на Рынке
         function buyLot(lotId, currency) {
             tg.HapticFeedback.impactOccurred('medium');
-            let currencyName = currency === 'rub' ? 'рубли' : 'очки';
-            
-            tg.showConfirm(`Подтверждаете покупку за ${currencyName}?`, function(confirmed) {
+            tg.showConfirm(`Подтверждаете покупку?`, function(confirmed) {
                 if(confirmed) {
-                    fetch('/api/buy_market', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ initData: tg.initData, lot_id: lotId, currency: currency })
-                    }).then(res => res.json()).then(data => {
-                        if(data.error) {
-                            tg.showAlert(data.error);
-                            tg.HapticFeedback.notificationOccurred('error');
-                        } else {
-                            tg.HapticFeedback.notificationOccurred('success');
-                            tg.showAlert(`✅ Успешно! Артефакт куплен.\nВаш код: ${data.promo_id}`);
-                            loadProfile(); // Обновляем баланс
-                            loadMarket();  // Обновляем список лотов (купленный исчезнет)
-                        }
+                    apiCall('/api/buy_market', {lot_id: lotId, currency: currency}).then(data => {
+                        if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                        else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(`✅ Артефакт куплен.\nВаш код: ${data.promo_id}`); loadProfile(); loadMarket(); }
                     });
                 }
+            });
+        }
+
+        // --- ИНВЕНТАРЬ ---
+        function loadInventory() {
+            apiCall('/api/get_inventory').then(data => {
+                if(data.error) return;
+                document.getElementById('invShields').innerText = data.shields;
+                document.getElementById('invShards').innerText = `${data.shards}/50`;
+                document.getElementById('invOrders').innerText = data.orders;
+
+                const promoCont = document.getElementById('promos-container');
+                if (data.promos.length === 0) {
+                    promoCont.innerHTML = '<p class="text-gray-400 text-sm">Нет активных купонов.</p>';
+                } else {
+                    let p_html = '';
+                    data.promos.forEach(p => { p_html += `<div class="bg-black/30 p-3 rounded-lg flex justify-between items-center"><div><div class="font-bold text-sm font-mono text-blue-400">${p.id}</div><div class="text-[10px] text-gray-400">${p.desc}</div></div></div>`; });
+                    promoCont.innerHTML = p_html;
+                }
+            });
+        }
+        function craft(type) {
+            tg.HapticFeedback.impactOccurred('heavy');
+            apiCall('/api/craft', {action: type}).then(data => {
+                if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(data.msg); loadProfile(); loadInventory(); }
+            });
+        }
+        function openChest() {
+            const btn = document.getElementById('chestBtn');
+            const icon = document.getElementById('chestIcon');
+            btn.innerText = "⏳ Вскрываем..."; btn.disabled = true; icon.innerText = "📦"; icon.classList.add('animate-pulse');
+            tg.HapticFeedback.impactOccurred('heavy');
+            
+            setTimeout(() => {
+                apiCall('/api/open_chest').then(data => {
+                    icon.classList.remove('animate-pulse'); btn.disabled = false; btn.innerText = "Открыть (1000 💎)";
+                    if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                    else {
+                        tg.HapticFeedback.notificationOccurred('success');
+                        if(data.msg.includes('КОТ')) icon.innerText = "🐈‍⬛"; else if(data.msg.includes('ДЖЕКПОТ')) icon.innerText = "💎"; else icon.innerText = "✨";
+                        tg.showPopup({title: "Сундук открыт!", message: data.msg, buttons: [{type: "ok"}]});
+                        loadProfile(); loadInventory();
+                    }
+                });
+            }, 1500);
+        }
+
+        // --- ФИНАНСЫ (Обмен и Вывод) ---
+        function exchange(cost, reward) {
+            tg.HapticFeedback.impactOccurred('medium');
+            tg.showConfirm(`Обменять ${cost}₽ на ${reward}💎?`, function(c) {
+                if(c) {
+                    apiCall('/api/exchange', {cost: cost, reward: reward}).then(data => {
+                        if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                        else { tg.HapticFeedback.notificationOccurred('success'); tg.showAlert(data.msg); loadProfile(); }
+                    });
+                }
+            });
+        }
+        function requestPayout() {
+            const amount = document.getElementById('payoutAmount').value;
+            const method = document.getElementById('payoutMethod').value;
+            const details = document.getElementById('payoutDetails').value;
+            const btn = document.getElementById('payoutBtn');
+            
+            if(!amount || !details) { tg.showAlert("Заполните все поля!"); return; }
+            
+            btn.innerText = "⏳ Отправка..."; btn.disabled = true; tg.HapticFeedback.impactOccurred('light');
+            
+            apiCall('/api/payout', {amount: amount, method: method, details: details}).then(data => {
+                btn.innerText = "Создать заявку"; btn.disabled = false;
+                if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                else { 
+                    tg.HapticFeedback.notificationOccurred('success'); 
+                    tg.showAlert("✅ " + data.msg); 
+                    document.getElementById('payoutAmount').value = ''; 
+                    document.getElementById('payoutDetails').value = ''; 
+                    loadProfile(); 
+                }
+            });
+        }
+        function loadCpa() {
+            apiCall('/api/get_cpa').then(data => {
+                document.getElementById('cpaApproved').innerText = data.approved || 0;
+                document.getElementById('cpaHold').innerText = data.hold || 0;
+                document.getElementById('cpaFraud').innerText = data.fraud || 0;
+                document.getElementById('cpaDupes').innerText = data.duplicates || 0;
             });
         }
 
