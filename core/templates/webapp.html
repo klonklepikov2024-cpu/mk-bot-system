@@ -68,9 +68,26 @@
     <div id="tab-market" class="tab-content">
         <div class="flex justify-between items-center mb-4">
             <h2 class="font-bold text-2xl">Черный Рынок</h2>
-            <button onclick="loadMarket()" class="bg-gray-700 px-3 py-1 rounded-lg text-sm active:scale-90 transition-transform">🔄 Обновить</button>
+            <div class="space-x-2 flex">
+                <button onclick="showSellForm()" class="bg-blue-600 px-3 py-1 rounded-lg text-sm active:scale-90 transition-transform shadow-md">➕ Продать</button>
+                <button onclick="loadMarket()" class="bg-gray-700 px-3 py-1 rounded-lg text-sm active:scale-90 transition-transform">🔄</button>
+            </div>
         </div>
         <p class="text-xs text-gray-400 mb-4">Покупайте артефакты у других игроков. Комиссия рынка: 10%.</p>
+
+        <!-- СКРЫТАЯ ФОРМА ПРОДАЖИ -->
+        <div id="sellLotForm" class="hidden surface rounded-2xl p-4 mb-4 shadow-lg border border-blue-500/50">
+            <h3 class="font-bold text-lg mb-2 text-blue-400">Выставить артефакт</h3>
+            <select id="sellPromoSelect" class="w-full text-white rounded-lg p-3 mb-2 outline-none appearance-none border border-gray-600 focus:border-blue-500">
+                <option value="">Загрузка артефактов...</option>
+            </select>
+            <input type="number" id="sellPriceInput" placeholder="Цена (в рублях)" class="w-full text-white rounded-lg p-3 mb-3 outline-none border border-gray-600 focus:border-blue-500">
+            <div class="flex space-x-2">
+                <button onclick="submitMarketLot()" class="flex-1 bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Опубликовать</button>
+                <button onclick="document.getElementById('sellLotForm').classList.add('hidden')" class="bg-gray-700 px-4 py-2 rounded-xl font-bold text-white active:scale-95 transition-transform">Отмена</button>
+            </div>
+        </div>
+
         <div id="market-container" class="space-y-4"></div>
     </div>
 
@@ -80,6 +97,16 @@
         
         <div class="flex space-x-2 mb-4">
             <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
+
+        <!-- Использование Артефактов -->
+        <div class="grid grid-cols-2 gap-2 mb-6">
+            <button onclick="openModal('angel')" class="surface p-3 rounded-xl border border-yellow-500/30 active:scale-95 transition-transform">
+                <div class="text-2xl mb-1">👼</div><div class="font-bold text-sm text-yellow-500">Призвать Ангела</div><div class="text-[9px] text-gray-400">Сжечь 1 щит (Разбан друга)</div>
+            </button>
+            <button onclick="openModal('arrest')" class="surface p-3 rounded-xl border border-red-500/30 active:scale-95 transition-transform">
+                <div class="text-2xl mb-1">🚓</div><div class="font-bold text-sm text-red-500">Ордер на Арест</div><div class="text-[9px] text-gray-400">Мут на 1 час (Указать цель)</div>
+            </button>
+        </div>
             <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
             <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
         </div>
@@ -184,6 +211,19 @@
         </div>
     </div>
 
+    <!-- УНИВЕРСАЛЬНОЕ ОКНО ВВОДА (Для Ангела и Ареста) -->
+    <div id="actionModal" class="hidden fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="surface w-full max-w-sm rounded-2xl p-5 shadow-2xl border border-gray-700">
+            <h3 id="modalTitle" class="font-bold text-xl mb-2">Действие</h3>
+            <p id="modalDesc" class="text-xs text-gray-400 mb-4">Опишите действие.</p>
+            <input type="text" id="modalInput" placeholder="Введите данные..." class="w-full text-white rounded-lg p-3 mb-4 outline-none border border-gray-600 focus:border-blue-500">
+            <div class="flex space-x-2">
+                <button id="modalSubmitBtn" class="flex-1 bg-blue-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Подтвердить</button>
+                <button onclick="document.getElementById('actionModal').classList.add('hidden')" class="bg-gray-700 px-4 py-3 rounded-xl font-bold text-white active:scale-95 transition-transform">Отмена</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
     <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-4 z-50">
         <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 w-1/5">
@@ -215,15 +255,22 @@
             if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
         }
 
-        // --- УТИЛИТА ЗАПРОСОВ ---
+        // --- УТИЛИТА ЗАПРОСОВ (ЖЕЛЕЗНАЯ ЗАЩИТА) ---
         async function apiCall(endpoint, payload = {}) {
             payload.initData = tg.initData;
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-            return response.json();
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error("HTTP Error " + response.status);
+                return await response.json();
+            } catch (e) {
+                // Если пропал интернет или сервер упал — мы больше не умираем молча!
+                console.error("API Error:", e);
+                return {error: "⚠️ Ошибка связи со Скайнетом. Попробуйте еще раз!"};
+            }
         }
 
         function switchTab(tabId, btnElement) {
@@ -260,10 +307,13 @@
             btn.classList.add('opacity-70');
             
             const emojis = ['🍒', '🍋', '🔔', '💎', '7️⃣', '💀', '🛡', '🧩', '💸'];
+            let tick = 0; // <--- ДОБАВЛЕН СЧЕТЧИК
             let spinInterval = setInterval(() => {
                 slotIcon.innerText = emojis[Math.floor(Math.random() * emojis.length)];
-                tg.HapticFeedback.impactOccurred('light'); 
-            }, 100);
+                // Вибрируем только каждый второй кадр, чтобы не вешать телефон!
+                if (tick % 2 === 0) tg.HapticFeedback.impactOccurred('light'); 
+                tick++;
+            }, 150); // <--- ЗАМЕНИ 100 НА 150
 
             apiCall('/api/spin_roulette').then(data => {
                 setTimeout(() => {
@@ -272,16 +322,22 @@
                     btn.innerText = "Крутить барабан";
                     btn.disabled = false;
                     btn.classList.remove('opacity-70');
+                    
                     if (data.error) {
                         tg.showAlert(data.error);
                         tg.HapticFeedback.notificationOccurred('error');
                     } else {
                         tg.HapticFeedback.notificationOccurred('success'); 
-                        tg.showPopup({title: "Результат", message: data.message, buttons: [{type: "ok"}]});
+                        tg.showAlert(`🎰 Результат:\n\n${data.message}`);
                         loadProfile();
                     }
                 }, 2000); 
-            }).catch(() => { clearInterval(spinInterval); slotIcon.innerText = '🎰'; btn.disabled = false; btn.classList.remove('opacity-70'); });
+            }).catch(() => { 
+                clearInterval(spinInterval); 
+                slotIcon.innerText = '🎰'; 
+                btn.disabled = false; 
+                btn.classList.remove('opacity-70'); 
+            });
         }
 
         // --- РОЗЫГРЫШИ ---
@@ -455,7 +511,9 @@
                 let html = '';
                 data.forEach(lot => {
                     let isMine = (lot.seller_uid == user.id);
-                    let buyButtons = isMine ? `<p class="text-center text-xs text-gray-500 font-bold py-2 mt-2 bg-black/20 rounded-xl">Это ваш лот</p>` : 
+                    // 🔥 ДОБАВЛЕНА КНОПКА СНЯТИЯ ЛОТА 🔥
+                    let buyButtons = isMine ? 
+                        `<button onclick="actionItem('cancel_lot', '${lot.id}')" class="w-full bg-red-600/80 py-2 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-transform mt-3 border border-red-500/50">❌ Снять с продажи</button>` : 
                         `<div class="flex space-x-2 mt-3">
                             <button onclick="buyLot('${lot.id}', 'rub')" class="flex-1 bg-green-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center"><span class="text-lg">${lot.price_rub} ₽</span><span class="text-[10px] font-normal">за кэшбэк</span></button>
                             <button onclick="buyLot('${lot.id}', 'pts')" class="flex-1 bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center"><span class="text-lg">${lot.price_pts} 💎</span><span class="text-[10px] font-normal">за очки</span></button>
@@ -490,8 +548,81 @@
                     promoCont.innerHTML = '<p class="text-gray-400 text-sm">Нет активных купонов.</p>';
                 } else {
                     let p_html = '';
-                    data.promos.forEach(p => { p_html += `<div class="bg-black/30 p-3 rounded-lg flex justify-between items-center"><div><div class="font-bold text-sm font-mono text-blue-400">${p.id}</div><div class="text-[10px] text-gray-400">${p.desc}</div></div></div>`; });
+                    data.promos.forEach(p => { 
+                        // 🔥 ДОБАВЛЕНА КНОПКА ЛОМБАРДА 🔥
+                        p_html += `
+                        <div class="bg-black/30 p-3 rounded-lg flex justify-between items-center border border-gray-700/50">
+                            <div>
+                                <div class="font-bold text-sm font-mono text-blue-400">${p.id}</div>
+                                <div class="text-[10px] text-gray-400">${p.desc}</div>
+                            </div>
+                            <button onclick="actionItem('pawn_promo', '${p.id}')" class="bg-gray-700/80 p-2 rounded-lg text-xs font-bold text-gray-300 hover:bg-red-900/80 active:scale-95 transition-colors border border-gray-600">♻️ В утиль</button>
+                        </div>`; 
+                    });
                     promoCont.innerHTML = p_html;
+                }
+            });
+        }
+
+// Универсальная функция (Снять с рынка / Расплавить)
+        function actionItem(actType, itemId) {
+            tg.HapticFeedback.impactOccurred('medium');
+            let txt = actType === 'cancel_lot' ? "Снять лот с продажи и вернуть в рюкзак?" : "Переплавить купон в осколки рулетки? Это необратимо!";
+            
+            tg.showConfirm(txt, function(c) {
+                if(c) {
+                    apiCall('/api/inventory_action', {action: actType, lot_id: itemId, promo_id: itemId}).then(data => {
+                        if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                        else { 
+                            tg.HapticFeedback.notificationOccurred('success'); 
+                            tg.showAlert(data.msg); 
+                            loadMarket(); loadInventory(); loadProfile();
+                        }
+                    });
+                }
+            });
+        }
+
+        // Модалка для Ангела и Ордера
+        function openModal(type) {
+            const modal = document.getElementById('actionModal');
+            const title = document.getElementById('modalTitle');
+            const desc = document.getElementById('modalDesc');
+            const input = document.getElementById('modalInput');
+            const submitBtn = document.getElementById('modalSubmitBtn');
+            
+            input.value = '';
+            modal.classList.remove('hidden');
+            
+            if(type === 'angel') {
+                title.innerText = "👼 Призвать Ангела";
+                desc.innerText = "Введите ID пользователя, которого хотите разбанить за счет вашего щита:";
+                input.placeholder = "Например: 123456789";
+                submitBtn.onclick = () => submitModalAction('angel', input.value);
+            } else {
+                title.innerText = "🚓 Выписать Ордер";
+                desc.innerText = "Укажите @username (или ID) нарушителя и кратко опишите причину:";
+                input.placeholder = "Например: @spammer реклама казино";
+                submitBtn.onclick = () => submitModalAction('arrest', input.value);
+            }
+        }
+
+        function submitModalAction(actType, val) {
+            if(!val) { tg.showAlert("Заполните поле!"); return; }
+            tg.HapticFeedback.impactOccurred('heavy');
+            
+            document.getElementById('actionModal').classList.add('hidden');
+            
+            apiCall('/api/inventory_action', {
+                action: actType, 
+                target_id: val, 
+                target_info: val
+            }).then(data => {
+                if(data.error) { tg.showAlert(data.error); tg.HapticFeedback.notificationOccurred('error'); } 
+                else { 
+                    tg.HapticFeedback.notificationOccurred('success'); 
+                    tg.showPopup({title: "Выполнено!", message: data.msg, buttons: [{type: "ok"}]});
+                    loadInventory(); loadProfile();
                 }
             });
         }
@@ -520,6 +651,56 @@
                     }
                 });
             }, 1500);
+        }
+
+        // --- ПРОДАЖА ЛОТОВ (ФОРМА) ---
+        function showSellForm() {
+            tg.HapticFeedback.impactOccurred('light');
+            const form = document.getElementById('sellLotForm');
+            form.classList.remove('hidden'); // Показываем форму
+            const select = document.getElementById('sellPromoSelect');
+            select.innerHTML = '<option value="">Загрузка...</option>';
+            
+            // Запрашиваем инвентарь юзера
+            apiCall('/api/get_my_promos').then(data => {
+                if(data.error) { tg.showAlert(data.error); form.classList.add('hidden'); return; }
+                if(data.length === 0) {
+                    select.innerHTML = '<option value="">У вас нет доступных артефактов 🪹</option>';
+                    return;
+                }
+                let html = '<option value="">Выберите артефакт...</option>';
+                data.forEach(p => { html += `<option value="${p.id}">${p.name}</option>`; });
+                select.innerHTML = html;
+            });
+        }
+        
+        function submitMarketLot() {
+            const promoId = document.getElementById('sellPromoSelect').value;
+            const price = document.getElementById('sellPriceInput').value;
+            
+            if(!promoId || !price) { 
+                tg.showAlert("⚠️ Выберите артефакт и укажите цену!"); 
+                tg.HapticFeedback.notificationOccurred('warning');
+                return; 
+            }
+            
+            tg.HapticFeedback.impactOccurred('medium');
+            
+            // Отправляем на сервер
+            apiCall('/api/add_market_lot', {promo_id: promoId, price: price}).then(data => {
+                if(data.error) { 
+                    tg.showAlert(data.error); 
+                    tg.HapticFeedback.notificationOccurred('error'); 
+                } else {
+                    tg.HapticFeedback.notificationOccurred('success');
+                    tg.showAlert("✅ " + data.msg);
+                    // Закрываем форму и очищаем поля
+                    document.getElementById('sellLotForm').classList.add('hidden');
+                    document.getElementById('sellPriceInput').value = '';
+                    // Обновляем витрину рынка и рюкзак
+                    loadMarket();
+                }
+            });
         }
 
         // --- ФИНАНСЫ (Обмен и Вывод) ---

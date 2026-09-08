@@ -7,6 +7,7 @@ from flask import Flask, request
 import hashlib
 import hmac
 import json
+import html # <--- ДОБАВЬ ВОТ ЭТУ СТРОЧКУ
 from urllib.parse import unquote
 from flask import render_template, jsonify
 from database.mongo import paid_collection, db
@@ -406,9 +407,12 @@ def api_craft():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     
     parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
-    uid = json.loads(parsed_data['user'])['id']
-    action = data.get('action')
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    username = user_info.get('username', f"ID {uid}")
+    first_name = user_info.get('first_name', 'Аноним')
     
+    action = data.get('action')
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
     if action == 'shards':
@@ -426,7 +430,32 @@ def api_craft():
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
             return jsonify({"success": True, "msg": "🛡 Вы сковали Щит Иммунитета!"})
         else:
-            return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ! Вы выиграли Telegram Premium! Напишите админам."})
+            # 🔥 ИСПРАВЛЕНИЕ: ОТПРАВЛЯЕМ ЗАЯВКУ В БАЗУ ДЛЯ ПАНЕЛИ 🔥
+            import time
+            db['premium_claims'].insert_one({
+                "uid": uid,
+                "username": f"@{username}" if not username.startswith("ID") else username,
+                "timestamp": time.time(),
+                "status": "pending"
+            })
+            
+            # Уведомляем админов
+            try:
+                from core.bot import bot
+                from config import STAFF_GROUP_ID, PRIZES_THREAD_ID, APP_URL
+                from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"{APP_URL}/glaz"))
+                bot.send_message(
+                    STAFF_GROUP_ID, 
+                    f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
+                    f"👤 Победитель: {first_name} (@{username})\n\n"
+                    f"❗️ <i>Заявка добавлена в Веб-панель.</i>", 
+                    parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+                )
+            except Exception as e:
+                logger.error(f"Ошибка уведомления ТГ: {e}")
+                
+            return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ! Вы выиграли Telegram Premium! Заявка отправлена администрации."})
 
     elif action == 'beyond':
         if user_data.get("bounty_points", 0) < 3000 or user_data.get("immunity", 0) < 2:
@@ -615,6 +644,157 @@ def api_get_giveaway_participants():
     next_offset = offset + 15 if len(tickets_history) == 15 else None
     
     return jsonify({"participants": result, "next_offset": next_offset})
+
+@app.route('/api/get_my_promos', methods=['POST'])
+def api_get_my_promos():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    
+    # Ищем только неиспользованные купоны, которые не являются аирдропами
+    promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0, "type": {"$ne": "airdrop"}}))
+    
+    result = []
+    for p in promos:
+        t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Любую услугу"
+        val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
+        result.append({
+            "id": p["_id"], 
+            "name": f"{p['_id']} (Скидка {val} на {t_name})", 
+            "target": p.get("target", "all")
+        })
+        
+    return jsonify(result)
+
+@app.route('/api/add_market_lot', methods=['POST'])
+def api_add_market_lot():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    user_info = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    promo_id = data.get('promo_id')
+    price = int(data.get('price', 0))
+    
+    # Защита от подмены: проверяем, что промокод реально принадлежит юзеру
+    promo = db['promocodes'].find_one({"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0})
+    if not promo: 
+        return jsonify({"error": "Артефакт не найден или уже продан!"}), 400
+    
+    # Вычисляем максимальную цену (120% от базы)
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
+    target_type = promo.get("target", "all")
+    base_price = 500
+    if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
+    elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
+    elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+    
+    max_price = int(base_price * 1.2)
+    
+    if price < 10 or price > max_price:
+        return jsonify({"error": f"Цена должна быть от 10₽ до {max_price}₽!"}), 400
+        
+    # Атомарно забираем промокод и создаем лот на рынке
+    import time
+    db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": "MARKET"}})
+    db['market_orders'].insert_one({
+        "promo_id": promo_id, 
+        "seller_uid": uid, 
+        "seller_name": first_name,
+        "price_rub": price, 
+        "target": promo.get("target"), 
+        "value": promo.get("value"),
+        "type": promo.get("type"), 
+        "status": "active", 
+        "created_at": time.time()
+    })
+    
+    return jsonify({"success": True, "msg": f"Лот успешно выставлен за {price}₽!"})
+
+@app.route('/api/inventory_action', methods=['POST'])
+def api_inventory_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    user_info = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    action = data.get('action')
+    
+    # 1. СНЯТЬ С ПРОДАЖИ (Рынок)
+    if action == 'cancel_lot':
+        lot_id = data.get('lot_id')
+        from bson.objectid import ObjectId
+        lot = db['market_orders'].find_one_and_update(
+            {"_id": ObjectId(lot_id), "seller_uid": uid, "status": "active"},
+            {"$set": {"status": "cancelled"}}
+        )
+        if not lot: return jsonify({"error": "Лот не найден или уже продан!"}), 400
+        # Возвращаем купон владельцу
+        db['promocodes'].update_one({"_id": lot['promo_id']}, {"$set": {"owner_uid": uid}})
+        return jsonify({"success": True, "msg": "✅ Лот снят с продажи. Артефакт возвращен в рюкзак."})
+        
+    # 2. ПЕРЕПЛАВКА ПРОМОКОДА (Ломбард)
+    elif action == 'pawn_promo':
+        promo_id = data.get('promo_id')
+        promo = db['promocodes'].find_one_and_delete({"_id": promo_id, "owner_uid": uid, "is_active": True})
+        if not promo: return jsonify({"error": "Промокод не найден!"}), 400
+        
+        shards_reward = 10 if promo.get("target") == "vip" else 5
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}})
+        return jsonify({"success": True, "msg": f"♻️ Артефакт уничтожен!\nВы получили: +{shards_reward} Осколков рулетки 🧩."})
+        
+    # 3. АНГЕЛ ХРАНИТЕЛЬ (Использование Щита)
+    elif action == 'angel':
+        target_uid = data.get('target_id')
+        if not target_uid.isdigit(): return jsonify({"error": "ID должен быть числом!"}), 400
+        target_uid = int(target_uid)
+        
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        if user_data.get("immunity", 0) < 1: return jsonify({"error": "Нет активных Щитов!"}), 400
+        
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+        paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
+        
+        import time
+        db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": time.time()})
+        return jsonify({"success": True, "msg": f"👼 Чудо свершилось!\nВы пожертвовали щит. Юзер {target_uid} спасен!"})
+        
+    # 4. ОРДЕР НА АРЕСТ
+    elif action == 'arrest':
+        target_info = data.get('target_info')
+        if not target_info or len(target_info) < 3: return jsonify({"error": "Укажите цель и причину!"}), 400
+        
+        promo = db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+        if not promo: return jsonify({"error": "У вас нет Ордеров!"}), 400
+        
+        code = promo["_id"]
+        db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
+        
+        from core.bot import bot
+        from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        import html
+        
+        markup = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("✅ Замутить", callback_data=f"arrest_done_{uid}"),
+            InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}")
+        )
+        try:
+            bot.send_message(
+                STAFF_GROUP_ID, 
+                f"🚓 <b>ПРИМЕНЕНИЕ ОРДЕРА (WEB APP)</b>\n\n👤 От: {first_name} (<code>{uid}</code>)\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{html.escape(target_info)}</code>", 
+                parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+            )
+        except Exception as e: logger.error(f"Ошибка ордера: {e}")
+        return jsonify({"success": True, "msg": "🚓 Заявка на арест передана Спецназу Скайнета!"})
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
