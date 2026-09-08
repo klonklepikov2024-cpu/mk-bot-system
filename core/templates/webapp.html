@@ -320,14 +320,14 @@
             btn.classList.add('opacity-70');
             
             const emojis = ['🍒', '🍋', '🔔', '💎', '7️⃣', '💀', '🛡', '🧩', '💸'];
-            let tick = 0; // <--- ДОБАВЛЕН СЧЕТЧИК
+            let tick = 0; 
             let spinInterval = setInterval(() => {
                 slotIcon.innerText = emojis[Math.floor(Math.random() * emojis.length)];
-                // Вибрируем только каждый второй кадр, чтобы не вешать телефон!
                 if (tick % 2 === 0) tg.HapticFeedback.impactOccurred('light'); 
                 tick++;
-            }, 150); // <--- ЗАМЕНИ 100 НА 150
+            }, 150); 
 
+            // Запрашиваем сервер
             apiCall('/api/spin_roulette').then(data => {
                 setTimeout(() => {
                     clearInterval(spinInterval);
@@ -341,16 +341,18 @@
                         tg.HapticFeedback.notificationOccurred('error');
                     } else {
                         tg.HapticFeedback.notificationOccurred('success'); 
-                        tg.showAlert(`🎰 Результат:\n\n${data.message}`);
+                        
+                        // 🔥 ВОЗВРАЩЕНО НАДЕЖНОЕ ВСПЛЫВАЮЩЕЕ ОКНО 🔥
+                        tg.showPopup({
+                            title: "Результат розыгрыша", 
+                            message: data.message, 
+                            buttons: [{type: "ok"}]
+                        });
                         loadProfile();
                     }
                 }, 2000); 
-            }).catch(() => { 
-                clearInterval(spinInterval); 
-                slotIcon.innerText = '🎰'; 
-                btn.disabled = false; 
-                btn.classList.remove('opacity-70'); 
-            });
+            }); 
+            // Мы убрали лишний .catch() отсюда, так как apiCall уже сам ловит все ошибки сети!
         }
 
         // --- РОЗЫГРЫШИ ---

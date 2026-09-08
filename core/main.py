@@ -319,8 +319,12 @@ def api_spin_roulette():
     parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
+    
+    # 🔥 ИСПРАВЛЕНО: Безопасное получение юзернейма для базы
+    username = user_info.get('username')
+    username_str = f"@{username}" if username else f"ID {uid}"
+    first_name = user_info.get('first_name', 'Аноним')
 
-    # 1. Пытаемся списать 50 очков
     SPIN_PRICE = 50
     updated_user = paid_collection.find_one_and_update(
         {"uid": uid, "bounty_points": {"$gte": SPIN_PRICE}},
@@ -330,42 +334,115 @@ def api_spin_roulette():
     if not updated_user:
         return jsonify({"error": "Недостаточно очков! Нужно 50 💎."}), 400
 
-    # 2. Генерируем случайное число (1-64) как в Telegram Dice
     import random
     val = random.randint(1, 64)
     prize_msg = ""
+    
+    bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+    premium_cost_stars = 1500
 
-    # -- ЛОГИКА ПРИЗОВ (Упрощенная для Web App) --
-    if val == 64: # Джекпот
+    # 🔥 ТЕПЕРЬ ТУТ АБСОЛЮТНО ВСЕ ПРИЗЫ ИЗ CASINO.PY 🔥
+    if val == 63 and bank_data.get("balance", 0) >= premium_cost_stars:
+        db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
+        prize_msg = "🏆 ГЛАВНЫЙ СУПЕР-ПРИЗ!!!\nВы выиграли Telegram Premium (3 мес.)!\nЗаявка отправлена админам."
+        
+        import time
+        db['premium_claims'].insert_one({
+            "uid": uid,
+            "username": username_str,
+            "timestamp": time.time(),
+            "status": "pending"
+        })
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID, APP_URL
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"{APP_URL}/glaz"))
+            bot.send_message(
+                STAFF_GROUP_ID, 
+                f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
+                f"👤 Победитель: {first_name} ({username_str})\n\n"
+                f"❗️ <i>Заявка добавлена в Веб-панель.</i>", 
+                parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+            )
+        except: pass
+
+    elif val == 63:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
+        prize_msg = "🎰 МИНИ-ДЖЕКПОТ!\nФонд Premium пуст, поэтому вы получаете +1000 Очков и 5 Осколков!"
+
+    elif val == 64:
         code = f"JACKPOT-{random.randint(1000, 9999)}"
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
-        prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nВыдан Золотой Билет (VIP) и 300 очков!\nКод: {code}"
+        prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nЗолотой Билет (VIP) и 300 очков!\nКод: {code}"
 
-    elif val in [10, 20, 40, 50]: # Налоговая
+    elif val in [7, 21, 35]:
+        prize_msg = "🌟 СУПЕР-РЕДКИЙ ДРОП!\nВы выиграли право установить Личный Тег!\nНажмите кнопку 'Рюкзак -> Ваши промокоды' или проверьте ЛС бота."
+        try:
+            from core.bot import bot
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Заказать свой тег", callback_data="claim_custom_tag"))
+            bot.send_message(uid, "👑 Вы выиграли купон на создание Личного Статуса!", reply_markup=markup)
+        except: pass
+
+    elif val in [1, 22, 43]:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1, "bounty_points": 50}})
+        prize_msg = "🔥 ЭПИЧЕСКИЙ ВЫИГРЫШ!\nВы получили 🛡 Щит Иммунитета и 50 очков!"
+
+    elif val in [10, 20, 40, 50]:
         lost_points = int(updated_user.get("bounty_points", 0) * 0.3)
         if lost_points < 10: lost_points = 10
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
         prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано 30% баланса (-{lost_points} очков)."
 
-    elif val in [1, 22, 43]: # Щит
-        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1, "bounty_points": 50}})
-        prize_msg = "🔥 ЭПИЧЕСКИЙ ДРОП!\nВы получили 🛡 Щит Иммунитета и 50 очков!"
+    elif val in [5, 17, 29]:
+        code = f"ARREST-{random.randint(100, 999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        prize_msg = f"🚓 СОЦИАЛЬНЫЙ АРТЕФАКТ!\nВы нашли Ордер на Арест!\nКод: {code}"
 
-    elif val in [15, 30, 45, 60]: # Кэшбэк
+    elif val in [13, 26, 39, 52]:
+        strikes = updated_user.get("strikes", 0)
+        if strikes > 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"strikes": -1}})
+            prize_msg = f"🕊 АМНИСТИЯ!\nСписан 1 штрафной страйк!"
+        else:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 100}})
+            prize_msg = "🕊 БЕЛЫЙ БИЛЕТ!\nУ вас нет страйков. Получите +100 очков!"
+
+    elif val in [15, 30, 45, 60]:
         win_points = random.choice([100, 150, 250])
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": win_points}})
         prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {win_points} 💎!"
 
-    elif val in [5, 17, 29]: # Ордер на арест
-        code = f"ARREST-{random.randint(100, 999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
-        prize_msg = f"🚓 АРТЕФАКТ!\nВы выбили Ордер на Арест (мут на 1 час)!\nКод: {code}"
+    elif val % 7 == 0:
+        promos = [
+            {"target": "fine", "value": 50, "prefix": "FINE50", "name": "50% на оплату Штрафа"},
+            {"target": "ads", "value": 30, "prefix": "ADS30", "name": "30% на покупку Рекламы"},
+            {"target": "vip", "value": 40, "prefix": "VIP40", "name": "40% на покупку VIP"},
+            {"target": "all", "value": 15, "prefix": "ALL15", "name": "15% на Любую услугу"}
+        ]
+        drop = random.choice(promos)
+        code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        prize_msg = f"✨ РЕДКИЙ ДРОП!\nВыиграна скидка {drop['name']}!\nКод: {code}"
 
-    else: # Утешительные осколки
-        shards = random.choice([1, 1, 2])
-        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
-        prize_msg = f"🧩 Барабан остановился...\nВы получили: +{shards} Осколок(ка) джекпота!"
+    elif val in [11, 33]:
+        win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
+        cost_in_stars = win_rub // 2 
+        if bank_data.get("balance", 0) >= cost_in_stars:
+            db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
+            prize_msg = f"✨ ДЕНЕЖНЫЙ КУПОН! ✨\nВы выиграли {win_rub} руб. на счет!"
+        else:
+            fallback_points = win_rub * 2
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": fallback_points}})
+            prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {fallback_points} очков!"
+
+    else:
+        shards_won = random.choice([1, 1, 1, 2])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_won}})
+        prize_msg = f"🧩 Барабан остановился...\nВы получили: +{shards_won} Осколок(ка) джекпота!"
 
     return jsonify({"success": True, "message": prize_msg})
 
@@ -409,7 +486,10 @@ def api_craft():
     parsed_data = dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
-    username = user_info.get('username', f"ID {uid}")
+    
+    # 🔥 ИСПРАВЛЕНО: Безопасное получение юзернейма для базы
+    username = user_info.get('username')
+    username_str = f"@{username}" if username else f"ID {uid}"
     first_name = user_info.get('first_name', 'Аноним')
     
     action = data.get('action')
@@ -434,7 +514,7 @@ def api_craft():
             import time
             db['premium_claims'].insert_one({
                 "uid": uid,
-                "username": f"@{username}" if not username.startswith("ID") else username,
+                "username": username_str,
                 "timestamp": time.time(),
                 "status": "pending"
             })
@@ -448,7 +528,7 @@ def api_craft():
                 bot.send_message(
                     STAFF_GROUP_ID, 
                     f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
-                    f"👤 Победитель: {first_name} (@{username})\n\n"
+                    f"👤 Победитель: {first_name} ({username_str})\n\n"
                     f"❗️ <i>Заявка добавлена в Веб-панель.</i>", 
                     parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
                 )
