@@ -281,13 +281,16 @@ def api_buy_market():
         
     db['market_orders'].update_one({"_id": ObjectId(lot_id)}, {"$set": {"status": "sold", "buyer_uid": uid}})
     
-    # Вычисляем 10% комиссии и начисляем остаток продавцу
-    seller_profit = int(price_rub * 0.9)
-    safe_commission = price_rub - seller_profit 
-    paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
+    # 🔥 ПАССИВКА: РОДОДЕНДРОН 🔥
+    # Проверяем, есть ли у продавца выращенный Рододендрон на грядке
+    has_rhodo = db['farm_plots'].find_one({"uid": lot['seller_uid'], "seed_type": "rhododendron", "status": "ready"})
+    multiplier = 0.95 if has_rhodo else 0.90
     
-    # Отправляем 10% в Красный Сейф
-    db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}})
+    seller_profit = int(price_rub * multiplier)
+    safe_commission = price_rub - seller_profit # Остаток летит в Сейф
+    
+    paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
+    db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}}) # Пополняем Красный Сейф
     
     promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
@@ -379,13 +382,20 @@ def api_spin_roulette():
 
     elif val in [10, 20, 40, 50]:
         lost_points = int(updated_user.get("bounty_points", 0) * 0.3)
+        
+        # 🔥 ПАССИВКА: КАКТУС 🔥
+        has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
+        if has_cactus:
+            lost_points = int(updated_user.get("bounty_points", 0) * 0.1) # 10% вместо 30%
+            
         if lost_points < 10: lost_points = 10
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
-        
-        # 🔥 ДОБАВЬ ВОТ ЭТУ СТРОЧКУ 🔥
         db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
         
-        prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано 30% баланса (-{lost_points} очков)."
+        if has_cactus:
+            prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
+        else:
+            prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано 30% баланса (-{lost_points} очков)."
 
     elif val in [5, 17, 29]:
         code = f"ARREST-{random.randint(100, 999)}"
@@ -863,7 +873,12 @@ CROPS = {
     "sunflower": {"name": "🌻 Подсолнух", "cost_pts": 150, "grow_time": 24*3600, "water_req": True, "reward_pts": [180, 220], "key": "blue", "key_chance": 25},
     "watermelon": {"name": "🍉 Арбуз", "cost_pts": 300, "grow_time": 48*3600, "water_req": True, "reward_pts": [400, 500], "key": "red", "key_chance": 20},
     "chestnut": {"name": "🌳 К. Каштан", "cost_pts": 1000, "grow_time": 7*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
-    "rhododendron": {"name": "🌸 Рододендрон", "cost_pts": 1500, "grow_time": 3*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True}
+    "rhododendron": {"name": "🌸 Рододендрон", "cost_pts": 1500, "grow_time": 3*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
+    
+    # 🔥 НОВЫЕ СЕМЕНА 🔥
+    "parsley": {"name": "🌿 Петрушка", "cost_pts": 100, "grow_time": 8*3600, "water_req": False, "reward_pts": [50, 80]},
+    "cactus": {"name": "🌵 Кактус", "cost_pts": 800, "grow_time": 5*24*3600, "water_req": False, "reward_pts": [0, 0], "is_decor": True},
+    "amanita": {"name": "🍄 К-Мухомор", "cost_pts": 300, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]}
 }
 
 @app.route('/api/get_farm', methods=['POST'])
@@ -1002,10 +1017,36 @@ def api_farm_action():
         if crop.get('is_decor'): return jsonify({"error": "Декор нельзя собрать, он дает пассивный бонус!"}), 400
         
         import random
-        reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
-        update_query = {"$inc": {"bounty_points": reward_pts}}
-        msg = f"🚜 Урожай собран!\nВы получили {reward_pts} 💎."
+        update_query = {"$inc": {}}
+        msg = "🚜 Урожай собран!"
         
+        # 🔥 СПЕЦ-ЛОГИКА: КИБЕР-МУХОМОР (Казино)
+        if plot['seed_type'] == 'amanita':
+            if random.randint(1, 100) <= 50:
+                update_query["$inc"]["bounty_points"] = 1000
+                msg = "🎰 ДЖЕКПОТ!\nКибер-Мухомор выдал 1000 💎!"
+            else:
+                update_query["$inc"]["bounty_points"] = 0 # Пустышка
+                msg = "🍄 Отравленная земля...\nМухомор сгнил, вы потеряли вложения."
+                
+        # СТАНДАРТНЫЙ УРОЖАЙ (ВКЛЮЧАЯ ПЕТРУШКУ)
+        else:
+            reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
+            update_query["$inc"]["bounty_points"] = reward_pts
+            msg += f"\nВы получили {reward_pts} 💎."
+            
+            # 🔥 СПЕЦ-ЛОГИКА: ПЕТРУШКА (Инвентарь)
+            if plot['seed_type'] == 'parsley':
+                chance = random.randint(1, 100)
+                if chance <= 10:
+                    update_query["$inc"]["immunity"] = 1
+                    msg += "\n🛡 В кустах найден Щит Иммунитета!"
+                elif chance <= 20:
+                    code = f"ARREST-{random.randint(100, 999)}"
+                    db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    msg += f"\n🚓 В кустах найден Ордер на Арест!\nКод: {code}"
+
+        # Шансы на Осколки и Ключи
         if crop.get('shards_chance') and random.randint(1, 100) <= crop['shards_chance']:
             update_query["$inc"]["jackpot_shards"] = 1
             msg += "\n🧩 Найден Осколок рулетки!"
@@ -1087,11 +1128,32 @@ def api_crack_safe():
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
     key_field = f"key_{safe_color}"
+    
     if user_db.get(key_field, 0) < 1:
         key_name = "Синий" if safe_color == 'blue' else "Красный"
         return jsonify({"error": f"Вам нужен {key_name} ключ! Вырастите его на грядке."}), 400
+
+    # 🔥 ПАССИВКА: КОНСКИЙ КАШТАН И ЛИМИТЫ 🔥
+    import datetime
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    # Сброс лимитов на новый день
+    current_cracks = user_db.get("daily_cracks", 0)
+    if user_db.get("last_crack_date") != today_str:
+        current_cracks = 0
         
-    paid_collection.update_one({"uid": uid}, {"$inc": {key_field: -1}})
+    # Считаем каштаны на грядках юзера
+    chestnuts_count = db['farm_plots'].count_documents({"uid": uid, "seed_type": "chestnut", "status": "ready"})
+    max_cracks = 3 + chestnuts_count
+    
+    if current_cracks >= max_cracks:
+        return jsonify({"error": f"Лимит взломов на сегодня исчерпан ({current_cracks}/{max_cracks})!\nПриходите завтра или посадите больше Каштанов."}), 400
+        
+    # Списываем 1 ключ, увеличиваем счетчик попыток и обновляем дату
+    paid_collection.update_one(
+        {"uid": uid}, 
+        {"$inc": {key_field: -1, "daily_cracks": 1}, "$set": {"last_crack_date": today_str}}
+    )
     
     safe_id = f"safe_{safe_color}"
     safe = db['safes_state'].find_one({"_id": safe_id})
@@ -1134,7 +1196,7 @@ def api_crack_safe():
             {"$push": {"logs": {"$each": [new_log], "$slice": -6}}} 
         )
         
-        return jsonify({"success": True, "msg": f"Доступ запрещен!\n{result_text}\nКлюч сожжен.", "cracked": False})
+        return jsonify({"success": True, "msg": f"Доступ запрещен!\n{result_text}\nКлюч сожжен. Попыток сегодня: {current_cracks + 1}/{max_cracks}", "cracked": False})
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():

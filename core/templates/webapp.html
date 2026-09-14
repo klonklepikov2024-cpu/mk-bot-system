@@ -261,6 +261,21 @@
                     <button onclick="buySeed('sunflower', 150, '🌻 Подсолнух')" class="bg-blue-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md">150 💎</button>
                 </div>
 
+                    <div class="flex justify-between items-center bg-black/30 p-2 rounded-lg border border-gray-700">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🌿</span><div><p class="text-xs font-bold text-white">Петрушка (8ч)</p><p class="text-[9px] text-gray-400">Шанс на Ордер или Щит</p></div></div>
+                    <button onclick="buySeed('parsley', 100, '🌿 Петрушка')" class="bg-gray-700 px-3 py-1.5 rounded text-xs font-bold active:scale-95">100 💎</button>
+                </div>
+                
+                <div class="flex justify-between items-center bg-red-900/20 p-2 rounded-lg border border-red-800/50">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🍄</span><div><p class="text-xs font-bold text-red-300">К-Мухомор (2ч)</p><p class="text-[9px] text-red-400/80">Казино: +1000 💎 или 0</p></div></div>
+                    <button onclick="buySeed('amanita', 300, '🍄 К-Мухомор')" class="bg-red-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md">300 💎</button>
+                </div>
+
+                <div class="flex justify-between items-center bg-purple-900/20 p-2 rounded-lg border border-purple-800/50">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🌵</span><div><p class="text-xs font-bold text-purple-300">Кактус (Пассив)</p><p class="text-[9px] text-purple-400/80">Снижает налог в Рулетке до 10%</p></div></div>
+                    <button onclick="buySeed('cactus', 800, '🌵 Кактус')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">800 <span class="text-[10px]">💎</span></button>
+                </div>
+
                 <div class="flex justify-between items-center bg-red-900/20 p-2 rounded-lg border border-red-800/50">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🍉</span><div><p class="text-xs font-bold text-red-300">Арбуз (48ч)</p><p class="text-[9px] text-red-400/80">Шанс на Красный Ключ!</p></div></div>
                     <button onclick="buySeed('watermelon', 300, '🍉 Арбуз')" class="bg-red-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md">300 💎</button>
@@ -970,11 +985,14 @@
                         if(plot.seed_type === 'mizuna') cropIcon = '🥬';
                         if(plot.seed_type === 'chestnut') cropIcon = '🌳';
                         if(plot.seed_type === 'rhododendron') cropIcon = '🌸';
+                        if(plot.seed_type === 'parsley') cropIcon = '🌿';
+                        if(plot.seed_type === 'cactus') cropIcon = '🌵';
+                        if(plot.seed_type === 'amanita') cropIcon = '🍄';
                         
                         let actionHtml = `<button onclick="farmAction('harvest', ${plot.slot_id})" class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">Собрать</button>`;
                         
                         // Если это декор, выводим заглушку вместо кнопки сбора
-                        if (plot.seed_type === 'chestnut' || plot.seed_type === 'rhododendron') {
+                        if (plot.seed_type === 'chestnut' || plot.seed_type === 'rhododendron' || plot.seed_type === 'cactus') {
                             actionHtml = `<div class="bg-purple-900/50 w-full py-1.5 rounded text-[10px] font-bold text-purple-300 border border-purple-700/50 mt-1">Пассивный бонус</div>`;
                         }
 
