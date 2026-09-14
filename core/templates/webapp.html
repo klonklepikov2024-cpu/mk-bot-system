@@ -427,9 +427,18 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
                 });
-                if (!response.ok) throw new Error("HTTP Error " + response.status);
-                return await response.json();
+                
+                // Бэкенд на Flask возвращает JSON даже при ошибках 400 и 403.
+                // Читаем тело ответа ДО проверки статуса.
+                const data = await response.json();
+                
+                // Возвращаем полученный JSON. Если бэкенд прислал {"error": "описание"}, 
+                // интерфейс дальше сам корректно выведет его в customAlert.
+                return data;
+
             } catch (e) {
+                // Сюда скрипт попадет только при РЕАЛЬНОМ сбое сети 
+                // (выключен интернет, упал сервер, ошибка CORS, или сервер вернул не JSON)
                 console.error("API Error:", e);
                 return {error: "⚠️ Ошибка связи со Скайнетом. Проверьте интернет!"};
             }
