@@ -10,21 +10,29 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.mongodb import MongoDBJobStore
 from database.mongo import client, db 
 
-# БЕРЕМ ТВОЙ АДРЕС НАПРЯМУЮ ИЗ КОНФИГА
 from config import APP_URL
 WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
 
 tz = ZoneInfo("Europe/Moscow")
 
-# Подключаем хранилище задач к нашей MongoDB
 jobstores = {
     'default': MongoDBJobStore(client=client, database='elite_bot_db', collection='apscheduler_jobs')
 }
 
-# Создаем планировщик с базой данных
 scheduler = BackgroundScheduler(jobstores=jobstores, timezone=tz)
 
-# ================= ФУНКЦИИ УДАЛЕНИЯ И РОЗЫГРЫШЕЙ =================
+# Копия настроек семян для планировщика
+CROPS = {
+    "radish": {"name": "🧅 Редис", "grow_time": 4*3600, "water_req": False},
+    "mizuna": {"name": "🥬 Мизуна", "grow_time": 6*3600, "water_req": False},
+    "tomato": {"name": "🍅 Помидоры", "grow_time": 12*3600, "water_req": False},
+    "sunflower": {"name": "🌻 Подсолнух", "grow_time": 24*3600, "water_req": True},
+    "watermelon": {"name": "🍉 Арбуз", "grow_time": 48*3600, "water_req": True},
+    "chestnut": {"name": "🌳 К. Каштан", "grow_time": 7*24*3600, "water_req": True},
+    "rhododendron": {"name": "🌸 Рододендрон", "grow_time": 3*24*3600, "water_req": True}
+}
+
+# ================= 1. БАЗОВЫЕ ФУНКЦИИ И РОЗЫГРЫШИ =================
 
 def schedule_message_deletion(chat_id, message_id, delay_seconds, bot_instance):
     run_date = datetime.datetime.now(tz) + datetime.timedelta(seconds=delay_seconds)
@@ -39,10 +47,8 @@ def schedule_message_deletion(chat_id, message_id, delay_seconds, bot_instance):
 
 def delete_task_executor(chat_id, message_id):
     from core.bot import bot
-    try:
-        bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
+    try: bot.delete_message(chat_id, message_id)
+    except: pass
 
 def check_giveaways_task():
     now = datetime.datetime.now()
@@ -58,99 +64,155 @@ def check_giveaways_task():
             
         winning_number = random.randint(1, last_ticket)
         tickets = db['tickets_history'].find({"giveaway_id": gw_id})
-        winner_uid = None
-        winner_name = None
+        winner_uid, winner_name = None, None
         
         for t in tickets:
             r_start, r_end = map(int, t['range'].split('-'))
             if r_start <= winning_number <= r_end:
-                winner_uid = t['uid']
-                winner_name = t['name']
+                winner_uid, winner_name = t['uid'], t['name']
                 break
                 
-        db['giveaways'].update_one(
-            {"_id": gw_id}, 
-            {"$set": {"status": "completed", "winner_uid": winner_uid, "winning_number": winning_number}}
-        )
-        
+        db['giveaways'].update_one({"_id": gw_id}, {"$set": {"status": "completed", "winner_uid": winner_uid, "winning_number": winning_number}})
         from core.bot import bot
         from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
         
-        msg = f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\nПриз: {gw['title']}\n🎟 Выиграл билет № **{winning_number}**!\nПобедитель: {winner_name} (`{winner_uid}`)"
         try:
-            bot.send_message(STAFF_GROUP_ID, msg, message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
-            bot.send_message(winner_uid, f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{winning_number} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
-        except:
-            pass
-
-
-# ================= НОВЫЕ ФУНКЦИИ ЗАЗЫВАЛЫ (ПРОГРЕВ ЧАТОВ) =================
-
-def broadcast_teaser(text, button_text, tab_name):
-    from core.bot import bot
-    import time # <-- убедитесь, что time импортирован
-    
-    url_with_tab = f"{WEBAPP_URL}?tab={tab_name}"
-    
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(text=button_text, web_app=WebAppInfo(url=url_with_tab)))
-    
-    chats = db['chats'].find({}) 
-    for chat in chats:
-        try:
-            bot.send_message(chat_id=chat['_id'], text=text, reply_markup=keyboard, parse_mode='HTML')
-            time.sleep(0.05) # 🔥 АНТИ-БАН: пауза 50мс (получится безопасно ~20 сообщ/сек)
-        except Exception:
-            continue
-
-def tease_roulette():
-    fund = db['casino_bank'].find_one({"_id": "premium_fund"})
-    current_fund = fund.get('balance', 0) if fund else 0 # <-- ИСПРАВЛЕНО НА balance
-
-    if current_fund > 500: 
-        text = (
-            "🎰 <b>ДЖЕКПОТ НА ПОДХОДЕ!</b>\n\n"
-            f"Фонд рулетки уже превысил <b>{current_fund} ⭐️</b>!\n" # <-- ИСПРАВЛЕН ЗНАЧОК
-            "Следующие несколько прокрутов могут стать решающими... Кто заберет кэшбэк или Telegram Premium?\n\n"
-            "<i>Стоимость прокрута: всего 50 💎</i>"
-        )
-        broadcast_teaser(text, "🎰 Испытать удачу", "profile")
-
-def tease_ending_giveaways():
-    now = datetime.datetime.now()
-    
-    ending_giveaways = db['giveaways'].find({
-        "status": "active",
-        # 🔥 ИСПРАВЛЕНО: ищем только те, что сгорят в ближайший час
-        "end_date": {"$gt": now, "$lt": now + datetime.timedelta(hours=1)}
-    })
-
-    for gw in ending_giveaways:
-        time_left_mins = int((gw['end_date'] - now).total_seconds() / 60)
-        tickets_sold = gw.get('total_tickets', 0)
-        
-        text = (
-            f"🔥 <b>ГОРИТ РОЗЫГРЫШ: {gw['title']}!</b>\n\n"
-            f"⏳ Осталось всего <b>{time_left_mins} минут</b>!\n"
-            f"🎟 Куплено билетов: {tickets_sold}. Шансы на победу АНОМАЛЬНО ВЫСОКИЕ!\n\n"
-            "Залетай, пока время не вышло!"
-        )
-        broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
+            bot.send_message(STAFF_GROUP_ID, f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\nПриз: {gw['title']}\n🎟 Выиграл билет № **{winning_number}**!\nПобедитель: {winner_name} (`{winner_uid}`)", message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
+            bot.send_message(winner_uid, f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{winning_number} оказался победным! Приз: **{gw['title']}**.", parse_mode="Markdown")
+        except: pass
 
 def tick_blue_safe():
     """Каждую минуту добавляем 60 очков в Сейф Данных"""
     db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 60}})
 
+# ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС (ОГОРОД) =================
+
+def personal_farm_notifications():
+    """Проверяет грядки и пишет в ЛС, если созрело или засыхает"""
+    from core.bot import bot
+    now = int(time.time())
+    
+    growing_plots = db['farm_plots'].find({"status": "growing"})
+    
+    for plot in growing_plots:
+        seed = plot.get("seed_type")
+        if seed not in CROPS: continue
+        crop = CROPS[seed]
+        
+        uid = plot["uid"]
+        planted_at = plot.get("planted_at", now)
+        last_watered = plot.get("last_watered", now)
+        
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🚜 На ферму", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm")))
+
+        # 1. Проверка на смерть (засохло) - 24 часа без воды (86400 сек)
+        if crop["water_req"] and (now - last_watered > 86400):
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
+            try: bot.send_message(uid, f"🥀 <b>ПЛОХИЕ НОВОСТИ!</b>\nВаш {crop['name']} засох без воды.\n\nВам придется очистить грядку и посадить новое семя.", parse_mode="HTML", reply_markup=markup)
+            except: pass
+            continue
+            
+        # 2. Предупреждение о жажде (осталось < 4 часов до смерти)
+        if crop["water_req"] and (now - last_watered > 72000) and not plot.get("water_warning"):
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"water_warning": True}})
+            try: bot.send_message(uid, f"⚠️ <b>ТРЕВОГА НА УЧАСТКЕ!</b>\nВаш {crop['name']} скоро засохнет!\n\nУ вас осталось меньше 4 часов, чтобы зайти и полить его.", parse_mode="HTML", reply_markup=markup)
+            except: pass
+            continue
+            
+        # 3. Созревание урожая
+        if now >= planted_at + crop["grow_time"]:
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
+            try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел.\n\nСкорее заходите собрать урожай (и, возможно, найти ключи от сейфа)!", parse_mode="HTML", reply_markup=markup)
+            except: pass
+
+# ================= 3. РЕКЛАМНАЯ ВОРОНКА ПО ЧАТАМ =================
+
+def broadcast_teaser(text, button_text, tab_name):
+    """Безопасная рассылка по группам (Анти-флуд)"""
+    from core.bot import bot
+    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton(text=button_text, web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab={tab_name}")))
+    
+    chats = db['chats'].find({}) 
+    for chat in chats:
+        try:
+            bot.send_message(chat_id=chat['_id'], text=text, reply_markup=keyboard, parse_mode='HTML')
+            time.sleep(0.05) # Пауза от бана Telegram
+        except: pass
+
+def tease_ending_giveaways():
+    """Отдельный срочный хук для горящих розыгрышей"""
+    now = datetime.datetime.now()
+    ending_giveaways = db['giveaways'].find({
+        "status": "active",
+        "end_date": {"$gt": now, "$lt": now + datetime.timedelta(hours=1)} # Только те, что сгорят в ближайший час
+    })
+
+    for gw in ending_giveaways:
+        time_left_mins = int((gw['end_date'] - now).total_seconds() / 60)
+        text = f"🔥 <b>ГОРИТ РОЗЫГРЫШ: {gw['title']}!</b>\n\n⏳ Осталось всего <b>{time_left_mins} минут</b>!\n🎟 Куплено билетов: {gw.get('total_tickets', 0)}.\n\nЗалетай, пока время не вышло!"
+        broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
+
+def smart_funnel_teaser():
+    """Умная рекламная карусель (выбирает рандомный блок)"""
+    teasers = [
+        {
+            "text": "🎰 <b>УДАЧА ЛЮБИТ СМЕЛЫХ!</b>\n\nДавно не крутили Гача-Рулетку? А ведь там можно выбить <b>Осколки джекпота</b>, <b>Щиты иммунитета</b> или реальные <b>Рубли</b>!\n\n<i>Стоимость прокрута: всего 50 💎</i>",
+            "btn": "🎰 Крутить барабан",
+            "tab": "profile"
+        },
+        {
+            "text": "⚒ <b>НАКОВАЛЬНЯ ЖДЕТ!</b>\n\nЗнали ли вы, что из <b>50 Осколков</b> можно выковать Золотой Билет (VIP)? А за 3000 очков и 2 щита — получить статус <b>BEYOND</b>!\n\n<i>Проверьте свой инвентарь.</i>",
+            "btn": "🎒 Открыть Рюкзак",
+            "tab": "inventory"
+        },
+        {
+            "text": "💱 <b>ОБМЕННИК КЭШБЭКА</b>\n\nНакопили рубли, но не хватает до минималки на вывод? \nОбменяйте их на Очки Бдительности с выгодой до <b>30%</b> и играйте по-крупному!",
+            "btn": "💼 В Финансы",
+            "tab": "finance"
+        },
+        {
+            "text": "⚖️ <b>ТЕНЕВАЯ ЭКОНОМИКА</b>\n\nУ вас есть ненужные ордера на арест или купоны? Продайте их другим игрокам на Черном Рынке за реальный кэшбэк!\n\n<i>Комиссия Скайнета всего 10%.</i>",
+            "btn": "🛒 На Черный Рынок",
+            "tab": "market"
+        }
+    ]
+    
+    # Ситуативные тизеры
+    blue_safe = db['safes_state'].find_one({"_id": "safe_blue"})
+    if blue_safe and blue_safe.get("balance", 0) > 4000:
+        teasers.append({
+            "text": f"🚨 <b>СЕЙФ ДАННЫХ ПУХНЕТ!</b> 🚨\n\nТам скопилось уже <b>{blue_safe['balance']} 💎</b>!\nДобудьте Синий Ключ на ферме и подберите пин-код из 3 цифр, чтобы забрать всё!",
+            "btn": "🗄 Взломать Сейф",
+            "tab": "farm"
+        })
+        
+    fund = db['casino_bank'].find_one({"_id": "premium_fund"})
+    if fund and fund.get('balance', 0) > 800: 
+        teasers.append({
+            "text": f"🏆 <b>ФОНД TELEGRAM PREMIUM РАСТЕТ!</b>\n\nСобрано уже <b>{fund['balance']} ⭐️</b>!\nКто заберет главный куш в рулетке? Сделай прокрут первым!",
+            "btn": "🎰 Испытать удачу",
+            "tab": "profile"
+        })
+        
+    selected = random.choice(teasers)
+    broadcast_teaser(selected["text"], selected["btn"], selected["tab"])
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
     if not scheduler.running:
+        # 1. Ежеминутные технические задачи
         scheduler.add_job(check_giveaways_task, 'interval', minutes=1, id='gw_checker', replace_existing=True)
-        scheduler.add_job(tease_roulette, 'interval', hours=4, id='tease_roulette', replace_existing=True)
-        scheduler.add_job(tease_ending_giveaways, 'interval', hours=1, id='tease_gws', replace_existing=True)
-        
-        # 🔥 НОВАЯ СТРОЧКА: Запуск таймера сейфа 🔥
         scheduler.add_job(tick_blue_safe, 'interval', minutes=1, id='tick_blue', replace_existing=True)
         
+        # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
+        scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
+        
+        # 3. Срочные оповещения в чаты (Проверяем розыгрыши каждый час)
+        scheduler.add_job(tease_ending_giveaways, 'interval', hours=1, id='tease_gws', replace_existing=True)
+        
+        # 4. 🔥 Умная воронка-карусель в чаты (Раз в 6 часов кидает рандомную рекламу)
+        scheduler.add_job(smart_funnel_teaser, 'interval', hours=6, id='smart_funnel', replace_existing=True)
+        
         scheduler.start()
-        print("⏰ APScheduler запущен (Память: MongoDB, Пояс: МСК)!")
+        print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши)!")
