@@ -269,6 +269,9 @@
                 <div class="flex justify-between items-center bg-purple-900/20 p-2 rounded-lg border border-purple-800/50">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🌳</span><div><p class="text-xs font-bold text-purple-300">К. Каштан (Пассив)</p><p class="text-[9px] text-purple-400/80">+1 попытка взлома в день</p></div></div>
                     <button onclick="buySeed('chestnut', 1000, '🌳 К. Каштан')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1000 <span class="text-[10px]">💎</span></button>
+<div class="flex justify-between items-center bg-pink-900/20 p-2 rounded-lg border border-pink-800/50">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🌸</span><div><p class="text-xs font-bold text-pink-300">Рододендрон (Пассив)</p><p class="text-[9px] text-pink-400/80">-5% комиссии на Рынке</p></div></div>
+                    <button onclick="buySeed('rhododendron', 1500, '🌸 Рододендрон')" class="bg-pink-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1500 <span class="text-[10px]">💎</span></button>
                 </div>
             </div>
         </div>
@@ -849,14 +852,24 @@
         }
 
         // ================= ВЗЛОМ СЕЙФОВ =================
+        let blueSafeInterval; // Глобальная переменная для таймера
+
         function loadSafes() {
             apiCall('/api/get_safes').then(data => {
                 if(data.error) return;
                 
-                document.getElementById('blueSafeBal').innerText = data.blue_bal + ' 💎';
+                let blueBal = data.blue_bal;
+                document.getElementById('blueSafeBal').innerText = blueBal + ' 💎';
                 document.getElementById('redSafeBal').innerText = data.red_bal + ' ₽';
                 document.getElementById('blueKeyBtn').innerText = `Взломать (🔑 ${data.keys.blue})`;
                 document.getElementById('redKeyBtn').innerText = `Взломать (🔑 ${data.keys.red})`;
+                
+                // 🔥 СБРАСЫВАЕМ И ЗАПУСКАЕМ ТИКАЮЩИЙ ТАЙМЕР 🔥
+                if(blueSafeInterval) clearInterval(blueSafeInterval);
+                blueSafeInterval = setInterval(() => {
+                    blueBal++;
+                    document.getElementById('blueSafeBal').innerText = blueBal + ' 💎';
+                }, 1000);
                 
                 let b_logs = data.blue_logs.map(l => `<div><span class="text-white">${l.name}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
                 document.getElementById('blueSafeLogs').innerHTML = b_logs || '<div class="text-center mt-3 opacity-50">Ожидание...</div>';
@@ -921,13 +934,14 @@
                         let mins = Math.floor((left % 3600) / 60);
                         let timeStr = left > 0 ? `${hrs}ч ${mins}м` : "Созревает...";
                         
-                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[9px] text-blue-400 font-bold bg-blue-900/30 px-1 py-0.5 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
-                        let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[9px] text-purple-400 font-bold bg-purple-900/30 px-1 py-0.5 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 Удобрить (50💎)</button>`;
+                        // Кнопки полива и удобрения (сделали компактнее)
+                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[9px] text-blue-400 font-bold bg-blue-900/30 px-1.5 py-0.5 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
+                        let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[9px] text-purple-400 font-bold bg-purple-900/30 px-1.5 py-0.5 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>`;
 
                         html += `
                         <div class="surface border border-green-700/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_10px_rgba(34,197,94,0.1)] relative">
                             <div class="flex justify-between items-center w-full px-1 mb-1">
-                                <span class="text-xs font-bold truncate pr-1">${plot.name.split(' ')[1] || plot.name}</span>
+                                <span class="text-xs font-bold">${plot.name.split(' ')[1] || plot.name}</span>
                                 <div class="flex gap-1 whitespace-nowrap">${fertBtn} ${waterBtn}</div>
                             </div>
                             <div class="text-3xl animate-pulse">🌿</div>

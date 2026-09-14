@@ -259,8 +259,11 @@ def successful_payment(message):
     })
     # 👆 ======================================================== 👆
 
-    # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА (Отчисляем 20% от любого платежа в Фонд)
+    # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА И КРАСНОГО СЕЙФА
     db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": amount * 0.20}}, upsert=True)
+    
+    # Красный Сейф забирает 10% от всех покупок, штрафов и донатов
+    db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": int(amount * 0.10)}}, upsert=True)
 
     # 👇👇👇 ВСТАВЛЯЕМ НАШ НОВЫЙ БЛОК ДЛЯ WEB APP СЮДА 👇👇👇
     if payload.startswith("webapp_points_"):
@@ -512,9 +515,14 @@ def successful_payment(message):
         promo_id = lot['promo_id']
         seller_uid = lot['seller_uid']
         seller_profit = int(lot['price_rub'] * 0.9) # Продавец получает 90%
+        safe_commission = lot['price_rub'] - seller_profit # Налог 10%
         
         # Выдаем промокод покупателю
         db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
+        
+        # Начисляем продавцу рубли и пополняем Красный Сейф
+        paid_collection.update_one({"uid": seller_uid}, {"$inc": {"cashback_balance": seller_profit}})
+        db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}})
         
         # Начисляем продавцу рубли
         paid_collection.update_one({"uid": seller_uid}, {"$inc": {"cashback_balance": seller_profit}})

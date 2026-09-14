@@ -135,6 +135,10 @@ def tease_ending_giveaways():
         )
         broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
 
+def tick_blue_safe():
+    """Каждую минуту добавляем 60 очков в Сейф Данных"""
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 60}})
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
@@ -142,6 +146,9 @@ def start_scheduler():
         scheduler.add_job(check_giveaways_task, 'interval', minutes=1, id='gw_checker', replace_existing=True)
         scheduler.add_job(tease_roulette, 'interval', hours=4, id='tease_roulette', replace_existing=True)
         scheduler.add_job(tease_ending_giveaways, 'interval', hours=1, id='tease_gws', replace_existing=True)
+        
+        # 🔥 НОВАЯ СТРОЧКА: Запуск таймера сейфа 🔥
+        scheduler.add_job(tick_blue_safe, 'interval', minutes=1, id='tick_blue', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Память: MongoDB, Пояс: МСК)!")

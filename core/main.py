@@ -272,13 +272,22 @@ def api_buy_market():
         if user_db.get("bounty_points", 0) < price_pts:
             return jsonify({"error": "Недостаточно очков!"}), 400
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price_pts}})
+        
+        # 🔥 ДОБАВЬ ЭТИ ДВЕ СТРОЧКИ 🔥
+        pts_commission = price_pts - int(price_pts * 0.9)
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": pts_commission}})
     else:
         return jsonify({"error": "Ошибка валюты!"}), 400
         
     db['market_orders'].update_one({"_id": ObjectId(lot_id)}, {"$set": {"status": "sold", "buyer_uid": uid}})
     
+    # Вычисляем 10% комиссии и начисляем остаток продавцу
     seller_profit = int(price_rub * 0.9)
+    safe_commission = price_rub - seller_profit 
     paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
+    
+    # Отправляем 10% в Красный Сейф
+    db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}})
     
     promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
@@ -372,6 +381,10 @@ def api_spin_roulette():
         lost_points = int(updated_user.get("bounty_points", 0) * 0.3)
         if lost_points < 10: lost_points = 10
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
+        
+        # 🔥 ДОБАВЬ ВОТ ЭТУ СТРОЧКУ 🔥
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
+        
         prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано 30% баланса (-{lost_points} очков)."
 
     elif val in [5, 17, 29]:
@@ -549,7 +562,11 @@ def api_open_chest():
     chance = random.randint(1, 100)
     if chance <= 45:
         stolen = int(remaining * random.uniform(0.10, 0.25))
-        if stolen > 0: paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+        if stolen > 0: 
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+            # 🔥 ДОБАВЬ ВОТ ЭТУ СТРОЧКУ 🔥
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": stolen}})
+            
         return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen} очков, пока убегал!"})
     elif chance <= 80:
         shards = random.randint(1, 4)
@@ -958,6 +975,16 @@ def api_farm_action():
     # === ПОЛИВ ===
     elif action == 'water':
         if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
+        
+        # 🔥 Защита от бесконечного полива (Кулдаун 4 часа)
+        last_watered = plot.get('last_watered', 0)
+        time_passed = now - last_watered
+        cooldown = 4 * 3600 # 4 часа в секундах
+        
+        if time_passed < cooldown:
+            left_mins = int((cooldown - time_passed) / 60)
+            return jsonify({"error": f"Грядка еще влажная! Возвращайтесь через {left_mins} мин."}), 400
+            
         db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"last_watered": now}})
         return jsonify({"success": True, "msg": "💧 Растение успешно полито. Таймер засухи сброшен!"})
         
