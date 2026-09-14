@@ -7,7 +7,7 @@ from flask import Flask, request
 import hashlib
 import hmac
 import json
-import html # <--- ДОБАВЬ ВОТ ЭТУ СТРОЧКУ
+import html
 from urllib.parse import unquote
 from flask import render_template, jsonify
 from database.mongo import paid_collection, db
@@ -23,9 +23,9 @@ import handlers.security
 import handlers.admin
 import handlers.casino
 import handlers.payments
-import handlers.polls       # <--- ДОБАВИТЬ ЭТУ СТРОКУ СЮДА
-import handlers.market  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
-import handlers.start_menu # <--- ГЛАВНОЕ МЕНЮ ВСЕГДА В САМОМ НИЗУ!
+import handlers.polls
+import handlers.market
+import handlers.start_menu
 
 app = Flask(__name__, template_folder='templates')
 
@@ -47,7 +47,6 @@ def setup():
         
         logger.info(f"🔄 Устанавливаем вебхук: {target_url}")
         
-        # Упрощённый вариант
         requests.get(
             f"https://api.telegram.org/bot{bot_token}/deleteWebhook?drop_pending_updates=True",
             timeout=8
@@ -73,7 +72,6 @@ def index():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # 🔥 Бронебойный прием без проверки заголовков
     update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
     bot.process_new_updates([update])
     return 'ok', 200
@@ -85,7 +83,7 @@ def ping():
 # ================= WEB APP API =================
 
 def validate_webapp_data(init_data, token):
-    """Секретная функция проверки подписи от Telegram (Защита от хакеров)"""
+    """Секретная функция проверки подписи от Telegram"""
     try:
         parsed_data = dict(qc.split("=") for qc in unquote(init_data).split("&"))
         if "hash" not in parsed_data: return False
@@ -99,7 +97,6 @@ def validate_webapp_data(init_data, token):
 
 @app.route('/webapp')
 def webapp_page():
-    # Flask будет искать файл webapp.html в папке templates/
     return render_template('webapp.html')
 
 @app.route('/api/profile', methods=['POST'])
@@ -110,12 +107,10 @@ def get_profile():
     if not validate_webapp_data(init_data, BOT_TOKEN):
         return jsonify({"error": "Взлом жопы отклонен"}), 403
 
-    # Вытаскиваем ID юзера
     parsed_data = dict(qc.split("=") for qc in unquote(init_data).split("&"))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
-    # Берем баланс Скайнета
     user_db = paid_collection.find_one({"uid": uid}) or {}
     return jsonify({
         "points": user_db.get("bounty_points", 0),
@@ -136,13 +131,11 @@ def buy_ticket():
     amount = int(data.get('amount', 1))
     giveaway_id = data.get('giveaway_id')
     
-    # Ищем розыгрыш (он должен быть active)
     gw = db['giveaways'].find_one({"_id": giveaway_id, "status": "active"})
     if not gw: return jsonify({"error": "Розыгрыш окончен или не найден"}), 400
     
     total_cost = amount * gw['ticket_price']
     
-    # 1. Списываем очки (АТОМАРНО)
     updated_user = paid_collection.find_one_and_update(
         {"uid": uid, "bounty_points": {"$gte": total_cost}},
         {"$inc": {"bounty_points": -total_cost}}
@@ -150,7 +143,6 @@ def buy_ticket():
     if not updated_user:
         return jsonify({"error": "Недостаточно очков!"}), 400
         
-    # 2. Атомарно бронируем номера билетов в розыгрыше!
     updated_gw = db['giveaways'].find_one_and_update(
         {"_id": giveaway_id},
         {"$inc": {"last_ticket_num": amount, "total_tickets": amount}}
@@ -159,14 +151,13 @@ def buy_ticket():
     start_num = updated_gw.get('last_ticket_num', 0) + 1
     end_num = start_num + amount - 1
     
-    # 3. Сохраняем выданные билеты в прозрачную таблицу
     import time
     db['tickets_history'].insert_one({
         "giveaway_id": giveaway_id,
         "uid": uid,
         "name": username,
         "amount": amount,
-        "range": f"{start_num}-{end_num}", # Диапазон номеров!
+        "range": f"{start_num}-{end_num}",
         "timestamp": time.time()
     })
     
@@ -181,9 +172,7 @@ def api_get_giveaways():
     import datetime
     now = datetime.datetime.now()
     
-    # Берем активные (сортировка по дате окончания, старые сверху)
     active_gws = list(db['giveaways'].find({"status": "active"}).sort("end_date", 1))
-    # Берем завершенные (новые сверху, лимит 5 штук, чтобы не засорять экран)
     completed_gws = list(db['giveaways'].find({"status": "completed"}).sort("end_date", -1).limit(5))
     
     gws = active_gws + completed_gws
@@ -201,7 +190,6 @@ def api_get_giveaways():
         else:
             time_left_str = "Завершен"
             
-        # Ищем имя победителя, если он есть
         winner_name = "Нет участников"
         if gw.get('winner_uid'):
             win_tx = db['tickets_history'].find_one({"giveaway_id": gw["_id"], "uid": gw["winner_uid"]})
@@ -231,12 +219,10 @@ def api_get_market():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
         return jsonify({"error": "Auth failed"}), 403
 
-    # Достаем активные лоты (от новых к старым)
     lots = list(db['market_orders'].find({"status": "active"}).sort("created_at", -1))
     
     result = []
     for lot in lots:
-        # Определяем красивое название типа скидки
         t_name = "Штраф" if lot.get('target') == 'fine' else "Рекламу" if lot.get('target') == 'ads' else "VIP" if lot.get('target') == 'vip' else "Любую услугу"
         val = f"{lot.get('value')}%" if lot.get('type') == 'percent' else f"{lot.get('value')}₽"
         
@@ -246,7 +232,7 @@ def api_get_market():
             "seller_uid": lot.get('seller_uid'),
             "title": f"Скидка {val} на {t_name}",
             "price_rub": lot['price_rub'],
-            "price_pts": int(lot['price_rub'] * 2.5) # Авто-конвертация рублей в очки
+            "price_pts": int(lot['price_rub'] * 2.5)
         })
         
     return jsonify(result)
@@ -262,13 +248,12 @@ def api_buy_market():
     uid = user_info['id']
     
     lot_id = data.get('lot_id')
-    currency = data.get('currency') # "rub" или "pts"
+    currency = data.get('currency')
     
     from bson.objectid import ObjectId
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
     
-    # Ищем лот (АТОМАРНАЯ блокировка от двойной покупки)
     lot = db['market_orders'].find_one({"_id": ObjectId(lot_id), "status": "active"})
     if not lot:
         return jsonify({"error": "Упс! Лот уже продан или снят с продажи!"}), 400
@@ -279,7 +264,6 @@ def api_buy_market():
     price_rub = lot['price_rub']
     price_pts = int(price_rub * 2.5)
     
-    # Списываем средства
     if currency == "rub":
         if user_db.get("cashback_balance", 0) < price_rub:
             return jsonify({"error": "Недостаточно рублей (кэшбэка)!"}), 400
@@ -291,18 +275,14 @@ def api_buy_market():
     else:
         return jsonify({"error": "Ошибка валюты!"}), 400
         
-    # Бронируем лот
     db['market_orders'].update_one({"_id": ObjectId(lot_id)}, {"$set": {"status": "sold", "buyer_uid": uid}})
     
-    # Начисляем продавцу рубли за вычетом 10% комиссии
     seller_profit = int(price_rub * 0.9)
     paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
     
-    # Выдаем промокод покупателю
     promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
     
-    # Уведомляем продавца в ЛС телеграма (через бота)
     try:
         from core.bot import bot
         bot.send_message(lot['seller_uid'], f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (с учетом 10% комиссии).", parse_mode="Markdown")
@@ -320,7 +300,6 @@ def api_spin_roulette():
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
 
-    # Безопасное получение юзернейма
     username = user_info.get('username')
     username_str = f"@{username}" if username else f"ID {uid}"
     first_name = user_info.get('first_name', 'Аноним')
@@ -356,7 +335,6 @@ def api_spin_roulette():
             from core.bot import bot
             from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-            # 🔥 ЖЕСТКО ВШИВАЕМ ПРАВИЛЬНЫЙ АДРЕС ЦУПА 🔥
             markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
             bot.send_message(
                 STAFF_GROUP_ID, 
@@ -460,7 +438,6 @@ def api_get_inventory():
     shields = user_data.get("immunity", 0)
     shards = user_data.get("jackpot_shards", 0)
     
-    # Ищем артефакты и промокоды
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
     orders_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "mute")
     
@@ -487,7 +464,6 @@ def api_craft():
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
-    # Безопасное получение юзернейма
     username = user_info.get('username')
     username_str = f"@{username}" if username else f"ID {uid}"
     first_name = user_info.get('first_name', 'Аноним')
@@ -522,7 +498,6 @@ def api_craft():
                 from core.bot import bot
                 from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
                 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-                # 🔥 ЖЕСТКО ВШИВАЕМ ПРАВИЛЬНЫЙ АДРЕС ЦУПА 🔥
                 markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
                 bot.send_message(
                     STAFF_GROUP_ID, 
@@ -636,7 +611,6 @@ def api_payout():
     user_db = paid_collection.find_one({"uid": uid}) or {}
     if user_db.get("cashback_balance", 0) < amount: return jsonify({"error": "Недостаточно средств!"}), 400
     
-    # Списываем баланс
     paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -amount}})
     
     import time
@@ -678,14 +652,13 @@ def api_get_stars_invoice():
     points_reward = int(data.get('points_reward', 100))
     
     try:
-        # Генерируем ссылку на оплату звездами (provider_token пустой для Stars)
         from core.bot import bot
         from telebot.types import LabeledPrice
         
         invoice_link = bot.create_invoice_link(
             title="Покупка Очков Бдительности",
             description=f"Пакет: {points_reward} Очков",
-            payload=f"webapp_points_{uid}_{points_reward}", # Уникальный пейлоад для обработчика
+            payload=f"webapp_points_{uid}_{points_reward}",
             provider_token="", 
             currency="XTR",
             prices=[LabeledPrice(label="Очки", amount=stars_amount)]
@@ -703,7 +676,6 @@ def api_get_giveaway_participants():
     gw_id = data.get('giveaway_id')
     offset = int(data.get('offset', 0))
     
-    # Берем транзакции порциями по 15 штук
     tickets_history = list(db['tickets_history'].find({"giveaway_id": gw_id}).sort("timestamp", -1).skip(offset).limit(15))
     
     import datetime
@@ -719,7 +691,6 @@ def api_get_giveaway_participants():
                 "date": dt
             })
             
-    # Если мы достали 15 транзакций, значит, скорее всего, есть еще
     next_offset = offset + 15 if len(tickets_history) == 15 else None
     
     return jsonify({"participants": result, "next_offset": next_offset})
@@ -732,7 +703,6 @@ def api_get_my_promos():
         
     uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     
-    # Ищем только неиспользованные купоны, которые не являются аирдропами
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0, "type": {"$ne": "airdrop"}}))
     
     result = []
@@ -760,12 +730,10 @@ def api_add_market_lot():
     promo_id = data.get('promo_id')
     price = int(data.get('price', 0))
     
-    # Защита от подмены: проверяем, что промокод реально принадлежит юзеру
     promo = db['promocodes'].find_one({"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0})
     if not promo: 
         return jsonify({"error": "Артефакт не найден или уже продан!"}), 400
     
-    # Вычисляем максимальную цену (120% от базы)
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
     target_type = promo.get("target", "all")
     base_price = 500
@@ -778,7 +746,6 @@ def api_add_market_lot():
     if price < 10 or price > max_price:
         return jsonify({"error": f"Цена должна быть от 10₽ до {max_price}₽!"}), 400
         
-    # Атомарно забираем промокод и создаем лот на рынке
     import time
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": "MARKET"}})
     db['market_orders'].insert_one({
@@ -807,7 +774,6 @@ def api_inventory_action():
     
     action = data.get('action')
     
-    # 1. СНЯТЬ С ПРОДАЖИ (Рынок)
     if action == 'cancel_lot':
         lot_id = data.get('lot_id')
         from bson.objectid import ObjectId
@@ -816,11 +782,9 @@ def api_inventory_action():
             {"$set": {"status": "cancelled"}}
         )
         if not lot: return jsonify({"error": "Лот не найден или уже продан!"}), 400
-        # Возвращаем купон владельцу
         db['promocodes'].update_one({"_id": lot['promo_id']}, {"$set": {"owner_uid": uid}})
         return jsonify({"success": True, "msg": "✅ Лот снят с продажи. Артефакт возвращен в рюкзак."})
         
-    # 2. ПЕРЕПЛАВКА ПРОМОКОДА (Ломбард)
     elif action == 'pawn_promo':
         promo_id = data.get('promo_id')
         promo = db['promocodes'].find_one_and_delete({"_id": promo_id, "owner_uid": uid, "is_active": True})
@@ -830,7 +794,6 @@ def api_inventory_action():
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}})
         return jsonify({"success": True, "msg": f"♻️ Артефакт уничтожен!\nВы получили: +{shards_reward} Осколков рулетки 🧩."})
         
-    # 3. АНГЕЛ ХРАНИТЕЛЬ (Использование Щита)
     elif action == 'angel':
         target_uid = data.get('target_id')
         if not target_uid.isdigit(): return jsonify({"error": "ID должен быть числом!"}), 400
@@ -846,7 +809,6 @@ def api_inventory_action():
         db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": time.time()})
         return jsonify({"success": True, "msg": f"👼 Чудо свершилось!\nВы пожертвовали щит. Юзер {target_uid} спасен!"})
         
-    # 4. ОРДЕР НА АРЕСТ
     elif action == 'arrest':
         target_info = data.get('target_info')
         if not target_info or len(target_info) < 3: return jsonify({"error": "Укажите цель и причину!"}), 400
@@ -875,6 +837,278 @@ def api_inventory_action():
         except Exception as e: logger.error(f"Ошибка ордера: {e}")
         return jsonify({"success": True, "msg": "🚓 Заявка на арест передана Спецназу Скайнета!"})
 
+# ================= 🚜 КИБЕР-ФЕРМА: БЭКЕНД =================
+
+CROPS = {
+    "radish": {"name": "🧅 Редис", "cost_pts": 15, "grow_time": 4*3600, "water_req": False, "reward_pts": [20, 30], "shards_chance": 0},
+    "mizuna": {"name": "🥬 Мизуна", "cost_pts": 35, "grow_time": 6*3600, "water_req": False, "reward_pts": [45, 60], "shards_chance": 10},
+    "tomato": {"name": "🍅 Помидоры", "cost_pts": 80, "grow_time": 12*3600, "water_req": False, "reward_pts": [100, 150], "key": None},
+    "sunflower": {"name": "🌻 Подсолнух", "cost_pts": 150, "grow_time": 24*3600, "water_req": True, "reward_pts": [180, 220], "key": "blue", "key_chance": 25},
+    "watermelon": {"name": "🍉 Арбуз", "cost_pts": 300, "grow_time": 48*3600, "water_req": True, "reward_pts": [400, 500], "key": "red", "key_chance": 20},
+    "chestnut": {"name": "🌳 К. Каштан", "cost_pts": 1000, "grow_time": 7*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
+    "rhododendron": {"name": "🌸 Рододендрон", "cost_pts": 1500, "grow_time": 3*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True}
+}
+
+@app.route('/api/get_farm', methods=['POST'])
+def api_get_farm():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    
+    plots = list(db['farm_plots'].find({"uid": uid}).sort("slot_id", 1))
+    
+    if len(plots) == 0:
+        for i in range(1, 5):
+            db['farm_plots'].insert_one({"uid": uid, "slot_id": i, "status": "empty"})
+        plots = list(db['farm_plots'].find({"uid": uid}).sort("slot_id", 1))
+        
+    import time
+    now = int(time.time())
+    result = []
+    
+    for plot in plots:
+        status = plot.get("status")
+        seed_type = plot.get("seed_type")
+        
+        if status == "growing" and seed_type in CROPS:
+            crop = CROPS[seed_type]
+            planted_at = plot.get("planted_at", now)
+            last_watered = plot.get("last_watered", now)
+            
+            if crop["water_req"] and (now - last_watered > 86400):
+                db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
+                status = "withered"
+            elif now >= planted_at + crop["grow_time"]:
+                db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
+                status = "ready"
+                
+        result.append({
+            "slot_id": plot["slot_id"],
+            "status": status,
+            "seed_type": seed_type,
+            "name": CROPS[seed_type]["name"] if seed_type in CROPS else "",
+            "planted_at": plot.get("planted_at"),
+            "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
+            "water_req": CROPS[seed_type]["water_req"] if seed_type in CROPS else False,
+            "last_watered": plot.get("last_watered")
+        })
+        
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    keys = {
+        "blue": user_db.get("key_blue", 0),
+        "red": user_db.get("key_red", 0)
+    }
+        
+    return jsonify({"plots": result, "keys": keys})
+
+@app.route('/api/farm_action', methods=['POST'])
+def api_farm_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    action = data.get('action') 
+    slot_id = int(data.get('slot_id', 0))
+    
+    import time
+    now = int(time.time())
+    
+    # === ПОКУПКА СЛОТА (ТРАКТОР) ===
+    if action == 'buy_slot':
+        cost = 1000 
+        current_slots = db['farm_plots'].count_documents({"uid": uid})
+        if current_slots >= 8: 
+            return jsonify({"error": "У вас уже максимальное число грядок (8)!"}), 400
+        
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": cost}},
+            {"$inc": {"bounty_points": -cost}}
+        )
+        if not user_db: 
+            return jsonify({"error": "Недостаточно очков для аренды трактора (нужно 1000 💎)!"}), 400
+        
+        db['farm_plots'].insert_one({"uid": uid, "slot_id": current_slots + 1, "status": "empty"})
+        return jsonify({"success": True, "msg": f"🚜 Трактор расчистил слот #{current_slots + 1}!"})
+
+    # Для остальных действий нам нужна конкретная грядка
+    plot = db['farm_plots'].find_one({"uid": uid, "slot_id": slot_id})
+    if not plot: return jsonify({"error": "Грядка не найдена!"}), 400
+    
+    # === ПОСАДКА ===
+    if action == 'plant':
+        seed_type = data.get('seed_type')
+        if seed_type not in CROPS: return jsonify({"error": "Таких семян нет!"}), 400
+        if plot['status'] != 'empty': return jsonify({"error": "Этот слот уже занят!"}), 400
+        
+        cost = CROPS[seed_type]['cost_pts']
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": cost}},
+            {"$inc": {"bounty_points": -cost}}
+        )
+        if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
+        
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {
+            "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now}
+        })
+        return jsonify({"success": True, "msg": f"🌱 Вы посадили {CROPS[seed_type]['name']}!"})
+        
+    # === ПОЛИВ ===
+    elif action == 'water':
+        if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"last_watered": now}})
+        return jsonify({"success": True, "msg": "💧 Растение успешно полито. Таймер засухи сброшен!"})
+        
+    # === ОЧИСТКА ЗАСОХШЕГО ===
+    elif action == 'clear':
+        if plot['status'] != 'withered': return jsonify({"error": "Грядка еще жива!"}), 400
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None}})
+        return jsonify({"success": True, "msg": "🥀 Засохший куст убран. Слот свободен."})
+        
+    # === СБОР УРОЖАЯ ===
+    elif action == 'harvest':
+        if plot['status'] != 'ready': return jsonify({"error": "Урожай еще не созрел!"}), 400
+        crop = CROPS.get(plot['seed_type'])
+        
+        if crop.get('is_decor'): return jsonify({"error": "Декор нельзя собрать, он дает пассивный бонус!"}), 400
+        
+        import random
+        reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
+        update_query = {"$inc": {"bounty_points": reward_pts}}
+        msg = f"🚜 Урожай собран!\nВы получили {reward_pts} 💎."
+        
+        if crop.get('shards_chance') and random.randint(1, 100) <= crop['shards_chance']:
+            update_query["$inc"]["jackpot_shards"] = 1
+            msg += "\n🧩 Найден Осколок рулетки!"
+            
+        key_type = crop.get('key')
+        if key_type and random.randint(1, 100) <= crop['key_chance']:
+            update_query["$inc"][f"key_{key_type}"] = 1
+            key_name = "Синий 🗄" if key_type == "blue" else "Красный 🏦"
+            msg += f"\n\n🔑 УРА! ВЫ НАШЛИ {key_name} КЛЮЧ ОТ СЕЙФА!"
+            
+        paid_collection.update_one({"uid": uid}, update_query)
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None}})
+        
+        return jsonify({"success": True, "msg": msg})
+
+    # === УДОБРЕНИЕ ===
+    elif action == 'fertilize':
+        cost = 50 
+        if plot['status'] != 'growing': 
+            return jsonify({"error": "Удобрение работает только на растущие культуры!"}), 400
+        
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": cost}},
+            {"$inc": {"bounty_points": -cost}}
+        )
+        if not user_db: 
+            return jsonify({"error": "Недостаточно очков для покупки нано-удобрения (50 💎)!"}), 400
+        
+        crop = CROPS.get(plot['seed_type'])
+        time_boost = crop['grow_time'] // 2
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$inc": {"planted_at": -time_boost}})
+        
+        return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nВремя созревания сокращено в 2 раза."})
+
+# ================= 🗄 КИБЕР-СЕЙФЫ: БЭКЕНД =================
+
+@app.route('/api/get_safes', methods=['POST'])
+def api_get_safes():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    keys = {"blue": user_db.get("key_blue", 0), "red": user_db.get("key_red", 0)}
+    
+    import random
+    blue_safe = db['safes_state'].find_one({"_id": "safe_blue"})
+    if not blue_safe:
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(3)])
+        blue_safe = {"_id": "safe_blue", "pin_code": new_pin, "balance": 15000, "logs": []}
+        db['safes_state'].insert_one(blue_safe)
+        
+    red_safe = db['safes_state'].find_one({"_id": "safe_red"})
+    if not red_safe:
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(4)])
+        red_safe = {"_id": "safe_red", "pin_code": new_pin, "balance": 500, "logs": []}
+        db['safes_state'].insert_one(red_safe)
+
+    return jsonify({
+        "keys": keys,
+        "blue_bal": blue_safe.get("balance", 0),
+        "blue_logs": blue_safe.get("logs", []),
+        "red_bal": red_safe.get("balance", 0),
+        "red_logs": red_safe.get("logs", [])
+    })
+
+@app.route('/api/crack_safe', methods=['POST'])
+def api_crack_safe():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    user_info = json.loads(dict(qc.split("=") for qc in unquote(data.get('initData')).split("&"))['user'])
+    uid = user_info['id']
+    username = user_info.get('username')
+    user_name_str = f"@{username}" if username else user_info.get('first_name', 'Аноним')
+    
+    safe_color = data.get('color') 
+    guess_pin = data.get('pin')
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    key_field = f"key_{safe_color}"
+    if user_db.get(key_field, 0) < 1:
+        key_name = "Синий" if safe_color == 'blue' else "Красный"
+        return jsonify({"error": f"Вам нужен {key_name} ключ! Вырастите его на грядке."}), 400
+        
+    paid_collection.update_one({"uid": uid}, {"$inc": {key_field: -1}})
+    
+    safe_id = f"safe_{safe_color}"
+    safe = db['safes_state'].find_one({"_id": safe_id})
+    real_pin = safe['pin_code']
+    prize = safe['balance']
+    
+    if guess_pin == real_pin:
+        if safe_color == 'blue':
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": prize}})
+            currency = "💎"
+        else:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": prize}})
+            currency = "₽"
+            
+        import random
+        pin_len = 3 if safe_color == 'blue' else 4
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
+        start_balance = 10000 if safe_color == 'blue' else 500
+        
+        db['safes_state'].update_one({"_id": safe_id}, {
+            "$set": {"pin_code": new_pin, "balance": start_balance, "logs": []}
+        })
+        
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            safe_name = "СЕЙФА ДАННЫХ (Очки)" if safe_color == 'blue' else "ФИНАНСОВОГО СЕЙФА (Рубли)"
+            bot.send_message(STAFF_GROUP_ID, f"🚨 <b>СИСТЕМА ВЗЛОМАНА!</b>\n\nХакер {user_name_str} подобрал пароль от {safe_name} и унес куш в размере <b>{prize} {currency}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
+        except: pass
+        
+        return jsonify({"success": True, "msg": f"ПОЛНЫЙ ДОСТУП!\nВы сорвали куш: {prize} {currency}!", "cracked": True})
+        
+    else:
+        exact_matches = sum(1 for a, b in zip(guess_pin, real_pin) if a == b)
+        result_text = f"Точных совпадений: {exact_matches}"
+        
+        new_log = {"name": user_name_str, "guess": guess_pin, "result": result_text}
+        db['safes_state'].update_one(
+            {"_id": safe_id}, 
+            {"$push": {"logs": {"$each": [new_log], "$slice": -6}}} 
+        )
+        
+        return jsonify({"success": True, "msg": f"Доступ запрещен!\n{result_text}\nКлюч сожжен.", "cracked": False})
+
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db
@@ -884,11 +1118,8 @@ def heartbeat_sec():
         except: pass
         time.sleep(60)
 
-# Правильный запуск потока ПОСЛЕ функции
 threading.Thread(target=heartbeat_sec, daemon=True).start()
 
-# 🔥 ИСПРАВЛЕНИЕ: Запускаем setup в фоне ДО старта сервера, 
-# чтобы она сработала на любом хостинге (Gunicorn/WSGI)
 if not is_setup_done:
     threading.Thread(target=setup, daemon=True).start()
     is_setup_done = True

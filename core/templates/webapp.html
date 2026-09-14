@@ -183,6 +183,96 @@
         </div>
     </div>
 
+<!-- ================= ВКЛАДКА 6: УЧАСТОК (ФЕРМА + СЕЙФЫ) ================= -->
+    <div id="tab-farm" class="tab-content">
+        <h2 class="font-bold text-2xl mb-4">Кибер-Участок</h2>
+        
+        <!-- БЛОК 1: ДВА СЕЙФА -->
+        <div class="grid grid-cols-2 gap-2 mb-6">
+            <!-- СЕЙФ ДАННЫХ -->
+            <div class="surface rounded-2xl p-3 border border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.15)] text-center relative overflow-hidden flex flex-col">
+                <div class="absolute top-0 right-0 bg-blue-600 text-white text-[8px] font-black px-2 py-1 rounded-bl-lg tracking-widest">ОЧКИ</div>
+                <div class="text-4xl mb-1 mt-2">🗄️</div>
+                <p class="text-[9px] text-blue-400 uppercase tracking-widest mb-1">Сейф Данных</p>
+                <div id="blueSafeBal" class="font-black text-blue-400 text-lg mb-2">0 💎</div>
+                <input type="number" id="blueSafeInput" placeholder="* * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-blue-500/30 text-lg mb-2 focus:border-blue-500" maxlength="3">
+                <button id="blueKeyBtn" onclick="crackSafe('blue', 3)" class="w-full bg-blue-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">
+                    Взломать (🔑 Синий)
+                </button>
+                <div id="blueSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-blue-900/30 shadow-inner">
+                    <!-- Сюда упадут логи -->
+                </div>
+            </div>
+
+            <!-- ФИНАНСОВЫЙ СЕЙФ -->
+            <div class="surface rounded-2xl p-3 border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.15)] text-center relative overflow-hidden flex flex-col">
+                <div class="absolute top-0 right-0 bg-red-600 text-white text-[8px] font-black px-2 py-1 rounded-bl-lg tracking-widest">РУБЛИ</div>
+                <div class="text-4xl mb-1 mt-2">🏦</div>
+                <p class="text-[9px] text-red-400 uppercase tracking-widest mb-1">Фин. Сейф</p>
+                <div id="redSafeBal" class="font-black text-green-400 text-lg mb-2">0 ₽</div>
+                <input type="number" id="redSafeInput" placeholder="* * * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-red-500/30 text-lg mb-2 focus:border-red-500" maxlength="4">
+                <button id="redKeyBtn" onclick="crackSafe('red', 4)" class="w-full bg-red-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">
+                    Взломать (🔑 Красн.)
+                </button>
+                <div id="redSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-red-900/30 shadow-inner">
+                    <!-- Сюда упадут логи -->
+                </div>
+            </div>
+        </div>
+
+        <!-- БЛОК 2: ГРЯДКИ И ТРАКТОР -->
+        <div class="flex justify-between items-center mb-3">
+            <div>
+                <h3 class="font-bold text-lg leading-tight">Ваши грядки</h3>
+                <span id="farmSlotsCount" class="text-[10px] text-gray-400">Слотов: 4/8</span>
+            </div>
+            <button onclick="farmAction('buy_slot', 0)" class="bg-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold active:scale-95 shadow-md border border-gray-600 flex items-center gap-1 text-white">
+                🚜 +Слот <span class="text-[9px] text-gray-400">(1000💎)</span>
+            </button>
+        </div>
+        
+        <!-- СЮДА СКРИПТ БУДЕТ ВСТАВЛЯТЬ ГРЯДКИ -->
+        <div id="farmSlotsContainer" class="grid grid-cols-2 gap-3 mb-6">
+            <p class="text-gray-500 text-sm col-span-2 text-center py-4">⏳ Загрузка участка...</p>
+        </div>
+        
+        <!-- БЛОК 3: МАГАЗИН СЕМЯН -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700/50">
+            <h3 class="font-bold text-sm mb-3 text-gray-300">🛒 Каталог семян</h3>
+            <div class="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                
+                <div class="flex justify-between items-center bg-black/30 p-2 rounded-lg border border-gray-700">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🧅</span><div><p class="text-xs font-bold text-white">Редис (4ч)</p><p class="text-[9px] text-gray-400">Быстрые очки</p></div></div>
+                    <button onclick="buySeed('radish', 15, '🧅 Редис')" class="bg-gray-700 px-3 py-1.5 rounded text-xs font-bold active:scale-95">15 💎</button>
+                </div>
+                
+                <div class="flex justify-between items-center bg-black/30 p-2 rounded-lg border border-gray-700">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🥬</span><div><p class="text-xs font-bold text-white">Мизуна (6ч)</p><p class="text-[9px] text-gray-400">Очки + Шанс на Осколок</p></div></div>
+                    <button onclick="buySeed('mizuna', 35, '🥬 Мизуна')" class="bg-gray-700 px-3 py-1.5 rounded text-xs font-bold active:scale-95">35 💎</button>
+                </div>
+
+                <div class="flex justify-between items-center bg-black/30 p-2 rounded-lg border border-gray-700">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🍅</span><div><p class="text-xs font-bold text-white">Помидоры (12ч)</p><p class="text-[9px] text-gray-400">Идеально на ночь</p></div></div>
+                    <button onclick="buySeed('tomato', 80, '🍅 Помидоры')" class="bg-gray-700 px-3 py-1.5 rounded text-xs font-bold active:scale-95">80 💎</button>
+                </div>
+
+                <div class="flex justify-between items-center bg-blue-900/20 p-2 rounded-lg border border-blue-800/50">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🌻</span><div><p class="text-xs font-bold text-blue-300">Подсолнух (24ч)</p><p class="text-[9px] text-blue-400/80">Шанс на Синий Ключ!</p></div></div>
+                    <button onclick="buySeed('sunflower', 150, '🌻 Подсолнух')" class="bg-blue-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md">150 💎</button>
+                </div>
+
+                <div class="flex justify-between items-center bg-red-900/20 p-2 rounded-lg border border-red-800/50">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🍉</span><div><p class="text-xs font-bold text-red-300">Арбуз (48ч)</p><p class="text-[9px] text-red-400/80">Шанс на Красный Ключ!</p></div></div>
+                    <button onclick="buySeed('watermelon', 300, '🍉 Арбуз')" class="bg-red-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md">300 💎</button>
+                </div>
+                
+                <div class="flex justify-between items-center bg-purple-900/20 p-2 rounded-lg border border-purple-800/50">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🌳</span><div><p class="text-xs font-bold text-purple-300">К. Каштан (Пассив)</p><p class="text-[9px] text-purple-400/80">+1 попытка взлома в день</p></div></div>
+                    <button onclick="buySeed('chestnut', 1000, '🌳 К. Каштан')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1000 <span class="text-[10px]">💎</span></button>
+                </div>
+            </div>
+        </div>
+
     <!-- 🔥 НАШИ ПУЛЕНЕПРОБИВАЕМЫЕ МОДАЛЬНЫЕ ОКНА 🔥 -->
     
     <!-- 1. УНИВЕРСАЛЬНЫЙ АЛЕРТ -->
@@ -260,21 +350,24 @@
     </div>
 
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
-    <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-4 z-50">
-        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 w-1/5">
-            <span class="text-2xl mb-1">👤</span><span class="text-[9px] font-bold">Профиль</span>
+    <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-2 z-50">
+        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 w-1/6">
+            <span class="text-2xl mb-1">👤</span><span class="text-[8px] font-bold">Профиль</span>
         </button>
-        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
-            <span class="text-2xl mb-1">🎁</span><span class="text-[9px] font-bold">Розыгрыши</span>
+        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+            <span class="text-2xl mb-1">🎁</span><span class="text-[8px] font-bold">Розыгрыши</span>
         </button>
-        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
-            <span class="text-2xl mb-1">⚖️</span><span class="text-[9px] font-bold">Рынок</span>
+        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+            <span class="text-2xl mb-1">⚖️</span><span class="text-[8px] font-bold">Рынок</span>
         </button>
-        <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
-            <span class="text-2xl mb-1">🎒</span><span class="text-[9px] font-bold">Рюкзак</span>
+        <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+            <span class="text-2xl mb-1">🎒</span><span class="text-[8px] font-bold">Рюкзак</span>
         </button>
-        <button onclick="switchTab('finance', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/5">
-            <span class="text-2xl mb-1">💼</span><span class="text-[9px] font-bold">Финансы</span>
+        <button onclick="switchTab('finance', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+            <span class="text-2xl mb-1">💼</span><span class="text-[8px] font-bold">Финансы</span>
+        </button>
+        <button onclick="switchTab('farm', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+            <span class="text-2xl mb-1">🚜</span><span class="text-[8px] font-bold">Участок</span>
         </button>
     </div>
 
@@ -351,6 +444,7 @@
             if(tabId === 'market') loadMarket(); 
             if(tabId === 'inventory') loadInventory(); 
             if(tabId === 'finance') { loadProfile(); loadCpa(); }
+            if(tabId === 'farm') { safeHaptic('impact', 'medium'); loadFarm(); loadSafes(); }
         }
 
         function loadProfile() {
@@ -538,7 +632,6 @@
                 
                 let html = '';
                 data.participants.forEach(p => {
-                    // Генерируем крутой дизайн строчки как на скрине
                     html += `
                     <div class="flex items-center justify-between bg-black/40 p-3 rounded-2xl border border-gray-800">
                         <div class="flex items-center space-x-3 overflow-hidden">
@@ -552,7 +645,6 @@
                 
                 listContainer.insertAdjacentHTML('beforeend', html);
                 
-                // Обработка кнопки "Загрузить еще"
                 if (data.next_offset !== null) {
                     modal.dataset.offset = data.next_offset;
                     loadMoreBtn.classList.remove('hidden');
@@ -754,7 +846,174 @@
             });
         }
 
-        loadProfile();
+        // ================= ВЗЛОМ СЕЙФОВ =================
+        function loadSafes() {
+            apiCall('/api/get_safes').then(data => {
+                if(data.error) return;
+                
+                document.getElementById('blueSafeBal').innerText = data.blue_bal + ' 💎';
+                document.getElementById('redSafeBal').innerText = data.red_bal + ' ₽';
+                document.getElementById('blueKeyBtn').innerText = `Взломать (🔑 ${data.keys.blue})`;
+                document.getElementById('redKeyBtn').innerText = `Взломать (🔑 ${data.keys.red})`;
+                
+                let b_logs = data.blue_logs.map(l => `<div><span class="text-white">${l.name}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
+                document.getElementById('blueSafeLogs').innerHTML = b_logs || '<div class="text-center mt-3 opacity-50">Ожидание...</div>';
+                
+                let r_logs = data.red_logs.map(l => `<div><span class="text-white">${l.name}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
+                document.getElementById('redSafeLogs').innerHTML = r_logs || '<div class="text-center mt-3 opacity-50">Ожидание...</div>';
+            });
+        }
+        
+        function crackSafe(color, len) {
+            let inputId = color === 'blue' ? 'blueSafeInput' : 'redSafeInput';
+            let pin = document.getElementById(inputId).value;
+            
+            if(pin.length !== len) { customAlert(`PIN-код должен состоять строго из ${len} цифр!`, "Внимание", "⚠️"); return; }
+            
+            safeHaptic('impact', 'medium');
+            apiCall('/api/crack_safe', {color: color, pin: pin}).then(data => {
+                if(data.error) { customAlert(data.error, "Ошибка", "❌"); } 
+                else {
+                    document.getElementById(inputId).value = ''; 
+                    if (data.cracked) {
+                        customAlert(data.msg, "СИСТЕМА ВЗЛОМАНА!", "🚨");
+                        safeHaptic('impact', 'heavy'); setTimeout(() => safeHaptic('impact', 'heavy'), 200);
+                    } else {
+                        customAlert(data.msg, "Осечка", "🔐");
+                    }
+                    loadSafes();
+                    loadProfile(); 
+                }
+            });
+        }
+
+       // ================= ФЕРМА =================
+        window.currentPlots = []; 
+        
+        function loadFarm() {
+            apiCall('/api/get_farm').then(data => {
+                if(data.error) return;
+                
+                window.currentPlots = data.plots;
+                const container = document.getElementById('farmSlotsContainer');
+                let html = '';
+                
+                let now = Math.floor(Date.now() / 1000);
+                
+                data.plots.forEach(plot => {
+                    if (plot.status === 'empty') {
+                        html += `
+                        <div class="bg-[#1a1b1f] border border-dashed border-gray-600 rounded-xl p-4 text-center flex flex-col justify-center items-center h-28 opacity-70">
+                            <div class="text-2xl mb-1">🪹</div>
+                            <div class="text-xs font-bold text-gray-500">Слот ${plot.slot_id}</div>
+                            <p class="text-[9px] text-gray-600 mt-1">Свободно</p>
+                        </div>`;
+                    } 
+                    else if (plot.status === 'growing') {
+                        let elapsed = now - plot.planted_at;
+                        let left = plot.grow_time - elapsed;
+                        if (left < 0) left = 0;
+                        let percent = Math.min(100, Math.floor((elapsed / plot.grow_time) * 100));
+                        
+                        let hrs = Math.floor(left / 3600);
+                        let mins = Math.floor((left % 3600) / 60);
+                        let timeStr = left > 0 ? `${hrs}ч ${mins}м` : "Созревает...";
+                        
+                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[9px] text-blue-400 font-bold bg-blue-900/30 px-1 py-0.5 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
+                        let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[9px] text-purple-400 font-bold bg-purple-900/30 px-1 py-0.5 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 Удобрить (50💎)</button>`;
+
+                        html += `
+                        <div class="surface border border-green-700/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_10px_rgba(34,197,94,0.1)] relative">
+                            <div class="flex justify-between items-center w-full px-1 mb-1">
+                                <span class="text-xs font-bold truncate pr-1">${plot.name.split(' ')[1] || plot.name}</span>
+                                <div class="flex gap-1 whitespace-nowrap">${fertBtn} ${waterBtn}</div>
+                            </div>
+                            <div class="text-3xl animate-pulse">🌿</div>
+                            <div class="w-full bg-black/50 rounded-full h-1.5 mt-2">
+                                <div class="bg-green-500 h-1.5 rounded-full transition-all duration-1000" style="width: ${percent}%"></div>
+                            </div>
+                            <p class="text-[9px] text-gray-400 mt-1">Осталось: ${timeStr}</p>
+                        </div>`;
+                    } 
+                    else if (plot.status === 'ready') {
+                        let cropIcon = '🍅';
+                        if(plot.seed_type === 'watermelon') cropIcon = '🍉';
+                        if(plot.seed_type === 'sunflower') cropIcon = '🌻';
+                        if(plot.seed_type === 'radish') cropIcon = '🧅';
+                        if(plot.seed_type === 'mizuna') cropIcon = '🥬';
+                        if(plot.seed_type === 'chestnut') cropIcon = '🌳';
+                        if(plot.seed_type === 'rhododendron') cropIcon = '🌸';
+                        
+                        html += `
+                        <div class="surface border border-yellow-500/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_15px_rgba(234,179,8,0.2)]">
+                            <div class="text-[10px] font-black text-yellow-500 mb-1 uppercase tracking-widest">Готово!</div>
+                            <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)]">${cropIcon}</div>
+                            <button onclick="farmAction('harvest', ${plot.slot_id})" class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">
+                                Собрать
+                            </button>
+                        </div>`;
+                    } 
+                    else if (plot.status === 'withered') {
+                        html += `
+                        <div class="surface border border-red-900/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 opacity-80">
+                            <div class="text-xs font-bold text-gray-500 mb-1">${plot.name}</div>
+                            <div class="text-3xl grayscale opacity-50">🥀</div>
+                            <button onclick="farmAction('clear', ${plot.slot_id})" class="bg-red-900/80 w-full py-1.5 rounded text-[10px] font-bold text-gray-300 shadow-md active:scale-95 mt-1 border border-red-700">
+                                🗑 Очистить
+                            </button>
+                        </div>`;
+                    }
+                });
+                
+                container.innerHTML = html;
+                document.getElementById('farmSlotsCount').innerText = `Слотов: ${data.plots.length}/8`;
+                
+                if(document.getElementById('blueKeyBtn')) {
+                    document.getElementById('blueKeyBtn').innerText = `Взломать (🔑 ${data.keys.blue})`;
+                    document.getElementById('redKeyBtn').innerText = `Взломать (🔑 ${data.keys.red})`;
+                }
+            });
+        }
+
+        function buySeed(seedType, cost, name) {
+            customConfirm(`Посадить ${name} за ${cost} 💎?\n(Семя автоматически займет первый пустой слот)`, function(c) {
+                if(c) {
+                    let emptyPlot = window.currentPlots.find(p => p.status === 'empty');
+                    if(!emptyPlot) {
+                        customAlert("Нет свободных грядок! Соберите урожай или очистите засохшие кусты.", "Внимание", "⚠️");
+                        return;
+                    }
+                    farmAction('plant', emptyPlot.slot_id, seedType);
+                }
+            });
+        }
+
+        function farmAction(action, slotId, seedType = null) {
+            safeHaptic('impact', 'light');
+            apiCall('/api/farm_action', {action: action, slot_id: slotId, seed_type: seedType}).then(data => {
+                if(data.error) { 
+                    customAlert(data.error, "Ошибка", "❌"); 
+                } else {
+                    let icon = action === 'harvest' ? '🚜' : (action === 'water' ? '💧' : (action === 'fertilize' ? '🧪' : '🌱'));
+                    customAlert(data.msg, "Участок", icon);
+                    loadFarm();
+                    loadProfile(); 
+                }
+            });
+        }
+
+        // ================= УМНЫЙ ЗАПУСК (DEEP LINKING) =================
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetTab = urlParams.get('tab');
+
+        if (targetTab) {
+            setTimeout(() => {
+                const navBtn = document.querySelector(`.nav-item[onclick*="${targetTab}"]`);
+                if (navBtn) switchTab(targetTab, navBtn);
+            }, 100);
+        } else {
+            loadProfile(); 
+        }
     </script>
 </body>
 </html>
