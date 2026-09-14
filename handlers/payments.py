@@ -260,7 +260,7 @@ def successful_payment(message):
     # 👆 ======================================================== 👆
 
     # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА И КРАСНОГО СЕЙФА
-    db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": amount * 0.20}}, upsert=True)
+    db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": int(amount * 0.20)}}, upsert=True)
     
     # Красный Сейф забирает 10% от всех покупок, штрафов и донатов
     db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": int(amount * 0.10)}}, upsert=True)
@@ -379,7 +379,17 @@ def successful_payment(message):
         original_amount = int(parts[1])
         used_rubles = int(parts[2])
         
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -used_rubles}})
+        # Безопасное списание с проверкой остатка
+        updated = paid_collection.find_one_and_update(
+            {"uid": uid, "cashback_balance": {"$gte": used_rubles}},
+            {"$inc": {"cashback_balance": -used_rubles}}
+        )
+        
+        if not updated:
+            bot.send_message(uid, "❌ На вашем балансе не хватило рублей! Похоже, вы потратили их во время оплаты. Звезды возвращены.")
+            bot.refund_star_payment(uid, charge_id)
+            db['star_transactions'].update_one({"charge_id": charge_id}, {"$set": {"status": "refunded"}})
+            return
         
         db['daily_revenue'].insert_one({"type": "fine_partial", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
         db['fine_payments'].insert_one({"uid": uid, "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
@@ -523,10 +533,7 @@ def successful_payment(message):
         # Начисляем продавцу рубли и пополняем Красный Сейф
         paid_collection.update_one({"uid": seller_uid}, {"$inc": {"cashback_balance": seller_profit}})
         db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}})
-        
-        # Начисляем продавцу рубли
-        paid_collection.update_one({"uid": seller_uid}, {"$inc": {"cashback_balance": seller_profit}})
-        
+                       
         try:
             bot.send_message(uid, f"🎉 **СДЕЛКА УСПЕШНА!**\nВы купили артефакт на Черном Рынке.\nВаш промокод: `{promo_id}`\n_Он уже добавлен в ваш Инвентарь._", parse_mode="Markdown")
             bot.send_message(seller_uid, f"💸 **НОВОСТИ С РЫНКА!**\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (с учетом 10% комиссии).", parse_mode="Markdown")

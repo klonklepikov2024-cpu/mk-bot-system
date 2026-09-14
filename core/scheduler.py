@@ -104,27 +104,27 @@ def broadcast_teaser(text, button_text, tab_name):
 
 def tease_roulette():
     fund = db['casino_bank'].find_one({"_id": "premium_fund"})
-    current_rubles = fund.get('rubles', 0) if fund else 0
+    current_fund = fund.get('balance', 0) if fund else 0 # <-- ИСПРАВЛЕНО НА balance
 
-    if current_rubles > 500: 
+    if current_fund > 500: 
         text = (
             "🎰 <b>ДЖЕКПОТ НА ПОДХОДЕ!</b>\n\n"
-            f"Фонд рулетки уже превысил <b>{current_rubles} ₽</b>!\n"
-            "Следующие несколько прокрутов могут стать решающими. Кто заберет кэшбэк или Telegram Premium?\n\n"
+            f"Фонд рулетки уже превысил <b>{current_fund} ⭐️</b>!\n" # <-- ИСПРАВЛЕН ЗНАЧОК
+            "Следующие несколько прокрутов могут стать решающими... Кто заберет кэшбэк или Telegram Premium?\n\n"
             "<i>Стоимость прокрута: всего 50 💎</i>"
         )
         broadcast_teaser(text, "🎰 Испытать удачу", "profile")
 
 def tease_ending_giveaways():
-    now = int(time.time())
+    now = datetime.datetime.now()
     
     ending_giveaways = db['giveaways'].find({
         "status": "active",
-        "end_time": {"$gt": now, "$lt": now + 7200}
+        "end_date": {"$gt": now, "$lt": now + datetime.timedelta(hours=2)}
     })
 
     for gw in ending_giveaways:
-        time_left_mins = int((gw['end_time'] - now) / 60)
+        time_left_mins = int((gw['end_date'] - now).total_seconds() / 60)
         tickets_sold = gw.get('total_tickets', 0)
         
         text = (

@@ -268,8 +268,10 @@
                 
                 <div class="flex justify-between items-center bg-purple-900/20 p-2 rounded-lg border border-purple-800/50">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🌳</span><div><p class="text-xs font-bold text-purple-300">К. Каштан (Пассив)</p><p class="text-[9px] text-purple-400/80">+1 попытка взлома в день</p></div></div>
-                    <button onclick="buySeed('chestnut', 1000, '🌳 К. Каштан')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1000 <span class="text-[10px]">💎</span></button>
-<div class="flex justify-between items-center bg-pink-900/20 p-2 rounded-lg border border-pink-800/50">
+            <button onclick="buySeed('chestnut', 1000, '🌳 К. Каштан')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1000 <span class="text-[10px]">💎</span></button>
+        </div> <!-- 👈 ВОТ ЭТА СКОБКА БЫЛА УТЕРЯНА -->
+
+        <div class="flex justify-between items-center bg-pink-900/20 p-2 rounded-lg border border-pink-800/50">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🌸</span><div><p class="text-xs font-bold text-pink-300">Рододендрон (Пассив)</p><p class="text-[9px] text-pink-400/80">-5% комиссии на Рынке</p></div></div>
                     <button onclick="buySeed('rhododendron', 1500, '🌸 Рододендрон')" class="bg-pink-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1500 <span class="text-[10px]">💎</span></button>
                 </div>
@@ -960,13 +962,18 @@
                         if(plot.seed_type === 'chestnut') cropIcon = '🌳';
                         if(plot.seed_type === 'rhododendron') cropIcon = '🌸';
                         
+                        let actionHtml = `<button onclick="farmAction('harvest', ${plot.slot_id})" class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">Собрать</button>`;
+                        
+                        // Если это декор, выводим заглушку вместо кнопки сбора
+                        if (plot.seed_type === 'chestnut' || plot.seed_type === 'rhododendron') {
+                            actionHtml = `<div class="bg-purple-900/50 w-full py-1.5 rounded text-[10px] font-bold text-purple-300 border border-purple-700/50 mt-1">Пассивный бонус</div>`;
+                        }
+
                         html += `
                         <div class="surface border border-yellow-500/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_15px_rgba(234,179,8,0.2)]">
                             <div class="text-[10px] font-black text-yellow-500 mb-1 uppercase tracking-widest">Готово!</div>
                             <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)]">${cropIcon}</div>
-                            <button onclick="farmAction('harvest', ${plot.slot_id})" class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">
-                                Собрать
-                            </button>
+                            ${actionHtml}
                         </div>`;
                     } 
                     else if (plot.status === 'withered') {
