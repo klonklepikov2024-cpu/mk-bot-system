@@ -88,10 +88,10 @@ def check_giveaways_task():
 
 def broadcast_teaser(text, button_text, tab_name):
     from core.bot import bot
+    import time # <-- убедитесь, что time импортирован
     
     url_with_tab = f"{WEBAPP_URL}?tab={tab_name}"
     
-    # Правильное создание клавиатуры для telebot
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(text=button_text, web_app=WebAppInfo(url=url_with_tab)))
     
@@ -99,6 +99,7 @@ def broadcast_teaser(text, button_text, tab_name):
     for chat in chats:
         try:
             bot.send_message(chat_id=chat['_id'], text=text, reply_markup=keyboard, parse_mode='HTML')
+            time.sleep(0.05) # 🔥 АНТИ-БАН: пауза 50мс (получится безопасно ~20 сообщ/сек)
         except Exception:
             continue
 
@@ -120,7 +121,8 @@ def tease_ending_giveaways():
     
     ending_giveaways = db['giveaways'].find({
         "status": "active",
-        "end_date": {"$gt": now, "$lt": now + datetime.timedelta(hours=2)}
+        # 🔥 ИСПРАВЛЕНО: ищем только те, что сгорят в ближайший час
+        "end_date": {"$gt": now, "$lt": now + datetime.timedelta(hours=1)}
     })
 
     for gw in ending_giveaways:
