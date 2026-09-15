@@ -147,15 +147,18 @@ def personal_farm_notifications():
 # ================= 3. РЕКЛАМНАЯ ВОРОНКА ПО ЧАТАМ =================
 
 def broadcast_teaser(text, button_text, tab_name):
-    """Безопасная рассылка по группам (Анти-флуд)"""
+    """Безопасная рассылка по группам (Исправленная версия с диплинком)"""
     from core.bot import bot
-    # 🔥 ИМПОРТИРУЕМ ГЛОБАЛЬНУЮ МАТРИЦУ ЧАТОВ ИЗ КОНФИГА 🔥
     from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
     
-    url_with_tab = f"{WEBAPP_URL}?tab={tab_name}"
-    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton(text=button_text, web_app=WebAppInfo(url=url_with_tab)))
+    # 1. Получаем юзернейм бота, чтобы сделать ссылку на него
+    bot_username = bot.get_me().username
+    deep_link = f"https://t.me/{bot_username}?start=app_{tab_name}"
     
-    # 1. Собираем все чаты из Матрицы (как в аирдропах и опросах)
+    # 2. Делаем ОБЫЧНУЮ url-кнопку (Они разрешены в группах!)
+    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton(text=button_text, url=deep_link))
+    
+    # 3. Собираем чаты
     all_target_chats = []
     all_target_chats.extend(chat_ids_mk.values())
     all_target_chats.extend(chat_ids_parni.values())
@@ -163,29 +166,31 @@ def broadcast_teaser(text, button_text, tab_name):
     all_target_chats.extend(chat_ids_gayznak.values())
     all_target_chats.extend(chat_ids_rainbow.values())
     
-    # Убираем дубликаты
     unique_chats = set(all_target_chats)
     
-    # 2. ПРЕДОХРАНИТЕЛЬ: Если матрица пуста
     if not unique_chats:
-        try:
-            bot.send_message(STAFF_GROUP_ID, f"⚠️ <b>Зазывала сработал, но Матрица чатов пуста!</b>\n\n{text}", reply_markup=keyboard, parse_mode='HTML')
-        except: pass
         return
 
-    # 3. Рассылка по сетке
     success_count = 0
+    first_error = None
+    
     for chat_id in unique_chats:
         try:
             bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
             success_count += 1
+            import time
             time.sleep(0.05) # Пауза от бана Telegram
-        except Exception:
-            pass
+        except Exception as e:
+            if not first_error:
+                first_error = str(e)
             
-    # 🔥 Отчет в админку, чтобы ты видел, что Зазывала жив!
+    # Отчет админам
+    report_msg = f"📢 <b>Зазывала:</b> Реклама отправлена в {success_count} из {len(unique_chats)} чатов."
+    if success_count == 0 and first_error:
+        report_msg += f"\n\n🚨 <b>ПРИЧИНА ОШИБКИ:</b> <code>{first_error}</code>"
+        
     try:
-        bot.send_message(STAFF_GROUP_ID, f"📢 <b>Зазывала:</b> Реклама успешно отправлена в {success_count} чатов!", parse_mode='HTML')
+        bot.send_message(STAFF_GROUP_ID, report_msg, parse_mode='HTML')
     except: pass
 
 def tease_ending_giveaways():
@@ -203,6 +208,18 @@ def tease_ending_giveaways():
 
 def smart_funnel_teaser():
     """Умная рекламная карусель (выбирает рандомный блок)"""
+    # 🔥 ПРЕДОХРАНИТЕЛЬ: СВЕРКА С БАЗОЙ ДАННЫХ 🔥
+    now = int(time.time())
+    timer_data = db['settings'].find_one({"_id": "teaser_timer"})
+    last_time = timer_data.get("last_time", 0) if timer_data else 0
+    
+    # 21600 секунд = 6 часов. Если прошло меньше — молча выходим
+    if now - last_time < 21600:
+        return
+        
+    # Записываем новое время сброса в базу
+    db['settings'].update_one({"_id": "teaser_timer"}, {"$set": {"last_time": now}}, upsert=True)
+
     teasers = [
         {
             "text": "🎰 <b>УДАЧА ЛЮБИТ СМЕЛЫХ!</b>\n\nДавно не крутили Гача-Рулетку? А ведь там можно выбить <b>Осколки джекпота</b>, <b>Щиты иммунитета</b> или реальные <b>Рубли</b>!\n\n<i>Стоимость прокрута: всего 50 💎</i>",
@@ -257,8 +274,8 @@ def start_scheduler():
         # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
         scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
              
-        # 4. 🔥 Умная воронка-карусель в чаты (Раз в 6 часов кидает рандомную рекламу)
-        scheduler.add_job(smart_funnel_teaser, 'interval', hours=6, id='smart_funnel', replace_existing=True)
+        # 4. 🔥 Умная воронка-карусель в чаты (Проверяет базу каждую минуту!)
+        scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши)!")

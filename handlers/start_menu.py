@@ -31,6 +31,15 @@ def send_welcome(message):
             bot.send_message(message.chat.id, shop_text, reply_markup=markup, parse_mode="Markdown")
             return
 
+        # 🔥 НОВОЕ: ЛОВИМ ДИПЛИНК ИЗ ГРУППЫ ОТ ЗАЗЫВАЛЫ 🔥
+        if len(message.text.split()) > 1 and message.text.split()[1].startswith("app_"):
+            tab_name = message.text.split()[1].replace("app_", "")
+            from config import APP_URL
+            from telebot.types import WebAppInfo
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("📱 Запустить Кабинет", web_app=WebAppInfo(url=f"{APP_URL.rstrip('/')}/webapp?tab={tab_name}")))
+            bot.send_message(message.chat.id, "👇 Нажмите кнопку ниже, чтобы открыть Игровой Кабинет:", reply_markup=markup)
+            return
+
        # Обновленное Главное Меню
         markup = InlineKeyboardMarkup(row_width=2)
         
