@@ -2846,3 +2846,37 @@ def process_gw_hours(message, title, price):
         f"_Скайнет автоматически выберет победителя, когда время выйдет._",
         parse_mode="Markdown"
     )
+
+# ================= ПРЯМОЕ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ (РАЗДАЧА ПРИЗОВ) =================
+@bot.message_handler(commands=['send', 'msg', 'приз'])
+def handle_admin_send_msg(message):
+    from config import STAFF_GROUP_ID, OWNER_ID
+    # 1. Защита: команду могут вызывать только в админке или лично владелец
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
+        return
+
+    # 2. Делим сообщение строго на 3 части: команда, ID получателя и сам текст
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3 or not args[1].isdigit():
+        try: 
+            bot.reply_to(
+                message, 
+                "❌ **Ошибка формата!**\nИспользуйте: `/send [ID] [Текст сообщения]`\n\n*Пример:* `/send 123456789 Ваш промокод Ozon: OZON-1000-WIN`", 
+                parse_mode="Markdown"
+            )
+        except: pass
+        return
+
+    target_uid = int(args[1])
+    text_to_send = args[2]
+
+    # 3. Отправка сообщения напрямую пользователю в ЛС от лица бота
+    try:
+        bot.send_message(
+            target_uid, 
+            f"🎁 **Сообщение от Администрации:**\n\n{text_to_send}", 
+            parse_mode="Markdown"
+        )
+        bot.reply_to(message, f"✅ Сообщение успешно доставлено пользователю `{target_uid}`!", parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Не удалось отправить (возможно, пользователь заблокировал бота): `{e}`", parse_mode="Markdown")
