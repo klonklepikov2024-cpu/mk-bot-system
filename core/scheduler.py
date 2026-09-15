@@ -130,14 +130,44 @@ def personal_farm_notifications():
 def broadcast_teaser(text, button_text, tab_name):
     """Безопасная рассылка по группам (Анти-флуд)"""
     from core.bot import bot
-    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton(text=button_text, web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab={tab_name}")))
+    # 🔥 ИМПОРТИРУЕМ ГЛОБАЛЬНУЮ МАТРИЦУ ЧАТОВ ИЗ КОНФИГА 🔥
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
     
-    chats = db['chats'].find({}) 
-    for chat in chats:
+    url_with_tab = f"{WEBAPP_URL}?tab={tab_name}"
+    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton(text=button_text, web_app=WebAppInfo(url=url_with_tab)))
+    
+    # 1. Собираем все чаты из Матрицы (как в аирдропах и опросах)
+    all_target_chats = []
+    all_target_chats.extend(chat_ids_mk.values())
+    all_target_chats.extend(chat_ids_parni.values())
+    all_target_chats.extend(chat_ids_ns.values())
+    all_target_chats.extend(chat_ids_gayznak.values())
+    all_target_chats.extend(chat_ids_rainbow.values())
+    
+    # Убираем дубликаты
+    unique_chats = set(all_target_chats)
+    
+    # 2. ПРЕДОХРАНИТЕЛЬ: Если матрица пуста
+    if not unique_chats:
         try:
-            bot.send_message(chat_id=chat['_id'], text=text, reply_markup=keyboard, parse_mode='HTML')
-            time.sleep(0.05) # Пауза от бана Telegram
+            bot.send_message(STAFF_GROUP_ID, f"⚠️ <b>Зазывала сработал, но Матрица чатов пуста!</b>\n\n{text}", reply_markup=keyboard, parse_mode='HTML')
         except: pass
+        return
+
+    # 3. Рассылка по сетке
+    success_count = 0
+    for chat_id in unique_chats:
+        try:
+            bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
+            success_count += 1
+            time.sleep(0.05) # Пауза от бана Telegram
+        except Exception:
+            pass
+            
+    # 🔥 Отчет в админку, чтобы ты видел, что Зазывала жив!
+    try:
+        bot.send_message(STAFF_GROUP_ID, f"📢 <b>Зазывала:</b> Реклама успешно отправлена в {success_count} чатов!", parse_mode='HTML')
+    except: pass
 
 def tease_ending_giveaways():
     """Отдельный срочный хук для горящих розыгрышей"""
