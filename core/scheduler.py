@@ -52,6 +52,8 @@ def delete_task_executor(chat_id, message_id):
 
 def check_giveaways_task():
     now = datetime.datetime.now()
+    
+    # 1. ЗАВЕРШЕНИЕ РОЗЫГРЫШЕЙ (Те, чье время вышло)
     ended_gws = db['giveaways'].find({"status": "active", "end_date": {"$lte": now}})
     
     for gw in ended_gws:
@@ -78,8 +80,25 @@ def check_giveaways_task():
         
         try:
             bot.send_message(STAFF_GROUP_ID, f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\nПриз: {gw['title']}\n🎟 Выиграл билет № **{winning_number}**!\nПобедитель: {winner_name} (`{winner_uid}`)", message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
-            bot.send_message(winner_uid, f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{winning_number} оказался победным! Приз: **{gw['title']}**.", parse_mode="Markdown")
-        except: pass
+            bot.send_message(winner_uid, f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{winning_number} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
+        except:
+            pass
+
+    # 2. ПРОГРЕВ ГОРЯЩИХ РОЗЫГРЫШЕЙ (Те, кому осталось < 1 часа)
+    almost_ended = db['giveaways'].find({
+        "status": "active", 
+        "teased": {"$ne": True}, # Ищем те, о которых мы еще не трубили
+        "end_date": {"$lte": now + datetime.timedelta(hours=1)}
+    })
+    
+    for gw in almost_ended:
+        # Ставим флажок, что мы уже прорекламировали этот розыгрыш
+        db['giveaways'].update_one({"_id": gw["_id"]}, {"$set": {"teased": True}})
+        
+        time_left_mins = int((gw['end_date'] - now).total_seconds() / 60)
+        text = f"🔥 <b>ГОРИТ РОЗЫГРЫШ: {gw['title']}!</b>\n\n⏳ Осталось всего <b>{time_left_mins} минут</b>!\n🎟 Куплено билетов: {gw.get('total_tickets', 0)}. Шансы на победу АНОМАЛЬНО ВЫСОКИЕ!\n\nЗалетай, пока время не вышло!"
+        
+        broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
 
 def tick_blue_safe():
     """Каждую минуту добавляем 60 очков в Сейф Данных"""
@@ -237,10 +256,7 @@ def start_scheduler():
         
         # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
         scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
-        
-        # 3. Срочные оповещения в чаты (Проверяем розыгрыши каждый час)
-        scheduler.add_job(tease_ending_giveaways, 'interval', hours=1, id='tease_gws', replace_existing=True)
-        
+             
         # 4. 🔥 Умная воронка-карусель в чаты (Раз в 6 часов кидает рандомную рекламу)
         scheduler.add_job(smart_funnel_teaser, 'interval', hours=6, id='smart_funnel', replace_existing=True)
         

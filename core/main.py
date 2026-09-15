@@ -181,12 +181,20 @@ def api_get_giveaways():
     for gw in gws:
         time_left_str = ""
         if gw['status'] == 'active':
+            # Умный расчет времени без багов
             time_left = gw['end_date'] - now
-            days = time_left.days
-            hours = time_left.seconds // 3600
-            if days > 0: time_left_str = f"Осталось {days} д. {hours} ч."
-            elif hours > 0: time_left_str = f"Осталось {hours} ч."
-            else: time_left_str = "Скоро итоги!"
+            total_seconds = int(time_left.total_seconds())
+            
+            if total_seconds > 0:
+                days = total_seconds // 86400
+                hours = (total_seconds % 86400) // 3600
+                mins = (total_seconds % 3600) // 60
+                
+                if days > 0: time_left_str = f"Осталось {days} д. {hours} ч."
+                elif hours > 0: time_left_str = f"Осталось {hours} ч. {mins} мин."
+                else: time_left_str = f"Осталось {mins} мин."
+            else:
+                time_left_str = "Подводим итоги..."
         else:
             time_left_str = "Завершен"
             
@@ -880,6 +888,20 @@ CROPS = {
     "cactus": {"name": "🌵 Кактус", "cost_pts": 800, "grow_time": 5*24*3600, "water_req": False, "reward_pts": [0, 0], "is_decor": True},
     "amanita": {"name": "🍄 К-Мухомор", "cost_pts": 300, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]}
 }
+
+@bot.message_handler(commands=['check_gw'])
+def force_check_gw(message):
+    from config import STAFF_GROUP_ID, OWNER_ID
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
+        return
+        
+    from core.scheduler import check_giveaways_task
+    bot.reply_to(message, "⏳ Принудительно сканирую базу розыгрышей...")
+    try:
+        check_giveaways_task()
+        bot.reply_to(message, "✅ Сканирование завершено! Если чье-то время вышло, победитель уже определен и опубликован в чате!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка при сканировании: {e}")
 
 @app.route('/api/get_farm', methods=['POST'])
 def api_get_farm():
