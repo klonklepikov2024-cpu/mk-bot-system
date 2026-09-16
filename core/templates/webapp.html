@@ -55,7 +55,19 @@
                 Крутить барабан
             </button>
         </div>
-    </div>
+
+        <!-- Ежедневный бонус -->
+        <div class="surface rounded-2xl p-4 mb-4 flex justify-between items-center shadow-lg border border-blue-500/30 relative overflow-hidden">
+            <div class="absolute -right-6 -top-6 text-6xl opacity-10">🎁</div>
+            <div class="z-10">
+                <h2 class="font-bold text-lg text-white mb-1">Ежедневный Бонус</h2>
+                <p class="text-[10px] text-gray-400 leading-tight">Заходите каждый день и<br>забирайте Осколки на 7-й день!</p>
+            </div>
+            <button id="bonusBtn" onclick="claimDailyBonus()" class="bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-3 rounded-xl font-black text-white shadow-md active:scale-95 transition-transform z-10 flex flex-col items-center">
+                <span>ЗАБРАТЬ</span>
+            </button>
+        </div>
+    </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ПРОФИЛЬ 🔥 -->
 
     <!-- ================= ВКЛАДКА 2: РОЗЫГРЫШИ ================= -->
     <div id="tab-giveaways" class="tab-content">
@@ -173,15 +185,40 @@
             <button id="payoutBtn" onclick="requestPayout()" class="bg-green-600 w-full py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Создать заявку</button>
         </div>
 
-        <h3 class="font-bold text-lg mb-2">🔗 CPA-Партнерка</h3>
+        <h3 class="font-bold text-lg mb-2 mt-6">🔗 CPA-Партнерка (Генератор)</h3>
         <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700/50">
             <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Одобрено (Лиды):</span> <span class="font-bold text-green-400" id="cpaApproved">0</span></div>
             <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">В холде (48ч):</span> <span class="font-bold text-yellow-400" id="cpaHold">0</span></div>
             <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Фрод / Боты:</span> <span class="font-bold text-red-400" id="cpaFraud">0</span></div>
-            <div class="flex justify-between"><span class="text-gray-400 text-sm">Дубликаты:</span> <span class="font-bold text-gray-500" id="cpaDupes">0</span></div>
-            <button onclick="customAlert('Перейдите в чат бота и нажмите кнопку «🔗 Заработать (CPA)», чтобы выбрать город и сгенерировать ссылку.', 'Партнерка', '🔗')" class="mt-4 w-full bg-gray-700 py-2 rounded-xl font-bold text-white active:scale-95 transition-transform text-sm border border-gray-600">Генерировать инвайт-ссылку</button>
+            <div class="flex justify-between mb-4"><span class="text-gray-400 text-sm">Дубликаты:</span> <span class="font-bold text-gray-500" id="cpaDupes">0</span></div>
+            
+            <!-- Интерактивный генератор -->
+            <div class="bg-black/30 p-3 rounded-xl border border-gray-700 mb-2">
+                <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">1. Выберите сеть</label>
+                <select id="cpaNetworkSelect" onchange="updateCpaCities()" class="w-full text-white bg-gray-800 rounded-lg p-2 mb-3 outline-none border border-gray-600 focus:border-blue-500 text-sm">
+                    <option value="">Загрузка сетей...</option>
+                </select>
+                
+                <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">2. Выберите город</label>
+                <select id="cpaCitySelect" class="w-full text-white bg-gray-800 rounded-lg p-2 mb-3 outline-none border border-gray-600 focus:border-blue-500 text-sm" disabled>
+                    <option value="">Сначала выберите сеть</option>
+                </select>
+                
+                <button id="cpaGenBtn" onclick="generateCpaLink()" class="w-full bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform text-sm disabled:opacity-50">
+                    🔗 Сгенерировать ссылку
+                </button>
+            </div>
+            
+            <!-- Окно с готовой ссылкой -->
+            <div id="cpaResultBox" class="hidden bg-green-900/20 p-3 rounded-xl border border-green-700/50 text-center mt-3">
+                <p class="text-[10px] text-green-400 uppercase font-bold mb-1">Ваша персональная ссылка:</p>
+                <div class="bg-black/50 p-2 rounded text-xs font-mono text-blue-300 break-all mb-2 select-all" id="cpaLinkText">https://t.me/...</div>
+                <button onclick="copyCpaLink()" class="bg-gray-700 w-full py-2 rounded-lg text-sm font-bold active:scale-95 transition-transform flex items-center justify-center gap-2">
+                    📋 Скопировать
+                </button>
+            </div>
         </div>
-    </div>
+    </div> <!-- 👈 ДОБАВЬ ЭТОТ ЗАКРЫВАЮЩИЙ DIV ДЛЯ ВКЛАДКИ ФИНАНСОВ! -->
 
 <!-- ================= ВКЛАДКА 6: УЧАСТОК (ФЕРМА + СЕЙФЫ) ================= -->
     <div id="tab-farm" class="tab-content">
@@ -219,6 +256,57 @@
                 </div>
             </div>
         </div>
+
+    <!-- ================= ВКЛАДКА 7: ЗАДАНИЯ И КЕЙСЫ ================= -->
+    <div id="tab-tasks" class="tab-content">
+        <h2 class="font-bold text-2xl mb-4">Ежедневные Задания</h2>
+        <p class="text-xs text-gray-400 mb-6">Выполняйте условия и открывайте кейсы. Прогресс сбрасывается в полночь.</p>
+
+        <!-- Деревянный Кейс -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-amber-800/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-3">
+                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(180,83,9,0.5)]">🪵</div>
+                    <div><h3 class="font-bold text-amber-500">Деревянный Кейс</h3><p class="text-[10px] text-gray-400">Общение в чатах</p></div>
+                </div>
+                <button id="btnCase_wooden" onclick="openTaskCase('wooden')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/15</button>
+            </div>
+            <p class="text-xs text-gray-300">💬 Напишите 15 содержательных сообщений в любых наших чатах.</p>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
+                <div id="progress_wooden" class="bg-amber-600 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Серебряный Кейс -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-400/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-3">
+                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(156,163,175,0.5)]">🥈</div>
+                    <div><h3 class="font-bold text-gray-300">Серебряный Кейс</h3><p class="text-[10px] text-gray-400">Хозяйственность</p></div>
+                </div>
+                <button id="btnCase_silver" onclick="openTaskCase('silver')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/2</button>
+            </div>
+            <ul class="text-xs text-gray-300 space-y-1">
+                <li id="cond_s1">❌ Забрать Ежедневный бонус</li>
+                <li id="cond_s2">❌ Полить грядку на ферме</li>
+            </ul>
+        </div>
+
+        <!-- Золотой Кейс -->
+        <div class="surface rounded-2xl p-4 shadow-lg border border-yellow-500/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-3">
+                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]">🥇</div>
+                    <div><h3 class="font-bold text-yellow-500">Золотой Кейс</h3><p class="text-[10px] text-gray-400">Азартный игрок</p></div>
+                </div>
+                <button id="btnCase_gold" onclick="openTaskCase('gold')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/3</button>
+            </div>
+            <p class="text-xs text-gray-300">🎰 Сыграйте в Гача-Рулетку 3 раза за день.</p>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
+                <div id="progress_gold" class="bg-yellow-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
 
         <!-- БЛОК 2: ГРЯДКИ И ТРАКТОР -->
         <div class="flex justify-between items-center mb-3">
@@ -293,8 +381,7 @@
             </div>
         </div>
     </div> <!-- 🔥 ВОТ ЭТУ СКОБКУ Я СЪЕЛ! ДОБАВЬ ЕЁ СЮДА 🔥 -->
-
-
+        
     <!-- 🔥 НАШИ ПУЛЕНЕПРОБИВАЕМЫЕ МОДАЛЬНЫЕ ОКНА 🔥 -->
     
     <!-- 1. УНИВЕРСАЛЬНЫЙ АЛЕРТ -->
@@ -373,22 +460,25 @@
 
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
     <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-2 z-50">
-        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 w-1/6">
+        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">👤</span><span class="text-[8px] font-bold">Профиль</span>
         </button>
-        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">🎁</span><span class="text-[8px] font-bold">Розыгрыши</span>
         </button>
-        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+        <button onclick="switchTab('tasks', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
+            <span class="text-2xl mb-1">📋</span><span class="text-[8px] font-bold">Задания</span>
+        </button>
+        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">⚖️</span><span class="text-[8px] font-bold">Рынок</span>
         </button>
-        <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+        <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">🎒</span><span class="text-[8px] font-bold">Рюкзак</span>
         </button>
-        <button onclick="switchTab('finance', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+        <button onclick="switchTab('finance', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">💼</span><span class="text-[8px] font-bold">Финансы</span>
         </button>
-        <button onclick="switchTab('farm', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 w-1/6">
+        <button onclick="switchTab('farm', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">🚜</span><span class="text-[8px] font-bold">Участок</span>
         </button>
     </div>
@@ -473,7 +563,8 @@
             if(tabId === 'profile') loadProfile();
             if(tabId === 'giveaways') loadGiveaways();
             if(tabId === 'market') loadMarket(); 
-            if(tabId === 'inventory') loadInventory(); 
+            if(tabId === 'inventory') loadInventory();
+            if(tabId === 'tasks') loadTasks(); 
             if(tabId === 'finance') { loadProfile(); loadCpa(); }
             if(tabId === 'farm') { safeHaptic('impact', 'medium'); loadFarm(); loadSafes(); }
         }
@@ -868,12 +959,78 @@
                 else { customAlert(data.msg, "Заявка создана", "✅"); document.getElementById('payoutAmount').value = ''; document.getElementById('payoutDetails').value = ''; loadProfile(); }
             });
         }
+        let cpaNetworksData = {};
+
         function loadCpa() {
+            // 1. Грузим статистику
             apiCall('/api/get_cpa').then(data => {
-                document.getElementById('cpaApproved').innerText = data.approved || 0;
-                document.getElementById('cpaHold').innerText = data.hold || 0;
-                document.getElementById('cpaFraud').innerText = data.fraud || 0;
-                document.getElementById('cpaDupes').innerText = data.duplicates || 0;
+                if(!data.error) {
+                    document.getElementById('cpaApproved').innerText = data.approved || 0;
+                    document.getElementById('cpaHold').innerText = data.hold || 0;
+                    document.getElementById('cpaFraud').innerText = data.fraud || 0;
+                    document.getElementById('cpaDupes').innerText = data.duplicates || 0;
+                }
+            });
+
+            // 2. Грузим сети и города
+            apiCall('/api/get_cpa_networks').then(data => {
+                if(!data.error && data.networks) {
+                    cpaNetworksData = data.networks;
+                    const netSelect = document.getElementById('cpaNetworkSelect');
+                    let html = '<option value="">-- Выберите сеть --</option>';
+                    for (const [key, net] of Object.entries(data.networks)) {
+                        html += `<option value="${key}">${net.name}</option>`;
+                    }
+                    netSelect.innerHTML = html;
+                }
+            });
+        }
+
+        function updateCpaCities() {
+            const netKey = document.getElementById('cpaNetworkSelect').value;
+            const citySelect = document.getElementById('cpaCitySelect');
+            
+            if (!netKey || !cpaNetworksData[netKey]) {
+                citySelect.innerHTML = '<option value="">Сначала выберите сеть</option>';
+                citySelect.disabled = true;
+                return;
+            }
+            
+            const cities = cpaNetworksData[netKey].cities;
+            let html = '<option value="">-- Выберите чат/город --</option>';
+            for (const [cityName, chatId] of Object.entries(cities)) {
+                html += `<option value="${chatId}">${cityName}</option>`;
+            }
+            citySelect.innerHTML = html;
+            citySelect.disabled = false;
+        }
+
+        function generateCpaLink() {
+            const chatId = document.getElementById('cpaCitySelect').value;
+            if(!chatId) { customAlert("Выберите город!", "Внимание", "⚠️"); return; }
+            
+            const btn = document.getElementById('cpaGenBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "⏳ Генерирую..."; btn.disabled = true;
+            
+            apiCall('/api/generate_cpa_link', {chat_id: chatId}).then(data => {
+                btn.innerHTML = originalText; btn.disabled = false;
+                if(data.error) { 
+                    customAlert(data.error, "Ошибка", "❌"); 
+                } else {
+                    document.getElementById('cpaResultBox').classList.remove('hidden');
+                    document.getElementById('cpaLinkText').innerText = data.link;
+                    safeHaptic('notify', 'success');
+                }
+            }).catch(() => { btn.innerHTML = originalText; btn.disabled = false; });
+        }
+
+        function copyCpaLink() {
+            const link = document.getElementById('cpaLinkText').innerText;
+            navigator.clipboard.writeText(link).then(() => {
+                customAlert("Ссылка скопирована в буфер обмена!", "Скопировано", "📋");
+            }).catch(() => {
+                customAlert("Не удалось скопировать автоматически. Скопируйте текст вручную.", "Ошибка", "⚠️");
             });
         }
 
@@ -1048,6 +1205,79 @@
                     customAlert(data.msg, "Участок", icon);
                     loadFarm();
                     loadProfile(); 
+                }
+            });
+        }
+
+        // --- ЕЖЕДНЕВНЫЙ БОНУС ---
+        function claimDailyBonus() {
+            const btn = document.getElementById('bonusBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "⏳..."; btn.disabled = true;
+            
+            safeHaptic('impact', 'light');
+            apiCall('/api/claim_bonus').then(data => {
+                btn.innerHTML = originalText; btn.disabled = false;
+                if(data.error) { 
+                    customAlert(data.error, "Уже получено", "⏳"); 
+                } else {
+                    safeHaptic('notify', 'success');
+                    customAlert(data.msg, "Успех!", "🎁");
+                    loadProfile(); // Обновляем баланс очков на экране
+                }
+            }).catch(() => {
+                btn.innerHTML = originalText; btn.disabled = false;
+            });
+        }
+
+        // ================= ЗАДАНИЯ И КЕЙСЫ =================
+        function loadTasks() {
+            apiCall('/api/get_tasks').then(data => {
+                if(data.error) return;
+                
+                // 1. Деревянный
+                const w_msgs = Math.min(data.messages, 15);
+                document.getElementById('progress_wooden').style.width = `${(w_msgs/15)*100}%`;
+                updateCaseButton('wooden', w_msgs >= 15, `${w_msgs}/15`, data.opened_cases);
+
+                // 2. Серебряный
+                let s_count = 0;
+                if(data.bonus_claimed) { s_count++; document.getElementById('cond_s1').innerText = "✅ Забрать Ежедневный бонус"; }
+                if(data.watered) { s_count++; document.getElementById('cond_s2').innerText = "✅ Полить грядку на ферме"; }
+                updateCaseButton('silver', s_count === 2, `${s_count}/2`, data.opened_cases);
+
+                // 3. Золотой
+                const g_spins = Math.min(data.roulette_spins, 3);
+                document.getElementById('progress_gold').style.width = `${(g_spins/3)*100}%`;
+                updateCaseButton('gold', g_spins >= 3, `${g_spins}/3`, data.opened_cases);
+            });
+        }
+
+        function updateCaseButton(caseType, isReady, textProgress, openedArray) {
+            const btn = document.getElementById(`btnCase_${caseType}`);
+            if (openedArray.includes(caseType)) {
+                btn.className = "bg-green-900/50 px-4 py-2 rounded-xl text-xs font-bold text-green-400 border border-green-700/50 cursor-default";
+                btn.innerText = "ОТКРЫТО";
+                btn.onclick = null;
+            } else if (isReady) {
+                btn.className = "bg-green-600 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-[0_0_15px_rgba(22,163,74,0.5)] active:scale-95 transition-transform animate-pulse";
+                btn.innerText = "ОТКРЫТЬ";
+            } else {
+                btn.className = "bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed";
+                btn.innerText = textProgress;
+            }
+        }
+
+        function openTaskCase(caseType) {
+            safeHaptic('impact', 'medium');
+            apiCall('/api/open_task_case', {case_type: caseType}).then(data => {
+                if(data.error) { 
+                    customAlert(data.error, "Упс!", "⚠️"); 
+                } else {
+                    safeHaptic('notify', 'success');
+                    customAlert(data.msg, "Кейс Открыт!", "🎁");
+                    loadTasks();
+                    loadProfile();
                 }
             });
         }

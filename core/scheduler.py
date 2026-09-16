@@ -207,7 +207,7 @@ def tease_ending_giveaways():
         broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
 
 def smart_funnel_teaser():
-    """Умная рекламная карусель (выбирает рандомный блок)"""
+    """Умная рекламная карусель с системой Анти-Попугай"""
     # 🔥 ПРЕДОХРАНИТЕЛЬ: СВЕРКА С БАЗОЙ ДАННЫХ 🔥
     now = int(time.time())
     timer_data = db['settings'].find_one({"_id": "teaser_timer"})
@@ -216,9 +216,6 @@ def smart_funnel_teaser():
     # 21600 секунд = 6 часов. Если прошло меньше — молча выходим
     if now - last_time < 21600:
         return
-        
-    # Записываем новое время сброса в базу
-    db['settings'].update_one({"_id": "teaser_timer"}, {"$set": {"last_time": now}}, upsert=True)
 
     teasers = [
         {
@@ -259,8 +256,27 @@ def smart_funnel_teaser():
             "btn": "🎰 Испытать удачу",
             "tab": "profile"
         })
+
+    # 🔥 АНТИ-ПОПУГАЙ: Исключаем то, что отправляли в прошлый раз 🔥
+    last_btn = timer_data.get("last_btn", "") if timer_data else ""
+    available_teasers = [t for t in teasers if t["btn"] != last_btn]
+    
+    # Страховка: если список почему-то опустел, берем исходный
+    if not available_teasers:
+        available_teasers = teasers
         
-    selected = random.choice(teasers)
+    selected = random.choice(available_teasers)
+    
+    # Записываем новое время сброса И ЗАПОМИНАЕМ ВЫБРАННЫЙ ПОСТ в базу
+    db['settings'].update_one(
+        {"_id": "teaser_timer"}, 
+        {"$set": {
+            "last_time": now,
+            "last_btn": selected["btn"]
+        }}, 
+        upsert=True
+    )
+
     broadcast_teaser(selected["text"], selected["btn"], selected["tab"])
 
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================

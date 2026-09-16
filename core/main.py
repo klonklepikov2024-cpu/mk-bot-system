@@ -330,6 +330,11 @@ def api_spin_roulette():
         {"$inc": {"bounty_points": -SPIN_PRICE}}
     )
 
+    # 🔥 ТРЕКЕР ДЛЯ ЗОЛОТОГО КЕЙСА 🔥
+    import datetime
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"roulette_spins": 1}}, upsert=True)
+
     if not updated_user:
         return jsonify({"error": "Недостаточно очков! Нужно 50 💎."}), 400
 
@@ -454,6 +459,64 @@ def api_spin_roulette():
         prize_msg = f"🧩 Барабан остановился...\nВы получили: +{shards_won} Осколок(ка) джекпота!"
 
     return jsonify({"success": True, "message": prize_msg})
+
+@app.route('/api/claim_bonus', methods=['POST'])
+def api_claim_bonus():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    import datetime
+    now = datetime.datetime.now()
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    last_bonus = user_data.get("last_bonus_date")
+    current_streak = user_data.get("bonus_streak", 0)
+    
+    # Проверяем таймер
+    if last_bonus:
+        time_diff = (now - last_bonus).total_seconds()
+        if time_diff < 86400: # Прошло меньше 24 часов
+            hours_left = int((86400 - time_diff) // 3600)
+            mins_left = int(((86400 - time_diff) % 3600) // 60)
+            return jsonify({"error": f"Рано! Приходите через {hours_left}ч {mins_left}м."}), 400
+        elif time_diff > 172800: # Прошло БОЛЬШЕ 48 часов - стрик сгорел
+            current_streak = 0
+            
+    # Увеличиваем стрик
+    current_streak += 1
+
+    # 🔥 ИСПРАВЛЕНИЕ: Генерируем today_str 🔥
+    today_str = now.strftime("%Y-%m-%d")
+    
+    # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (БОНУС) 🔥
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"bonus_claimed": True}}, upsert=True)
+    
+    # Награды в зависимости от стрика
+    shards_reward = 0
+    if current_streak == 1: points_reward = 15
+    elif current_streak == 2: points_reward = 25
+    elif current_streak == 3: points_reward = 40
+    elif current_streak >= 7: 
+        points_reward = 100
+        shards_reward = 1
+        current_streak = 0 # Сброс после мега-приза (или можно оставить, чтоб фармил каждый день по 100)
+    else: points_reward = 50
+
+    update_data = {
+        "$inc": {"bounty_points": points_reward, "jackpot_shards": shards_reward},
+        "$set": {"last_bonus_date": now, "bonus_streak": current_streak}
+    }
+    
+    paid_collection.update_one({"uid": uid}, update_data, upsert=True)
+    
+    msg = f"🎁 День {current_streak if current_streak > 0 else 7}! Вы получили {points_reward} 💎."
+    if shards_reward > 0: msg += "\n🧩 +1 Осколок за 7 дней подряд!"
+    
+    return jsonify({"success": True, "msg": msg, "streak": current_streak})
 
 @app.route('/api/get_inventory', methods=['POST'])
 def api_get_inventory():
@@ -611,6 +674,45 @@ def api_get_cpa():
     
     return jsonify({"hold": hold, "approved": approved, "fraud": fraud, "duplicates": dupes})
 
+@app.route('/api/get_cpa_networks', methods=['POST'])
+def api_get_cpa_networks():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+    
+    # 🔥 ИМПОРТИРУЕМ ВНУТРИ ФУНКЦИИ, ЧТОБЫ БРАТЬ СВЕЖИЕ ДАННЫЕ ИЗ БАЗЫ 🔥
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+    
+    networks = {
+        "mk": {"name": "МК (Мужской Клуб)", "cities": chat_ids_mk},
+        "parni": {"name": "ПАРНИ 18+", "cities": chat_ids_parni},
+        "ns": {"name": "НС (Exotics)", "cities": chat_ids_ns},
+        "gayznak": {"name": "ГЕЙ ЧАТЫ", "cities": chat_ids_gayznak},
+        "rainbow": {"name": "РАДУГА", "cities": chat_ids_rainbow}
+    }
+    return jsonify({"networks": networks})
+
+@app.route('/api/generate_cpa_link', methods=['POST'])
+def api_generate_cpa_link():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    chat_id = data.get('chat_id')
+    
+    if not chat_id:
+        return jsonify({"error": "Город не выбран!"}), 400
+        
+    try:
+        # Дергаем Telegram API для создания заявки с маркером cpa_ID
+        invite = bot.create_chat_invite_link(chat_id, creates_join_request=True, name=f"cpa_{uid}")
+        return jsonify({"success": True, "link": invite.invite_link})
+    except Exception as e:
+        logger.error(f"Ошибка CPA ссылки для чата {chat_id}: {e}")
+        return jsonify({"error": "Бот не является админом в этом чате или сбой API."}), 400
+
 @app.route('/api/exchange', methods=['POST'])
 def api_exchange():
     data = request.json
@@ -626,6 +728,73 @@ def api_exchange():
     )
     if not user_db: return jsonify({"error": "Недостаточно рублей!"}), 400
     return jsonify({"success": True, "msg": f"✅ Успешно обменяли {cost}₽ на {reward}💎!"})
+
+@app.route('/api/get_tasks', methods=['POST'])
+def api_get_tasks():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    import datetime
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    task_db = db['tasks_progress'].find_one({"uid": uid, "date": today_str}) or {}
+    
+    return jsonify({
+        "messages": task_db.get("messages", 0),
+        "watered": task_db.get("watered", False),
+        "bonus_claimed": task_db.get("bonus_claimed", False),
+        "roulette_spins": task_db.get("roulette_spins", 0),
+        "opened_cases": task_db.get("opened", [])
+    })
+
+@app.route('/api/open_task_case', methods=['POST'])
+def api_open_task_case():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    case_type = data.get('case_type')
+    
+    import datetime
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    task_db = db['tasks_progress'].find_one({"uid": uid, "date": today_str}) or {}
+    
+    if case_type in task_db.get("opened", []):
+        return jsonify({"error": "Вы уже открывали этот кейс сегодня!"}), 400
+        
+    msg = ""
+    update_query = {"$inc": {}}
+    
+    if case_type == 'wooden':
+        if task_db.get("messages", 0) < 15: return jsonify({"error": "Напишите 15 сообщений в чатах!"}), 400
+        update_query["$inc"]["bounty_points"] = 50
+        update_query["$inc"]["jackpot_shards"] = 1
+        msg = "🪵 **Деревянный кейс открыт!**\nВы получили 50 💎 и 1 Осколок рулетки!"
+        
+    elif case_type == 'silver':
+        if not task_db.get("watered") or not task_db.get("bonus_claimed"): return jsonify({"error": "Выполните все условия!"}), 400
+        update_query["$inc"]["bounty_points"] = 100
+        update_query["$inc"]["immunity"] = 1
+        msg = "🥈 **Серебряный кейс открыт!**\nВы получили 100 💎 и 1 Щит Иммунитета!"
+        
+    elif case_type == 'gold':
+        if task_db.get("roulette_spins", 0) < 3: return jsonify({"error": "Сыграйте в рулетку 3 раза!"}), 400
+        update_query["$inc"]["bounty_points"] = 300
+        update_query["$inc"]["key_red"] = 1
+        msg = "🥇 **Золотой кейс открыт!**\nВы сорвали куш: 300 💎 и 🔑 Ключ от Финансового Сейфа!"
+    else:
+        return jsonify({"error": "Неизвестный кейс"}), 400
+        
+    paid_collection.update_one({"uid": uid}, update_query)
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$push": {"opened": case_type}}, upsert=True)
+    
+    return jsonify({"success": True, "msg": msg})
 
 @app.route('/api/payout', methods=['POST'])
 def api_payout():
@@ -1012,6 +1181,10 @@ def api_farm_action():
     # === ПОЛИВ ===
     elif action == 'water':
         if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
+
+        # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (ПОЛИВ) 🔥
+        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"watered": True}}, upsert=True)
         
         # 🔥 Защита от бесконечного полива (Кулдаун 4 часа)
         last_watered = plot.get('last_watered', 0)

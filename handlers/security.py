@@ -70,14 +70,14 @@ def handle_game_club(call):
     )
     # 2 ряд: Бонусы и Крафт
     markup.add(
-        InlineKeyboardButton("📅 Бонус", callback_data="btn_daily_bonus"),
+        InlineKeyboardButton("📅 Бонус (Web App)", web_app=WebAppInfo(url=f"{APP_URL}/webapp")),
         InlineKeyboardButton("🎒 Инвентарь и Ломбард", callback_data="forge_main")
     )
     # 3 ряд: Покупки и Заработок
     markup.add(
         InlineKeyboardButton("🛒 Магазин скидок", callback_data="shop_rewards_menu"),
-        InlineKeyboardButton("🔗 Заработать (CPA)", callback_data="cpa_menu")
-    )
+        InlineKeyboardButton("🔗 Заработать (CPA)", web_app=WebAppInfo(url=f"{APP_URL}/webapp?tab=finance"))
+    ) # <--- ВОТ ЗДЕСЬ НЕ ХВАТАЛО ЗАКРЫВАЮЩЕЙ СКОБКИ!
     markup.add(
         InlineKeyboardButton("⚖️ Черный Рынок (P2P)", callback_data="market_main")
     )
@@ -454,79 +454,6 @@ def handle_payout_decision(call):
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"❌ **Заявка на выплату отклонена.**\nСредства ({amount} руб.) возвращены на ваш внутренний баланс.")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
-# ================= CPA-СЕТЬ =================
-@bot.callback_query_handler(func=lambda call: call.data.startswith('cpa_'))
-def handle_cpa_network(call):
-    try: bot.answer_callback_query(call.id)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    uid = call.from_user.id
-    
-    if call.data == "cpa_menu":
-        hold_count = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "hold"})
-        approved_count = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "approved"})
-        fraud_count = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
-        
-        user_data = paid_collection.find_one({"uid": uid}) or {}
-        duplicates = user_data.get("cpa_duplicates", 0)
-        
-        total_clicks = hold_count + approved_count + fraud_count + duplicates
-        
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            InlineKeyboardButton("🔗 Сгенерировать ссылку", callback_data="cpa_generate"),
-            InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")
-        )
-        text = (
-            f"💼 **Партнерская CPA-Сеть**\n\n"
-            f"Приглашайте людей в наши чаты и зарабатывайте Очки Бдительности абсолютно бесплатно!\n\n"
-            f"📊 **ВАША ВОРОНКА ТРАФИКА:**\n"
-            f"👁 Всего заявок по вашим ссылкам: **{total_clicks}**\n"
-            f"🔄 Уже были в сети (не засчитаны): **{duplicates}**\n"
-            f"⏳ На проверке Скайнета (48ч): **{hold_count}**\n"
-            f"🚫 Забраковано (боты/спамеры): **{fraud_count}**\n"
-            f"✅ **Одобрено (оплачено):** **{approved_count}**"
-        )
-        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
-    elif call.data == "cpa_generate":
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("МК (Мужской Клуб)", callback_data="cpa_net_mk"),
-            InlineKeyboardButton("ПАРНИ 18+", callback_data="cpa_net_parni"),
-            InlineKeyboardButton("НС (Exotics)", callback_data="cpa_net_ns"),
-            InlineKeyboardButton("ГЕЙ ЧАТЫ", callback_data="cpa_net_gayznak")
-        )
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_menu"))
-        try: bot.edit_message_text("📍 Выберите сеть, которую хотите рекламировать:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
-    elif call.data.startswith("cpa_net_"):
-        network = call.data.split("_")[2]
-        net_dicts = {"mk": chat_ids_mk, "parni": chat_ids_parni, "ns": chat_ids_ns, "gayznak": chat_ids_gayznak}
-        target_dict = net_dicts.get(network, {})
-        
-        markup = InlineKeyboardMarkup(row_width=2)
-        for city, chat_id in list(target_dict.items())[:20]:
-            markup.add(InlineKeyboardButton(city, callback_data=f"cpa_getlink_{chat_id}"))
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="cpa_generate"))
-        try: bot.edit_message_text("🏙 Выберите город для создания ссылки:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
-    elif call.data.startswith("cpa_getlink_"):
-        chat_id = int(call.data.split("_")[2])
-        try: bot.edit_message_text("⏳ Генерирую персональную ссылку...", call.message.chat.id, call.message.message_id)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        
-        try:
-            invite = bot.create_chat_invite_link(chat_id, creates_join_request=True, name=f"cpa_{uid}")
-            text = f"✅ **Ваша персональная ссылка готова!**\n\n`{invite.invite_link}`\n\nКопируйте её и размещайте в ВК, комментариях или других чатах. Все пользователи, перешедшие по ней, будут автоматически закреплены за вами!"
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Ошибка CPA ссылки для чата {chat_id}: {e}")
-            try: bot.edit_message_text(f"❌ Ошибка генерации ссылки. Возможно, бот не является админом в этом чате.\n`{e}`", call.message.chat.id, call.message.message_id)
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ОБМЕННИК И АИРДРОПЫ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'exchange_shards')
@@ -909,39 +836,6 @@ def handle_fsm_states(message):
         )
 
 # ================= КНОПКИ КАБИНЕТА: БОНУС И ИНВЕНТАРЬ =================
-@bot.callback_query_handler(func=lambda call: call.data == 'btn_daily_bonus')
-def handle_btn_daily_bonus(call):
-    uid = call.from_user.id
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    last_bonus = user_data.get("last_bonus_date")
-    now = datetime.datetime.now()
-
-    if last_bonus:
-        time_diff = (now - last_bonus).total_seconds()
-        if time_diff < 86400: 
-            hours_left = int((86400 - time_diff) // 3600)
-            mins_left = int(((86400 - time_diff) % 3600) // 60)
-            try: bot.answer_callback_query(call.id, f"⏳ Рано! Возвращайтесь через {hours_left} ч. {mins_left} мин.", show_alert=True)
-            except: pass
-            return
-
-    bonus_points = random.randint(15, 50)
-    bonus_shards = 1 if random.randint(1, 100) <= 5 else 0 
-    
-    paid_collection.update_one(
-        {"uid": uid}, 
-        {"$inc": {"bounty_points": bonus_points, "jackpot_shards": bonus_shards}, "$set": {"last_bonus_date": now}}, 
-        upsert=True
-    )
-    
-    msg = f"🎁 **Получен ежедневный бонус!**\nВы нашли **+{bonus_points} очков**!"
-    if bonus_shards > 0: msg += "\nИ редкий дроп: **+1 Осколок рулетки!** 🧩"
-    
-    try: bot.answer_callback_query(call.id, msg, show_alert=True)
-    except: pass
-    # Перезагружаем кабинет, чтобы обновились цифры
-    handle_security_menu(call) 
-
 @bot.callback_query_handler(func=lambda call: call.data == 'btn_my_inventory')
 def handle_btn_inventory(call):
     uid = call.from_user.id
