@@ -1182,8 +1182,11 @@ def api_farm_action():
     elif action == 'water':
         if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
 
-        # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (ПОЛИВ) 🔥
+        # 🔥 ИСПРАВЛЕНИЕ: Добавили импорт datetime 🔥
+        import datetime
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        
+        # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (ПОЛИВ) 🔥
         db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"watered": True}}, upsert=True)
         
         # 🔥 Защита от бесконечного полива (Кулдаун 4 часа)
