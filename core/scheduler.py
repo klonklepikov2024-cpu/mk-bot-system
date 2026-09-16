@@ -8,7 +8,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.mongodb import MongoDBJobStore
-from database.mongo import client, db 
+from database.mongo import client, db, paid_collection 
 
 from config import APP_URL
 WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
@@ -104,7 +104,7 @@ def tick_blue_safe():
     """Каждую минуту добавляем 60 очков в Сейф Данных"""
     db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 60}})
 
-# ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС (ОГОРОД) =================
+# ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС =================
 
 def personal_farm_notifications():
     """Проверяет грядки и пишет в ЛС, если созрело или засыхает"""
@@ -143,6 +143,49 @@ def personal_farm_notifications():
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
             try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел.\n\nСкорее заходите собрать урожай (и, возможно, найти ключи от сейфа)!", parse_mode="HTML", reply_markup=markup)
             except: pass
+
+def daily_bonus_reminder():
+    """Вечернее пуш-уведомление для тех, кто забыл забрать Ежедневный Бонус"""
+    from core.bot import bot
+    now = datetime.datetime.now()
+    
+    # Ищем тех, у кого УЖЕ есть стрик (им есть что терять)
+    forgetful_users = paid_collection.find({"bonus_streak": {"$gt": 0}})
+    
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🎁 Забрать бонус", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=profile"))
+    )
+    
+    count = 0
+    for user in forgetful_users:
+        last_bonus = user.get("last_bonus_date")
+        if not last_bonus:
+            continue
+            
+        time_diff = (now - last_bonus).total_seconds()
+        
+        # Если прошло >20 часов, но <48 часов
+        # Значит, бонус либо уже доступен, либо будет доступен с минуты на минуту, а стрик еще жив!
+        if 72000 <= time_diff <= 172800:
+            uid = user.get("uid")
+            streak = user.get("bonus_streak", 1)
+            try:
+                bot.send_message(
+                    uid,
+                    f"⚠️ **Ваш стрик ({streak} дн.) скоро сгорит!**\n\n"
+                    f"Кажется, вы забыли забрать свой Ежедневный Бонус. Зайдите в Игровой Кабинет, чтобы не потерять прогресс и получить Осколок рулетки на 7-й день!",
+                    parse_mode="Markdown",
+                    reply_markup=markup
+                )
+                count += 1
+                time.sleep(0.05) # Защита от Flood Wait
+            except:
+                pass
+                
+    if count > 0:
+        from config import STAFF_GROUP_ID
+        try: bot.send_message(STAFF_GROUP_ID, f"📢 **Умные Push-уведомления:** Отправлено {count} напоминаний о бонусе.")
+        except: pass
 
 # ================= 3. РЕКЛАМНАЯ ВОРОНКА ПО ЧАТАМ =================
 
@@ -193,19 +236,6 @@ def broadcast_teaser(text, button_text, tab_name):
         bot.send_message(STAFF_GROUP_ID, report_msg, parse_mode='HTML')
     except: pass
 
-def tease_ending_giveaways():
-    """Отдельный срочный хук для горящих розыгрышей"""
-    now = datetime.datetime.now()
-    ending_giveaways = db['giveaways'].find({
-        "status": "active",
-        "end_date": {"$gt": now, "$lt": now + datetime.timedelta(hours=1)} # Только те, что сгорят в ближайший час
-    })
-
-    for gw in ending_giveaways:
-        time_left_mins = int((gw['end_date'] - now).total_seconds() / 60)
-        text = f"🔥 <b>ГОРИТ РОЗЫГРЫШ: {gw['title']}!</b>\n\n⏳ Осталось всего <b>{time_left_mins} минут</b>!\n🎟 Куплено билетов: {gw.get('total_tickets', 0)}.\n\nЗалетай, пока время не вышло!"
-        broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
-
 def smart_funnel_teaser():
     """Умная рекламная карусель с системой Анти-Попугай"""
     # 🔥 ПРЕДОХРАНИТЕЛЬ: СВЕРКА С БАЗОЙ ДАННЫХ 🔥
@@ -237,6 +267,31 @@ def smart_funnel_teaser():
             "text": "⚖️ <b>ТЕНЕВАЯ ЭКОНОМИКА</b>\n\nУ вас есть ненужные ордера на арест или купоны? Продайте их другим игрокам на Черном Рынке за реальный кэшбэк!\n\n<i>Комиссия Скайнета всего 10%.</i>",
             "btn": "🛒 На Черный Рынок",
             "tab": "market"
+        },
+        {
+            "text": "🎁 <b>ЕЖЕДНЕВНЫЕ ЗАДАНИЯ И КЕЙСЫ!</b>\n\nСкайнет щедро награждает за активность! Общайтесь в чатах, крутите рулетку и открывайте <b>Деревянные, Серебряные и Золотые Сундуки</b> каждый день!\n\n<i>Прогресс сбрасывается в полночь. Успейте забрать награды!</i>",
+            "btn": "📋 Открыть Кейсы",
+            "tab": "tasks"
+        },
+        {
+            "text": "💼 <b>СТАНЬ АГЕНТОМ СКАЙНЕТА!</b>\n\nПриглашайте друзей в наши чаты по своей ссылке и получайте <b>+15 Очков</b> за каждого! А за каждые 10 человек — бонусный куш <b>+50 Очков</b> сверху!\n\n<i>Генератор персональных ссылок теперь встроен прямо в Игровой Кабинет.</i>",
+            "btn": "🔗 Моя партнерская ссылка",
+            "tab": "finance"
+        },
+        {
+            "text": "🎁 <b>РЕАЛЬНЫЕ ПРИЗЫ УЖЕ ЖДУТ!</b>\n\nВ Игровом Кабинете запущены новые Розыгрыши! Покупай билеты за Очки Бдительности и выигрывай ценные призы, сертификаты и VIP-доступ.\n\n<i>Чем больше билетов, тем выше шанс сорвать куш! Победитель определяется честным рандомом.</i>",
+            "btn": "🎟 Закупиться билетами",
+            "tab": "giveaways"
+        },
+        {
+            "text": "🚜 <b>ПОРА СОБИРАТЬ УРОЖАЙ!</b>\n\nТвоя Кибер-Ферма простаивает! Посади помидоры, вырасти подсолнух или рискни с мухомором. Собирай Очки, Осколки рулетки и Ключи от банковских Сейфов!\n\n<i>Не забудь вовремя полить грядки, иначе всё засохнет!</i>",
+            "btn": "🌱 На Кибер-Участок",
+            "tab": "farm"
+        },
+        {
+            "text": "🗄 <b>ВЗЛОМ СИСТЕМЫ!</b>\n\nВ Финансовом Сейфе лежат реальные рубли, а в Сейфе Данных — горы Очков! Добудь Ключ на ферме, угадай PIN-код и забери весь банк, пока это не сделал кто-то другой!\n\n<i>Лимит взломов ограничен. Расти Конские Каштаны, чтобы получить больше попыток!</i>",
+            "btn": "🔐 Взломать Сейф",
+            "tab": "farm"
         }
     ]
     
@@ -289,9 +344,12 @@ def start_scheduler():
         
         # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
         scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
+        
+        # 3. 🔥 ВЕЧЕРНИЙ ПУШ О БОНУСАХ (Ровно в 20:00 по Москве) 🔥
+        scheduler.add_job(daily_bonus_reminder, 'cron', hour=20, minute=0, id='bonus_reminder', replace_existing=True)
              
-        # 4. 🔥 Умная воронка-карусель в чаты (Проверяет базу каждую минуту!)
+        # 4. Умная воронка-карусель в чаты (Проверяет базу каждую минуту)
         scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
         
         scheduler.start()
-        print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши)!")
+        print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш)!")
