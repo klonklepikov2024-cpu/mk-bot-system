@@ -257,57 +257,7 @@
             </div>
         </div>
 
-    <!-- ================= ВКЛАДКА 7: ЗАДАНИЯ И КЕЙСЫ ================= -->
-    <div id="tab-tasks" class="tab-content">
-        <h2 class="font-bold text-2xl mb-4">Ежедневные Задания</h2>
-        <p class="text-xs text-gray-400 mb-6">Выполняйте условия и открывайте кейсы. Прогресс сбрасывается в полночь.</p>
-
-        <!-- Деревянный Кейс -->
-        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-amber-800/50">
-            <div class="flex justify-between items-center mb-2">
-                <div class="flex items-center space-x-3">
-                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(180,83,9,0.5)]">🪵</div>
-                    <div><h3 class="font-bold text-amber-500">Деревянный Кейс</h3><p class="text-[10px] text-gray-400">Общение в чатах</p></div>
-                </div>
-                <button id="btnCase_wooden" onclick="openTaskCase('wooden')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/15</button>
-            </div>
-            <p class="text-xs text-gray-300">💬 Напишите 15 содержательных сообщений в любых наших чатах.</p>
-            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
-                <div id="progress_wooden" class="bg-amber-600 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-            </div>
-        </div>
-
-        <!-- Серебряный Кейс -->
-        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-400/50">
-            <div class="flex justify-between items-center mb-2">
-                <div class="flex items-center space-x-3">
-                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(156,163,175,0.5)]">🥈</div>
-                    <div><h3 class="font-bold text-gray-300">Серебряный Кейс</h3><p class="text-[10px] text-gray-400">Хозяйственность</p></div>
-                </div>
-                <button id="btnCase_silver" onclick="openTaskCase('silver')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/2</button>
-            </div>
-            <ul class="text-xs text-gray-300 space-y-1">
-                <li id="cond_s1">❌ Забрать Ежедневный бонус</li>
-                <li id="cond_s2">❌ Полить грядку на ферме</li>
-            </ul>
-        </div>
-
-        <!-- Золотой Кейс -->
-        <div class="surface rounded-2xl p-4 shadow-lg border border-yellow-500/50">
-            <div class="flex justify-between items-center mb-2">
-                <div class="flex items-center space-x-3">
-                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]">🥇</div>
-                    <div><h3 class="font-bold text-yellow-500">Золотой Кейс</h3><p class="text-[10px] text-gray-400">Азартный игрок</p></div>
-                </div>
-                <button id="btnCase_gold" onclick="openTaskCase('gold')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/3</button>
-            </div>
-            <p class="text-xs text-gray-300">🎰 Сыграйте в Гача-Рулетку 3 раза за день.</p>
-            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
-                <div id="progress_gold" class="bg-yellow-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-            </div>
-        </div>
-    </div>
-
+    
         <!-- БЛОК 2: ГРЯДКИ И ТРАКТОР -->
         <div class="flex justify-between items-center mb-3">
             <div>
@@ -381,6 +331,57 @@
             </div>
         </div>
     </div> <!-- 🔥 ВОТ ЭТУ СКОБКУ Я СЪЕЛ! ДОБАВЬ ЕЁ СЮДА 🔥 -->
+
+    <!-- ================= ВКЛАДКА 7: ЗАДАНИЯ И КЕЙСЫ ================= -->
+    <div id="tab-tasks" class="tab-content">
+        <h2 class="font-bold text-2xl mb-4">Ежедневные Задания</h2>
+        <p class="text-xs text-gray-400 mb-6">Выполняйте условия и открывайте кейсы. Прогресс сбрасывается в полночь.</p>
+
+        <!-- Деревянный Кейс -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-amber-800/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-3">
+                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(180,83,9,0.5)]">🪵</div>
+                    <div><h3 class="font-bold text-amber-500">Деревянный Кейс</h3><p class="text-[10px] text-gray-400">Общение в чатах</p></div>
+                </div>
+                <button id="btnCase_wooden" onclick="openTaskCase('wooden')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/15</button>
+            </div>
+            <p class="text-xs text-gray-300">💬 Напишите 15 содержательных сообщений в любых наших чатах.</p>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
+                <div id="progress_wooden" class="bg-amber-600 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Серебряный Кейс -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-400/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-3">
+                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(156,163,175,0.5)]">🥈</div>
+                    <div><h3 class="font-bold text-gray-300">Серебряный Кейс</h3><p class="text-[10px] text-gray-400">Хозяйственность</p></div>
+                </div>
+                <button id="btnCase_silver" onclick="openTaskCase('silver')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/2</button>
+            </div>
+            <ul class="text-xs text-gray-300 space-y-1">
+                <li id="cond_s1">❌ Забрать Ежедневный бонус</li>
+                <li id="cond_s2">❌ Полить грядку на ферме</li>
+            </ul>
+        </div>
+
+        <!-- Золотой Кейс -->
+        <div class="surface rounded-2xl p-4 shadow-lg border border-yellow-500/50">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-3">
+                    <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]">🥇</div>
+                    <div><h3 class="font-bold text-yellow-500">Золотой Кейс</h3><p class="text-[10px] text-gray-400">Азартный игрок</p></div>
+                </div>
+                <button id="btnCase_gold" onclick="openTaskCase('gold')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/3</button>
+            </div>
+            <p class="text-xs text-gray-300">🎰 Сыграйте в Гача-Рулетку 3 раза за день.</p>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
+                <div id="progress_gold" class="bg-yellow-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
         
     <!-- 🔥 НАШИ ПУЛЕНЕПРОБИВАЕМЫЕ МОДАЛЬНЫЕ ОКНА 🔥 -->
     
