@@ -1314,7 +1314,8 @@ def api_get_safes():
 @app.route('/api/crack_safe', methods=['POST'])
 def api_crack_safe():
     data = request.json
-    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
     
     user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
     uid = user_info['id']
@@ -1331,28 +1332,26 @@ def api_crack_safe():
         key_name = "Синий" if safe_color == 'blue' else "Красный"
         return jsonify({"error": f"Вам нужен {key_name} ключ! Вырастите его на грядке."}), 400
 
-    # 🔥 ПАССИВКА: КОНСКИЙ КАШТАН И ЛИМИТЫ 🔥
+    # 🔥 ПАССИВКА: КОНСКИЙ КАШТАН И ИДЕАЛЬНОЕ ВРЕМЯ 🔥
     import datetime
-    import pytz
+    # Сдвиг +5 часов для Екатеринбурга (работает всегда и без сторонних библиотек!)
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
     
-    # Сбрасываем ровно в полночь по Екатеринбургу
-    today_str = datetime.datetime.now(pytz.timezone('Asia/Yekaterinburg')).strftime("%Y-%m-%d")
-    
-    # Сброс лимитов на новый день
     current_cracks = user_db.get("daily_cracks", 0)
-    is_new_day = user_db.get("last_crack_date") != today_str
+    is_new_day = (user_db.get("last_crack_date") != today_str)
     
+    # Сброс лимитов на новый день в памяти
     if is_new_day:
         current_cracks = 0
         
-    # Считаем каштаны на грядках юзера
     chestnuts_count = db['farm_plots'].count_documents({"uid": uid, "seed_type": "chestnut", "status": "ready"})
     max_cracks = 3 + chestnuts_count
     
     if current_cracks >= max_cracks:
         return jsonify({"error": f"Лимит взломов на сегодня исчерпан ({current_cracks}/{max_cracks})!\nПриходите завтра или посадите больше Каштанов."}), 400
         
-    # 🔥 ГЛАВНЫЙ ФИКС: Если новый день, жестко сбрасываем счетчик в БАЗЕ на 1, иначе плюсуем 🔥
+    # 🔥 ЖЕСТКИЙ СБРОС ЛИМИТОВ В БАЗЕ (Больше не зациклится!) 🔥
     if is_new_day:
         paid_collection.update_one(
             {"uid": uid}, 
