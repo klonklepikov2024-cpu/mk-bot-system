@@ -1333,11 +1333,16 @@ def api_crack_safe():
 
     # 🔥 ПАССИВКА: КОНСКИЙ КАШТАН И ЛИМИТЫ 🔥
     import datetime
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    import pytz
+    
+    # Сбрасываем ровно в полночь по Екатеринбургу
+    today_str = datetime.datetime.now(pytz.timezone('Asia/Yekaterinburg')).strftime("%Y-%m-%d")
     
     # Сброс лимитов на новый день
     current_cracks = user_db.get("daily_cracks", 0)
-    if user_db.get("last_crack_date") != today_str:
+    is_new_day = user_db.get("last_crack_date") != today_str
+    
+    if is_new_day:
         current_cracks = 0
         
     # Считаем каштаны на грядках юзера
@@ -1347,11 +1352,17 @@ def api_crack_safe():
     if current_cracks >= max_cracks:
         return jsonify({"error": f"Лимит взломов на сегодня исчерпан ({current_cracks}/{max_cracks})!\nПриходите завтра или посадите больше Каштанов."}), 400
         
-    # Списываем 1 ключ, увеличиваем счетчик попыток и обновляем дату
-    paid_collection.update_one(
-        {"uid": uid}, 
-        {"$inc": {key_field: -1, "daily_cracks": 1}, "$set": {"last_crack_date": today_str}}
-    )
+    # 🔥 ГЛАВНЫЙ ФИКС: Если новый день, жестко сбрасываем счетчик в БАЗЕ на 1, иначе плюсуем 🔥
+    if is_new_day:
+        paid_collection.update_one(
+            {"uid": uid}, 
+            {"$inc": {key_field: -1}, "$set": {"daily_cracks": 1, "last_crack_date": today_str}}
+        )
+    else:
+        paid_collection.update_one(
+            {"uid": uid}, 
+            {"$inc": {key_field: -1, "daily_cracks": 1}, "$set": {"last_crack_date": today_str}}
+        )
     
     safe_id = f"safe_{safe_color}"
     safe = db['safes_state'].find_one({"_id": safe_id})
