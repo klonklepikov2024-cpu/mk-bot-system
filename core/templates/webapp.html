@@ -609,57 +609,159 @@
             });
         }
 
+        // ================= ТАБЛИЦЫ ПРИЗОВ =================
+        const agentLootTable = [
+            { id: "points_25", name: "25 Очков", icon: "💎", color: "text-blue-400" },
+            { id: "points_50", name: "50 Очков", icon: "💎", color: "text-blue-400" },
+            { id: "points_100", name: "100 Очков", icon: "💰", color: "text-green-400" },
+            { id: "shield_1", name: "Щит", icon: "🛡", color: "text-yellow-400" },
+            { id: "shards_5", name: "5 Осколков", icon: "🧩", color: "text-purple-400" },
+            { id: "points_500", name: "500 Очков", icon: "💸", color: "text-red-400" },
+            { id: "vip_status", name: "VIP СТАТУС", icon: "👑", color: "text-yellow-500" },
+            { id: "cash_500", name: "500 ₽", icon: "💵", color: "text-green-500" }
+        ];
+
+        const gachaLootTable = [
+            { id: "premium", name: "TG Premium", icon: "🏆", color: "text-blue-500" },
+            { id: "jackpot", name: "ДЖЕКПОТ VIP", icon: "🎰", color: "text-yellow-500" },
+            { id: "mini_jackpot", name: "Мини-Джекпот", icon: "💎", color: "text-blue-400" },
+            { id: "custom_tag", name: "Личный Тег", icon: "🌟", color: "text-yellow-300" },
+            { id: "shield", name: "Щит", icon: "🛡", color: "text-green-400" },
+            { id: "arrest", name: "Ордер", icon: "🚓", color: "text-red-500" },
+            { id: "amnesty", name: "Амнистия", icon: "🕊", color: "text-white" },
+            { id: "big_points", name: "Крупный Куш", icon: "💸", color: "text-green-400" },
+            { id: "discount", name: "Скидка", icon: "🎟", color: "text-purple-400" },
+            { id: "rubles", name: "Кэшбэк (₽)", icon: "💵", color: "text-green-500" },
+            { id: "tax", name: "Налоговая", icon: "💀", color: "text-red-600" },
+            { id: "tax_cactus", name: "Спас Кактус", icon: "🌵", color: "text-green-600" },
+            { id: "shards", name: "Осколок", icon: "🧩", color: "text-gray-300" }
+        ];
+
         // --- ПРОФИЛЬ: РУЛЕТКА ---
         function spinRoulette() {
             const btn = document.getElementById('spinBtn');
-            const slotIcon = document.getElementById('slotIcon');
-            btn.innerText = "⏳ Крутим барабан...";
+            const origText = btn.innerHTML;
+            btn.innerHTML = "⏳ Связь со Скайнетом...";
             btn.disabled = true;
-            btn.classList.add('opacity-70');
-            
-            const emojis = ['🍒', '🍋', '🔔', '💎', '7️⃣', '💀', '🛡', '🧩', '💸'];
-            // УБРАНА ВИБРАЦИЯ ИЗ ИНТЕРВАЛА ДЛЯ ЗАЩИТЫ ОТ КРАША ТЕЛЕГРАМА!
-            let spinInterval = setInterval(() => {
-                slotIcon.innerText = emojis[Math.floor(Math.random() * emojis.length)];
-            }, 100); 
 
             apiCall('/api/spin_roulette').then(data => {
-                setTimeout(() => {
-                    clearInterval(spinInterval);
-                    slotIcon.innerText = '🎰';
-                    btn.innerText = "Крутить барабан";
-                    btn.disabled = false;
-                    btn.classList.remove('opacity-70');
-                    
-                    if (data.error) {
-                        customAlert(data.error, "Ошибка", "❌");
-                    } else {
-                        let icon = '🎁';
-                        if (data.message.includes('ДЖЕКПОТ') || data.message.includes('ДЕНЕЖНЫЙ')) {
-                            icon = '💎';
-                            // Безопасная крутая вибрация
-                            setTimeout(() => safeHaptic('impact', 'heavy'), 150);
-                            setTimeout(() => safeHaptic('impact', 'heavy'), 300);
-                            setTimeout(() => safeHaptic('impact', 'heavy'), 450);
-                            setTimeout(() => safeHaptic('notify', 'success'), 600);
-                        }
-                        else if (data.message.includes('КУШ')) {
-                            icon = '💸';
-                            setTimeout(() => safeHaptic('impact', 'medium'), 200);
-                            setTimeout(() => safeHaptic('impact', 'medium'), 400);
-                        }
-                        else if (data.message.includes('НАЛОГОВАЯ')) icon = '💀';
-                        else if (data.message.includes('АРТЕФАКТ')) icon = '🚓';
-                        else if (data.message.includes('ЭПИЧЕСКИЙ')) icon = '🔥';
-                        else if (data.message.includes('Осколок')) icon = '🧩';
+                btn.innerHTML = origText;
+                btn.disabled = false;
 
-                        customAlert(data.message, "Результат", icon);
-                        loadProfile();
-                    }
-                }, 2000); 
-            }).catch((e) => { 
-                clearInterval(spinInterval); slotIcon.innerText = '🎰'; btn.disabled = false; btn.classList.remove('opacity-70'); 
+                if (data.error) {
+                    customAlert(data.error, "Ошибка", "❌");
+                    return;
+                }
+                
+                showRibbonAnimation(data.won_id, data.won_name, gachaLootTable, () => {
+                    let icon = '🎁';
+                    if (data.message.includes('ДЖЕКПОТ') || data.message.includes('ДЕНЕЖНЫЙ')) icon = '💎';
+                    else if (data.message.includes('КУШ')) icon = '💸';
+                    else if (data.message.includes('НАЛОГОВАЯ')) icon = '💀';
+                    else if (data.message.includes('АРТЕФАКТ')) icon = '🚓';
+                    else if (data.message.includes('ЭПИЧЕСКИЙ')) icon = '🔥';
+                    else if (data.message.includes('Осколок')) icon = '🧩';
+                    
+                    customAlert(data.message, "Результат", icon);
+                });
             });
+        }
+
+        // ================= КЕЙС АГЕНТА =================
+        function startAgentCaseRoulette() {
+            const btn = document.getElementById('openAgentCaseBtn');
+            const origText = btn.innerHTML;
+            btn.innerHTML = "⏳ Связь со Скайнетом...";
+            btn.disabled = true;
+
+            apiCall('/api/open_agent_case').then(data => {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+
+                if (data.error) { customAlert(data.error, "Внимание", "⚠️"); return; }
+                document.getElementById('agentCasesCount').innerText = data.cases_left;
+                
+                showRibbonAnimation(data.won_id, data.won_name, agentLootTable, () => {
+                    let icon = '🎁';
+                    if(data.won_id.includes('vip') || data.won_id.includes('cash')) icon = '💎';
+                    customAlert(`Вы получили: ${data.won_name}!`, "Кейс открыт", icon);
+                });
+            });
+        }
+
+        // ================= УНИВЕРСАЛЬНАЯ АНИМАЦИЯ CS:GO ЛЕНТЫ =================
+        function showRibbonAnimation(wonId, wonName, lootTable, onCompleteCallback) {
+            const modal = document.getElementById('csgoRouletteModal');
+            const ribbon = document.getElementById('rouletteRibbon');
+            const closeBtn = document.getElementById('closeRouletteBtn');
+            
+            modal.classList.remove('hidden');
+            closeBtn.classList.add('hidden');
+            
+            ribbon.style.transition = 'none';
+            ribbon.style.transform = `translateX(0px)`;
+            
+            let html = '';
+            const totalCards = 60;
+            const winningIndex = 50; 
+            
+            const wonItemInfo = lootTable.find(i => i.id === wonId) || { name: wonName, icon: "🎁", color: "text-white" };
+
+            for (let i = 0; i < totalCards; i++) {
+                let item;
+                if (i === winningIndex) {
+                    item = wonItemInfo; 
+                } else {
+                    // Эффект "почти сорвал куш"
+                    if (i === winningIndex - 1 || i === winningIndex + 1) {
+                        let rareItems = lootTable.filter(i => ["vip_status", "cash_500", "premium", "jackpot", "tax", "rubles"].includes(i.id));
+                        if(rareItems.length > 0) item = rareItems[Math.floor(Math.random() * rareItems.length)];
+                        else item = lootTable[Math.floor(Math.random() * lootTable.length)];
+                    } else {
+                        item = lootTable[Math.floor(Math.random() * lootTable.length)];
+                    }
+                }
+                html += `
+                <div class="roulette-item">
+                    <div class="text-4xl mb-2 drop-shadow-md">${item.icon}</div>
+                    <div class="text-[10px] font-black uppercase tracking-wider ${item.color} text-center px-1 break-words leading-tight">${item.name}</div>
+                </div>`;
+            }
+            ribbon.innerHTML = html;
+            
+            setTimeout(() => {
+                ribbon.style.transition = 'transform 5s cubic-bezier(0.15, 0.85, 0.15, 1)';
+                const cardWidth = 90; 
+                const containerWidth = document.querySelector('.roulette-container').clientWidth;
+                const randomOffset = Math.floor(Math.random() * (cardWidth - 10)) - ((cardWidth - 10) / 2); 
+                const finalOffset = (winningIndex * cardWidth) - (containerWidth / 2) + (cardWidth / 2) + randomOffset;
+                
+                ribbon.style.transform = `translateX(-${finalOffset}px)`;
+                
+                let ticks = 0;
+                let tickInterval = setInterval(() => {
+                    safeHaptic('impact', 'light');
+                    ticks++;
+                    if(ticks > 30) clearInterval(tickInterval);
+                }, 150);
+
+                setTimeout(() => {
+                    clearInterval(tickInterval);
+                    closeBtn.classList.remove('hidden');
+                    
+                    closeBtn.onclick = function() {
+                        modal.classList.add('hidden');
+                        if (onCompleteCallback) onCompleteCallback();
+                    };
+                    
+                    if(wonId.includes('vip') || wonId.includes('cash') || wonId.includes('500') || wonId.includes('premium') || wonId.includes('jackpot') || wonId.includes('tax')) {
+                        safeHaptic('impact', 'heavy'); setTimeout(() => safeHaptic('impact', 'heavy'), 300);
+                    } else {
+                        safeHaptic('notify', 'success');
+                    }
+                    loadProfile(); 
+                }, 5200); 
+            }, 100);
         }
 
         // --- РОЗЫГРЫШИ ---
@@ -1070,106 +1172,6 @@
             });
         }
 
-        // ================= КЕЙС АГЕНТА (CS:GO РУЛЕТКА) =================
-        const agentLootTable = [
-            { id: "points_25", name: "25 Очков", icon: "💎", color: "text-blue-400" },
-            { id: "points_50", name: "50 Очков", icon: "💎", color: "text-blue-400" },
-            { id: "points_100", name: "100 Очков", icon: "💰", color: "text-green-400" },
-            { id: "shield_1", name: "Щит", icon: "🛡", color: "text-yellow-400" },
-            { id: "shards_5", name: "5 Осколков", icon: "🧩", color: "text-purple-400" },
-            { id: "points_500", name: "500 Очков", icon: "💸", color: "text-red-400" },
-            { id: "vip_status", name: "VIP СТАТУС", icon: "👑", color: "text-yellow-500" },
-            { id: "cash_500", name: "500 ₽", icon: "💵", color: "text-green-500" }
-        ];
-
-        function startAgentCaseRoulette() {
-            const btn = document.getElementById('openAgentCaseBtn');
-            const origText = btn.innerHTML;
-            btn.innerHTML = "⏳ Связь со Скайнетом...";
-            btn.disabled = true;
-
-            apiCall('/api/open_agent_case').then(data => {
-                btn.innerHTML = origText;
-                btn.disabled = false;
-
-                if (data.error) {
-                    customAlert(data.error, "Внимание", "⚠️");
-                    return;
-                }
-                document.getElementById('agentCasesCount').innerText = data.cases_left;
-                showRouletteAnimation(data.won_id, data.won_name);
-            });
-        }
-
-        function showRouletteAnimation(wonId, wonName) {
-            const modal = document.getElementById('csgoRouletteModal');
-            const ribbon = document.getElementById('rouletteRibbon');
-            const closeBtn = document.getElementById('closeRouletteBtn');
-            
-            modal.classList.remove('hidden');
-            closeBtn.classList.add('hidden');
-            
-            ribbon.style.transition = 'none';
-            ribbon.style.transform = `translateX(0px)`;
-            
-            let html = '';
-            const totalCards = 60;
-            const winningIndex = 50; 
-            
-            const wonItemInfo = agentLootTable.find(i => i.id === wonId) || { name: wonName, icon: "🎁", color: "text-white" };
-
-            for (let i = 0; i < totalCards; i++) {
-                let item;
-                if (i === winningIndex) {
-                    item = wonItemInfo; 
-                } else {
-                    if (i === winningIndex - 1 || i === winningIndex + 1) {
-                        item = agentLootTable.find(i => i.id === "vip_status" || i.id === "cash_500");
-                    } else {
-                        item = agentLootTable[Math.floor(Math.random() * agentLootTable.length)];
-                    }
-                }
-                html += `
-                <div class="roulette-item">
-                    <div class="text-4xl mb-2 drop-shadow-md">${item.icon}</div>
-                    <div class="text-[10px] font-black uppercase tracking-wider ${item.color} text-center px-1 break-words leading-tight">${item.name}</div>
-                </div>`;
-            }
-            ribbon.innerHTML = html;
-            
-            setTimeout(() => {
-                ribbon.style.transition = 'transform 5s cubic-bezier(0.15, 0.85, 0.15, 1)';
-                const cardWidth = 90; 
-                const containerWidth = document.querySelector('.roulette-container').clientWidth;
-                const randomOffset = Math.floor(Math.random() * (cardWidth - 10)) - ((cardWidth - 10) / 2); 
-                const finalOffset = (winningIndex * cardWidth) - (containerWidth / 2) + (cardWidth / 2) + randomOffset;
-                
-                ribbon.style.transform = `translateX(-${finalOffset}px)`;
-                
-                let ticks = 0;
-                let tickInterval = setInterval(() => {
-                    safeHaptic('impact', 'light');
-                    ticks++;
-                    if(ticks > 30) clearInterval(tickInterval);
-                }, 150);
-
-                setTimeout(() => {
-                    clearInterval(tickInterval);
-                    closeBtn.classList.remove('hidden');
-                    
-                    let icon = wonItemInfo.icon;
-                    if(wonId.includes('vip') || wonId.includes('cash') || wonId.includes('500')) {
-                        safeHaptic('impact', 'heavy'); setTimeout(() => safeHaptic('impact', 'heavy'), 300);
-                        customAlert(`ДЖЕКПОТ!!! Выбили: ${wonName}!`, "СУПЕР-ПРИЗ", icon);
-                    } else {
-                        safeHaptic('notify', 'success');
-                        customAlert(`Вы получили: ${wonName}!`, "Кейс открыт", icon);
-                    }
-                    loadProfile(); 
-                }, 5200); 
-            }, 100);
-        }
-
         // ================= ВЗЛОМ СЕЙФОВ =================
         let blueSafeInterval; // Глобальная переменная для таймера
 
@@ -1253,22 +1255,24 @@
                         let mins = Math.floor((left % 3600) / 60);
                         let timeStr = left > 0 ? `${hrs}ч ${mins}м` : "Созревает...";
                         
-                        // Кнопки полива и удобрения (сделали компактнее)
-                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[9px] text-blue-400 font-bold bg-blue-900/30 px-1.5 py-0.5 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
-                        let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[9px] text-purple-400 font-bold bg-purple-900/30 px-1.5 py-0.5 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>`;
-                        let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[9px] text-red-400 font-bold bg-red-900/30 px-1.5 py-0.5 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
+                        // Кнопки полива и удобрения выводим вниз
+                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[10px] text-blue-400 font-bold bg-blue-900/30 px-2 py-1 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
+                        let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[10px] text-purple-400 font-bold bg-purple-900/30 px-2 py-1 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>`;
+                        let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[10px] text-red-400 font-bold bg-red-900/30 px-2 py-1 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
 
                         html += `
-                        <div class="surface border border-green-700/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_10px_rgba(34,197,94,0.1)] relative">
-                            <div class="flex justify-between items-center w-full px-1 mb-1">
+                        <div class="surface border border-green-700/50 rounded-xl p-3 text-center flex flex-col shadow-[0_0_10px_rgba(34,197,94,0.1)] relative">
+                            <div class="flex justify-between items-center w-full mb-1">
                                 <span class="text-xs font-bold">${plot.name.split(' ')[1] || plot.name}</span>
-                                <div class="flex gap-1 whitespace-nowrap">${digBtn} ${fertBtn}${waterBtn}</div>
+                                <span class="text-[9px] text-gray-400">${timeStr}</span>
                             </div>
-                            <div class="text-3xl animate-pulse">🌿</div>
-                            <div class="w-full bg-black/50 rounded-full h-1.5 mt-2">
+                            <div class="text-3xl animate-pulse mb-1">🌿</div>
+                            <div class="w-full bg-black/50 rounded-full h-1.5 mb-2">
                                 <div class="bg-green-500 h-1.5 rounded-full transition-all duration-1000" style="width: ${percent}%"></div>
                             </div>
-                            <p class="text-[9px] text-gray-400 mt-1">Осталось: ${timeStr}</p>
+                            <div class="flex justify-center items-center gap-1 mt-auto w-full">
+                                ${digBtn} ${fertBtn} ${waterBtn}
+                            </div>
                         </div>`;
                     } 
                     else if (plot.status === 'ready') {
@@ -1282,6 +1286,7 @@
                         if(plot.seed_type === 'parsley') cropIcon = '🌿';
                         if(plot.seed_type === 'cactus') cropIcon = '🌵';
                         if(plot.seed_type === 'amanita') cropIcon = '🍄';
+                        if(plot.seed_type === 'money_tree') cropIcon = '🌳';
                         
                         let actionHtml = `<button onclick="farmAction('harvest', ${plot.slot_id})" class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">Собрать</button>`;
                         
@@ -1293,9 +1298,9 @@
                         }
 
                         html += `
-                        <div class="surface border border-yellow-500/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_15px_rgba(234,179,8,0.2)]">
+                        <div class="surface border border-yellow-500/50 rounded-xl p-3 text-center flex flex-col shadow-[0_0_15px_rgba(234,179,8,0.2)]">
                             <div class="text-[10px] font-black text-yellow-500 mb-1 uppercase tracking-widest">Готово!</div>
-                            <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)]">${cropIcon}</div>
+                            <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)] mb-1">${cropIcon}</div>
                             ${actionHtml}
                         </div>`;
                     } 

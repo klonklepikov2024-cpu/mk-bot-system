@@ -342,6 +342,8 @@ def api_spin_roulette():
     import random
     val = random.randint(1, 64)
     prize_msg = ""
+    prize_id = ""
+    prize_name = ""
     
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
     premium_cost_stars = 1500
@@ -349,40 +351,33 @@ def api_spin_roulette():
     if val == 63 and bank_data.get("balance", 0) >= premium_cost_stars:
         db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
         prize_msg = "🏆 ГЛАВНЫЙ СУПЕР-ПРИЗ!!!\nВы выиграли Telegram Premium (3 мес.)!\nЗаявка отправлена админам."
+        prize_id, prize_name = "premium", "TG Premium"
         
         import time
-        db['premium_claims'].insert_one({
-            "uid": uid,
-            "username": username_str,
-            "timestamp": time.time(),
-            "status": "pending"
-        })
+        db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
         try:
             from core.bot import bot
             from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
             markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
-            bot.send_message(
-                STAFF_GROUP_ID, 
-                f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
-                f"👤 Победитель: {first_name} ({username_str})\n\n"
-                f"❗️ <i>Заявка добавлена в Веб-панель.</i>", 
-                parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
-            )
+            bot.send_message(STAFF_GROUP_ID, f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n👤 Победитель: {first_name} ({username_str})\n\n❗️ <i>Заявка добавлена в Веб-панель.</i>", parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
         except: pass
 
     elif val == 63:
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
         prize_msg = "🎰 МИНИ-ДЖЕКПОТ!\nФонд Premium пуст, поэтому вы получаете +1000 Очков и 5 Осколков!"
+        prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
 
     elif val == 64:
         code = f"JACKPOT-{random.randint(1000, 9999)}"
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
         prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nЗолотой Билет (VIP) и 300 очков!\nКод: {code}"
+        prize_id, prize_name = "jackpot", "ДЖЕКПОТ VIP"
 
     elif val in [7, 21, 35]:
         prize_msg = "🌟 СУПЕР-РЕДКИЙ ДРОП!\nВы выиграли право установить Личный Тег!\nНажмите кнопку 'Рюкзак -> Ваши промокоды' или проверьте ЛС бота."
+        prize_id, prize_name = "custom_tag", "Личный Тег"
         try:
             from core.bot import bot
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -393,14 +388,13 @@ def api_spin_roulette():
     elif val in [1, 22, 43]:
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1, "bounty_points": 50}})
         prize_msg = "🔥 ЭПИЧЕСКИЙ ВЫИГРЫШ!\nВы получили 🛡 Щит Иммунитета и 50 очков!"
+        prize_id, prize_name = "shield", "Щит Иммунитета"
 
     elif val in [10, 20, 40, 50]:
         lost_points = int(updated_user.get("bounty_points", 0) * 0.3)
-        
-        # 🔥 ПАССИВКА: КАКТУС 🔥
         has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
         if has_cactus:
-            lost_points = int(updated_user.get("bounty_points", 0) * 0.1) # 10% вместо 30%
+            lost_points = int(updated_user.get("bounty_points", 0) * 0.1) 
             
         if lost_points < 10: lost_points = 10
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
@@ -408,13 +402,16 @@ def api_spin_roulette():
         
         if has_cactus:
             prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
+            prize_id, prize_name = "tax_cactus", "Спас Кактус"
         else:
             prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано 30% баланса (-{lost_points} очков)."
+            prize_id, prize_name = "tax", "Налоговая (-30%)"
 
     elif val in [5, 17, 29]:
         code = f"ARREST-{random.randint(100, 999)}"
         db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         prize_msg = f"🚓 СОЦИАЛЬНЫЙ АРТЕФАКТ!\nВы нашли Ордер на Арест!\nКод: {code}"
+        prize_id, prize_name = "arrest", "Ордер на Арест"
 
     elif val in [13, 26, 39, 52]:
         strikes = updated_user.get("strikes", 0)
@@ -424,23 +421,26 @@ def api_spin_roulette():
         else:
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 100}})
             prize_msg = "🕊 БЕЛЫЙ БИЛЕТ!\nУ вас нет страйков. Получите +100 очков!"
+        prize_id, prize_name = "amnesty", "Амнистия"
 
     elif val in [15, 30, 45, 60]:
         win_points = random.choice([100, 150, 250])
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": win_points}})
         prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {win_points} 💎!"
+        prize_id, prize_name = "big_points", f"{win_points} 💎"
 
     elif val % 7 == 0:
         promos = [
-            {"target": "fine", "value": 50, "prefix": "FINE50", "name": "50% на оплату Штрафа"},
-            {"target": "ads", "value": 30, "prefix": "ADS30", "name": "30% на покупку Рекламы"},
-            {"target": "vip", "value": 40, "prefix": "VIP40", "name": "40% на покупку VIP"},
-            {"target": "all", "value": 15, "prefix": "ALL15", "name": "15% на Любую услугу"}
+            {"target": "fine", "value": 50, "prefix": "FINE50", "name": "50% на Штраф"},
+            {"target": "ads", "value": 30, "prefix": "ADS30", "name": "30% на Рекламу"},
+            {"target": "vip", "value": 40, "prefix": "VIP40", "name": "40% на VIP"},
+            {"target": "all", "value": 15, "prefix": "ALL15", "name": "15% на Любое"}
         ]
         drop = random.choice(promos)
         code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         prize_msg = f"✨ РЕДКИЙ ДРОП!\nВыиграна скидка {drop['name']}!\nКод: {code}"
+        prize_id, prize_name = "discount", "Скидка"
 
     elif val in [11, 33]:
         win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
@@ -449,17 +449,20 @@ def api_spin_roulette():
             db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
             prize_msg = f"✨ ДЕНЕЖНЫЙ КУПОН! ✨\nВы выиграли {win_rub} руб. на счет!"
+            prize_id, prize_name = "rubles", f"{win_rub} ₽"
         else:
             fallback_points = win_rub * 2
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": fallback_points}})
             prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {fallback_points} очков!"
+            prize_id, prize_name = "big_points", f"{fallback_points} 💎"
 
     else:
         shards_won = random.choice([1, 1, 1, 2])
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_won}})
         prize_msg = f"🧩 Барабан остановился...\nВы получили: +{shards_won} Осколок(ка) джекпота!"
+        prize_id, prize_name = "shards", f"{shards_won} Осколка"
 
-    return jsonify({"success": True, "message": prize_msg})
+    return jsonify({"success": True, "message": prize_msg, "won_id": prize_id, "won_name": prize_name})
 
 @app.route('/api/claim_bonus', methods=['POST'])
 def api_claim_bonus():
