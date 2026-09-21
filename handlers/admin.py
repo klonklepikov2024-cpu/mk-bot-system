@@ -2821,17 +2821,27 @@ def process_gw_hours(message, title, price):
         return
     hours = int(message.text)
     
-    # Считаем дату завершения
-    end_date = datetime.datetime.now() + datetime.timedelta(hours=hours)
-    gw_id = f"gw_{int(datetime.datetime.now().timestamp())}" # Уникальный ID
+    msg = bot.send_message(message.chat.id, f"Время: **{hours} часов**\n\nСколько будет победителей? (Введи число, например: `1`, `5` или `10`):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_gw_winners, title=title, price=price, hours=hours)
+
+def process_gw_winners(message, title, price, hours):
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "❌ Нужно ввести число. Начните заново: /new_gw")
+        return
+    winners_count = int(message.text)
+    if winners_count < 1: winners_count = 1
     
-    # Сохраняем в базу
+    import datetime
+    end_date = datetime.datetime.now() + datetime.timedelta(hours=hours)
+    gw_id = f"gw_{int(datetime.datetime.now().timestamp())}" 
+    
     db['giveaways'].insert_one({
         "_id": gw_id,
         "title": title,
         "ticket_price": price,
         "last_ticket_num": 0,
         "total_tickets": 0,
+        "winners_count": winners_count, # 🔥 Сохраняем кол-во победителей
         "status": "active",
         "end_date": end_date
     })
@@ -2839,11 +2849,12 @@ def process_gw_hours(message, title, price):
     end_date_str = end_date.strftime("%d.%m.%Y в %H:%M")
     bot.send_message(
         message.chat.id, 
-        f"✅ **Розыгрыш успешно запущен и уже появился в Web App!**\n\n"
+        f"✅ **Розыгрыш успешно запущен!**\n\n"
         f"🎁 Приз: **{title}**\n"
         f"🎟 Цена билета: **{price} очк.**\n"
+        f"🏆 Победителей: **{winners_count} чел.**\n"
         f"⏳ Итоги: **{end_date_str}**\n\n"
-        f"_Скайнет автоматически выберет победителя, когда время выйдет._",
+        f"_Скайнет автоматически выберет победителей, когда время выйдет._",
         parse_mode="Markdown"
     )
 

@@ -7,6 +7,7 @@ from flask import Flask, request
 import hashlib
 import hmac
 import json
+import random
 import html
 from urllib.parse import unquote
 from flask import render_template, jsonify
@@ -199,14 +200,14 @@ def api_get_giveaways():
             time_left_str = "Завершен"
             
         winner_name = "Нет участников"
-        if gw.get('winner_uid'):
+        if gw.get('winner_name'):
+            winner_name = gw.get('winner_name')
+        elif gw.get('winner_uid'):
             win_tx = db['tickets_history'].find_one({"giveaway_id": gw["_id"], "uid": gw["winner_uid"]})
             if win_tx:
                 winner_name = win_tx.get('name', f"ID {gw['winner_uid']}")
             else:
                 winner_name = f"ID {gw['winner_uid']}"
-        elif gw.get('winner') == "Нет участников":
-            winner_name = "Никто не участвовал"
 
         result.append({
             "id": str(gw["_id"]),
@@ -635,6 +636,10 @@ def api_open_chest():
     points = user_data.get("bounty_points", 0)
     
     if points < PRICE: return jsonify({"error": "Нужно 1000 очков!"}), 400
+
+    import datetime
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"chest_opened": 1}}, upsert=True)
     
     paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
     remaining = points - PRICE
@@ -671,8 +676,9 @@ def api_get_cpa():
     fraud = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
     user_data = paid_collection.find_one({"uid": uid}) or {}
     dupes = user_data.get("cpa_duplicates", 0)
+    cases = user_data.get("agent_cases", 0) 
     
-    return jsonify({"hold": hold, "approved": approved, "fraud": fraud, "duplicates": dupes})
+    return jsonify({"hold": hold, "approved": approved, "fraud": fraud, "duplicates": dupes, "cases": cases})
 
 @app.route('/api/get_cpa_networks', methods=['POST'])
 def api_get_cpa_networks():
@@ -729,67 +735,93 @@ def api_exchange():
     if not user_db: return jsonify({"error": "Недостаточно рублей!"}), 400
     return jsonify({"success": True, "msg": f"✅ Успешно обменяли {cost}₽ на {reward}💎!"})
 
+def get_daily_tasks_matrix(uid, today_str):
+    """Секретная Матрица Заданий Скайнета"""
+    task_db = db['tasks_progress'].find_one({"uid": uid, "date": today_str}) or {}
+    
+    import datetime
+    weekday = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).weekday()
+    
+    msgs = task_db.get("messages", 0)
+    spins = task_db.get("roulette_spins", 0)
+    watered = task_db.get("watered", False)
+    bonus = task_db.get("bonus_claimed", False)
+    chests = task_db.get("chest_opened", 0)
+    
+    # 0=ПН, 1=ВТ, 2=СР, 3=ЧТ, 4=ПТ, 5=СБ, 6=ВС
+    matrix = {
+        0: {"name": "День Фермера", "w": {"t": "msgs", "g": 15, "d": "💬 Напишите 15 сообщений в чатах"}, "s": {"t": "water_bonus", "g": 2, "d": "💧 Полить грядку и 🎁 забрать бонус"}, "g": {"t": "spins", "g": 3, "d": "🎰 Сыграйте в Гача-Рулетку 3 раза"}},
+        3: {"name": "День Фермера", "w": {"t": "msgs", "g": 15, "d": "💬 Напишите 15 сообщений в чатах"}, "s": {"t": "water_bonus", "g": 2, "d": "💧 Полить грядку и 🎁 забрать бонус"}, "g": {"t": "spins", "g": 3, "d": "🎰 Сыграйте в Гача-Рулетку 3 раза"}},
+        
+        1: {"name": "День Общения", "w": {"t": "msgs", "g": 25, "d": "💬 Напишите 25 сообщений в чатах"}, "s": {"t": "spins", "g": 2, "d": "🎰 Сделайте 2 прокрута рулетки"}, "g": {"t": "water", "g": 1, "d": "💧 Полейте любую грядку на ферме"}},
+        4: {"name": "День Общения", "w": {"t": "msgs", "g": 25, "d": "💬 Напишите 25 сообщений в чатах"}, "s": {"t": "spins", "g": 2, "d": "🎰 Сделайте 2 прокрута рулетки"}, "g": {"t": "water", "g": 1, "d": "💧 Полейте любую грядку на ферме"}},
+        
+        2: {"name": "День Лудомана", "w": {"t": "msgs", "g": 10, "d": "💬 Напишите 10 сообщений в чатах"}, "s": {"t": "spins", "g": 3, "d": "🎰 Сделайте 3 прокрута рулетки"}, "g": {"t": "chest", "g": 1, "d": "📦 Взломайте Секретный Сундук 1 раз"}},
+        5: {"name": "День Лудомана", "w": {"t": "msgs", "g": 10, "d": "💬 Напишите 10 сообщений в чатах"}, "s": {"t": "spins", "g": 3, "d": "🎰 Сделайте 3 прокрута рулетки"}, "g": {"t": "chest", "g": 1, "d": "📦 Взломайте Секретный Сундук 1 раз"}},
+        
+        6: {"name": "День Отдыха", "w": {"t": "msgs", "g": 5, "d": "💬 Напишите всего 5 сообщений"}, "s": {"t": "bonus", "g": 1, "d": "🎁 Заберите ежедневный бонус в Кабинете"}, "g": {"t": "spins", "g": 1, "d": "🎰 Испытайте удачу: 1 прокрут рулетки"}}
+    }
+    
+    today_m = matrix.get(weekday)
+    
+    def calc(cfg):
+        t = cfg["t"]
+        if t == "msgs": return {"val": msgs, "ready": msgs >= cfg["g"]}
+        if t == "spins": return {"val": spins, "ready": spins >= cfg["g"]}
+        if t == "chest": return {"val": chests, "ready": chests >= cfg["g"]}
+        if t == "water": return {"val": 1 if watered else 0, "ready": watered}
+        if t == "bonus": return {"val": 1 if bonus else 0, "ready": bonus}
+        if t == "water_bonus": return {"val": (1 if watered else 0) + (1 if bonus else 0), "ready": watered and bonus}
+        return {"val": 0, "ready": False}
+
+    return {
+        "day_name": today_m["name"],
+        "opened": task_db.get("opened", []),
+        "watered": watered, "bonus": bonus,
+        "wooden": {"desc": today_m["w"]["d"], "val": calc(today_m["w"])["val"], "goal": today_m["w"]["g"], "ready": calc(today_m["w"])["ready"], "type": today_m["w"]["t"]},
+        "silver": {"desc": today_m["s"]["d"], "val": calc(today_m["s"])["val"], "goal": today_m["s"]["g"], "ready": calc(today_m["s"])["ready"], "type": today_m["s"]["t"]},
+        "gold":   {"desc": today_m["g"]["d"], "val": calc(today_m["g"])["val"], "goal": today_m["g"]["g"], "ready": calc(today_m["g"])["ready"], "type": today_m["g"]["t"]}
+    }
+
 @app.route('/api/get_tasks', methods=['POST'])
 def api_get_tasks():
     data = request.json
-    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
-        return jsonify({"error": "Auth failed"}), 403
-    
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
-    uid = json.loads(parsed_data['user'])['id']
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     
     import datetime
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    
-    task_db = db['tasks_progress'].find_one({"uid": uid, "date": today_str}) or {}
-    
-    return jsonify({
-        "messages": task_db.get("messages", 0),
-        "watered": task_db.get("watered", False),
-        "bonus_claimed": task_db.get("bonus_claimed", False),
-        "roulette_spins": task_db.get("roulette_spins", 0),
-        "opened_cases": task_db.get("opened", [])
-    })
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    return jsonify(get_daily_tasks_matrix(uid, today_str))
 
 @app.route('/api/open_task_case', methods=['POST'])
 def api_open_task_case():
     data = request.json
-    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
-        return jsonify({"error": "Auth failed"}), 403
-        
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
-    uid = json.loads(parsed_data['user'])['id']
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     case_type = data.get('case_type')
     
     import datetime
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    task_db = db['tasks_progress'].find_one({"uid": uid, "date": today_str}) or {}
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
     
-    if case_type in task_db.get("opened", []):
-        return jsonify({"error": "Вы уже открывали этот кейс сегодня!"}), 400
+    # Загружаем свежую матрицу для проверки условий!
+    matrix = get_daily_tasks_matrix(uid, today_str)
+    
+    if case_type in matrix["opened"]: return jsonify({"error": "Вы уже открывали этот кейс сегодня!"}), 400
+    if not matrix[case_type]["ready"]: return jsonify({"error": "Условия задания еще не выполнены!"}), 400
         
-    msg = ""
     update_query = {"$inc": {}}
-    
     if case_type == 'wooden':
-        if task_db.get("messages", 0) < 15: return jsonify({"error": "Напишите 15 сообщений в чатах!"}), 400
         update_query["$inc"]["bounty_points"] = 50
         update_query["$inc"]["jackpot_shards"] = 1
         msg = "🪵 **Деревянный кейс открыт!**\nВы получили 50 💎 и 1 Осколок рулетки!"
-        
     elif case_type == 'silver':
-        if not task_db.get("watered") or not task_db.get("bonus_claimed"): return jsonify({"error": "Выполните все условия!"}), 400
         update_query["$inc"]["bounty_points"] = 100
         update_query["$inc"]["immunity"] = 1
         msg = "🥈 **Серебряный кейс открыт!**\nВы получили 100 💎 и 1 Щит Иммунитета!"
-        
     elif case_type == 'gold':
-        if task_db.get("roulette_spins", 0) < 3: return jsonify({"error": "Сыграйте в рулетку 3 раза!"}), 400
         update_query["$inc"]["bounty_points"] = 300
         update_query["$inc"]["key_red"] = 1
         msg = "🥇 **Золотой кейс открыт!**\nВы сорвали куш: 300 💎 и 🔑 Ключ от Финансового Сейфа!"
-    else:
-        return jsonify({"error": "Неизвестный кейс"}), 400
         
     paid_collection.update_one({"uid": uid}, update_query)
     db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$push": {"opened": case_type}}, upsert=True)
@@ -1055,7 +1087,8 @@ CROPS = {
     # 🔥 НОВЫЕ СЕМЕНА 🔥
     "parsley": {"name": "🌿 Петрушка", "cost_pts": 100, "grow_time": 8*3600, "water_req": False, "reward_pts": [50, 80]},
     "cactus": {"name": "🌵 Кактус", "cost_pts": 800, "grow_time": 5*24*3600, "water_req": False, "reward_pts": [0, 0], "is_decor": True},
-    "amanita": {"name": "🍄 К-Мухомор", "cost_pts": 300, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]}
+    "amanita": {"name": "🍄 К-Мухомор", "cost_pts": 300, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]},
+    "money_tree": {"name": "🌳 Ден. Дерево", "cost_pts": 5000, "grow_time": 5*24*3600, "water_req": True, "reward_rub": [10, 30]}
 }
 
 @bot.message_handler(commands=['check_gw'])
@@ -1207,6 +1240,12 @@ def api_farm_action():
         db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None}})
         return jsonify({"success": True, "msg": "🥀 Засохший куст убран. Слот свободен."})
         
+    # === ВЫКОПКА ЖИВОГО РАСТЕНИЯ ===
+    elif action == 'dig_up':
+        if plot['status'] == 'empty': return jsonify({"error": "Грядка и так пуста!"}), 400
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "planted_at": None, "last_watered": None}})
+        return jsonify({"success": True, "msg": "⛏ Вы вырвали растение с корнем. Грядка очищена!"})
+        
     # === СБОР УРОЖАЯ ===
     elif action == 'harvest':
         if plot['status'] != 'ready': return jsonify({"error": "Урожай еще не созрел!"}), 400
@@ -1226,6 +1265,22 @@ def api_farm_action():
             else:
                 update_query["$inc"]["bounty_points"] = 0 # Пустышка
                 msg = "🍄 Отравленная земля...\nМухомор сгнил, вы потеряли вложения."
+                
+        # 🔥 СПЕЦ-ЛОГИКА: ДЕНЕЖНОЕ ДЕРЕВО (Многоразовое) 🔥
+        elif plot['seed_type'] == 'money_tree':
+            reward_rub = random.randint(crop['reward_rub'][0], crop['reward_rub'][1])
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": reward_rub}})
+            
+            # Магия цикличного созревания (Откатываем таймер, чтобы осталось 24 часа)
+            new_planted_at = now - (crop['grow_time'] - 86400) 
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {
+                "$set": {
+                    "status": "growing", 
+                    "planted_at": new_planted_at,
+                    "last_watered": now 
+                }
+            })
+            return jsonify({"success": True, "msg": f"🌳 Вы стрясли с дерева {reward_rub} ₽!\nДерево сбросило плоды. Следующий урожай будет готов через 24 часа. Не забывайте поливать!"})
                 
         # СТАНДАРТНЫЙ УРОЖАЙ (ВКЛЮЧАЯ ПЕТРУШКУ)
         else:
@@ -1405,6 +1460,77 @@ def api_crack_safe():
         )
         
         return jsonify({"success": True, "msg": f"Доступ запрещен!\n{result_text}\nКлюч сожжен. Попыток сегодня: {current_cracks + 1}/{max_cracks}", "cracked": False})
+
+@app.route('/api/open_agent_case', methods=['POST'])
+def api_open_agent_case():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    cases_count = user_db.get("agent_cases", 0)
+    
+    if cases_count < 1:
+        return jsonify({"error": "У вас нет Кейсов Агента! Приглашайте друзей по ссылке."}), 400
+        
+    # Списываем 1 кейс сразу, чтобы не накрутили
+    paid_collection.update_one({"uid": uid}, {"$inc": {"agent_cases": -1}})
+    
+    # 🎲 ЛУТ-ТАБЛИЦА (Наши утвержденные шансы)
+    # Формат: (ID_приза, Название, Вес/Шанс)
+    loot_table = [
+        ("points_25", "25 💎 Очков", 40.0),
+        ("points_50", "50 💎 Очков", 30.0),
+        ("points_100", "100 💎 Очков", 15.0),
+        ("shield_1", "🛡 Щит Иммунитета", 7.0),
+        ("shards_5", "🧩 5 Осколков", 3.0),
+        ("points_500", "500 💎 Очков", 4.0),
+        ("vip_status", "👑 VIP-Статус", 0.5),
+        ("cash_500", "💸 500 Рублей", 0.5)
+    ]
+    
+    # Разделяем таблицу для random.choices
+    prizes = [item for item in loot_table]
+    weights = [item[2] for item in loot_table]
+    
+    # Бросаем кубик!
+    won_prize = random.choices(prizes, weights=weights, k=1)[0]
+    prize_id = won_prize[0]
+    prize_name = won_prize[1]
+    
+    # 🎁 ВЫДАЧА ПРИЗА В БАЗУ
+    if prize_id.startswith("points_"):
+        amount = int(prize_id.split("_")[1])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}})
+    elif prize_id == "shield_1":
+        paid_collection.update_one({"uid": uid}, {"$inc": {"shields": 1}})
+    elif prize_id == "shards_5":
+        paid_collection.update_one({"uid": uid}, {"$inc": {"shards": 5}})
+    elif prize_id == "cash_500":
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+    elif prize_id == "vip_status":
+        paid_collection.update_one({"uid": uid}, {"$set": {"vip_status": True}})
+        
+    # Если выпал джекпот — трубим админам
+    if prize_id in ["vip_status", "cash_500", "points_500"]:
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            bot.send_message(STAFF_GROUP_ID, f"🎰 <b>ДЖЕКПОТ В КЕЙСАХ АГЕНТА!</b>\nПользователь `{uid}` выбил: <b>{prize_name}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
+        except: pass
+
+    # Отправляем на фронтенд ТОЛЬКО ID выигранного приза.
+    # Остальную магию (прокрутку, генерацию ленты и т.д.) будет делать JavaScript.
+    return jsonify({
+        "success": True, 
+        "won_id": prize_id, 
+        "won_name": prize_name,
+        "cases_left": cases_count - 1
+    })
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():

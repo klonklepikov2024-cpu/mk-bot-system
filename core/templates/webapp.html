@@ -20,6 +20,12 @@
         .tab-content.active { display: block; }
         input, select { background-color: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); }
         input:focus, select:focus { border-color: var(--tg-theme-button-color, #2b6bf3); }
+
+        /* === CS:GO РУЛЕТКА === */
+        .roulette-container { position: relative; width: 100%; height: 110px; overflow: hidden; background: rgba(0, 0, 0, 0.6); border-radius: 12px; border: 2px solid var(--tg-theme-secondary-bg-color, #27282d); }
+        .roulette-ribbon { display: flex; height: 100%; width: max-content; transition: transform 5s cubic-bezier(0.15, 0.85, 0.15, 1); }
+        .roulette-item { width: 90px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid rgba(255, 255, 255, 0.1); flex-shrink: 0; background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 100%); }
+        .roulette-selector { position: absolute; top: 0; bottom: 0; left: 50%; width: 4px; background: #ef4444; transform: translateX(-50%); z-index: 10; box-shadow: 0 0 15px #ef4444, 0 0 5px #ef4444; }
     </style>
 </head>
 <body class="p-4">
@@ -192,7 +198,6 @@
             <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Фрод / Боты:</span> <span class="font-bold text-red-400" id="cpaFraud">0</span></div>
             <div class="flex justify-between mb-4"><span class="text-gray-400 text-sm">Дубликаты:</span> <span class="font-bold text-gray-500" id="cpaDupes">0</span></div>
             
-            <!-- Интерактивный генератор -->
             <div class="bg-black/30 p-3 rounded-xl border border-gray-700 mb-2">
                 <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">1. Выберите сеть</label>
                 <select id="cpaNetworkSelect" onchange="updateCpaCities()" class="w-full text-white bg-gray-800 rounded-lg p-2 mb-3 outline-none border border-gray-600 focus:border-blue-500 text-sm">
@@ -209,7 +214,6 @@
                 </button>
             </div>
             
-            <!-- Окно с готовой ссылкой -->
             <div id="cpaResultBox" class="hidden bg-green-900/20 p-3 rounded-xl border border-green-700/50 text-center mt-3">
                 <p class="text-[10px] text-green-400 uppercase font-bold mb-1">Ваша персональная ссылка:</p>
                 <div class="bg-black/50 p-2 rounded text-xs font-mono text-blue-300 break-all mb-2 select-all" id="cpaLinkText">https://t.me/...</div>
@@ -218,47 +222,54 @@
                 </button>
             </div>
         </div>
-    </div> <!-- 👈 ДОБАВЬ ЭТОТ ЗАКРЫВАЮЩИЙ DIV ДЛЯ ВКЛАДКИ ФИНАНСОВ! -->
 
-<!-- ================= ВКЛАДКА 6: УЧАСТОК (ФЕРМА + СЕЙФЫ) ================= -->
+        <!-- 🔥 КЕЙС АГЕНТА 🔥 -->
+        <h3 class="font-bold text-lg mb-2 mt-6">💼 Контрабанда</h3>
+        <div class="surface rounded-2xl p-4 mb-6 shadow-lg border border-purple-500/50 relative overflow-hidden">
+            <div class="absolute -right-4 -top-4 text-6xl opacity-10">💼</div>
+            <div class="flex justify-between items-center mb-3 relative z-10">
+                <div>
+                    <h3 class="font-bold text-lg text-purple-400">Кейс Агента</h3>
+                    <p class="text-[10px] text-gray-400">За каждого активного реферала</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-gray-400">Доступно</p>
+                    <p class="text-2xl font-black text-white" id="agentCasesCount">0</p>
+                </div>
+            </div>
+            <button id="openAgentCaseBtn" onclick="startAgentCaseRoulette()" class="w-full bg-gradient-to-r from-purple-600 to-blue-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform relative z-10 flex justify-center items-center gap-2">
+                <span>🎰 Открыть Кейс</span>
+            </button>
+        </div>
+
+    </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ФИНАНСОВ 🔥 -->
+
+    <!-- ================= ВКЛАДКА 6: УЧАСТОК (ФЕРМА + СЕЙФЫ) ================= -->
     <div id="tab-farm" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Кибер-Участок</h2>
         
-        <!-- БЛОК 1: ДВА СЕЙФА -->
         <div class="grid grid-cols-2 gap-2 mb-6">
-            <!-- СЕЙФ ДАННЫХ -->
             <div class="surface rounded-2xl p-3 border border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.15)] text-center relative overflow-hidden flex flex-col">
                 <div class="absolute top-0 right-0 bg-blue-600 text-white text-[8px] font-black px-2 py-1 rounded-bl-lg tracking-widest">ОЧКИ</div>
                 <div class="text-4xl mb-1 mt-2">🗄️</div>
                 <p class="text-[9px] text-blue-400 uppercase tracking-widest mb-1">Сейф Данных</p>
                 <div id="blueSafeBal" class="font-black text-blue-400 text-lg mb-2">0 💎</div>
                 <input type="number" id="blueSafeInput" placeholder="* * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-blue-500/30 text-lg mb-2 focus:border-blue-500" maxlength="3">
-                <button id="blueKeyBtn" onclick="crackSafe('blue', 3)" class="w-full bg-blue-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">
-                    Взломать (🔑 Синий)
-                </button>
-                <div id="blueSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-blue-900/30 shadow-inner">
-                    <!-- Сюда упадут логи -->
-                </div>
+                <button id="blueKeyBtn" onclick="crackSafe('blue', 3)" class="w-full bg-blue-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">Взломать (🔑 Синий)</button>
+                <div id="blueSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-blue-900/30 shadow-inner"></div>
             </div>
 
-            <!-- ФИНАНСОВЫЙ СЕЙФ -->
             <div class="surface rounded-2xl p-3 border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.15)] text-center relative overflow-hidden flex flex-col">
                 <div class="absolute top-0 right-0 bg-red-600 text-white text-[8px] font-black px-2 py-1 rounded-bl-lg tracking-widest">РУБЛИ</div>
                 <div class="text-4xl mb-1 mt-2">🏦</div>
                 <p class="text-[9px] text-red-400 uppercase tracking-widest mb-1">Фин. Сейф</p>
                 <div id="redSafeBal" class="font-black text-green-400 text-lg mb-2">0 ₽</div>
                 <input type="number" id="redSafeInput" placeholder="* * * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-red-500/30 text-lg mb-2 focus:border-red-500" maxlength="4">
-                <button id="redKeyBtn" onclick="crackSafe('red', 4)" class="w-full bg-red-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">
-                    Взломать (🔑 Красн.)
-                </button>
-                <div id="redSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-red-900/30 shadow-inner">
-                    <!-- Сюда упадут логи -->
-                </div>
+                <button id="redKeyBtn" onclick="crackSafe('red', 4)" class="w-full bg-red-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">Взломать (🔑 Красн.)</button>
+                <div id="redSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-red-900/30 shadow-inner"></div>
             </div>
         </div>
 
-    
-        <!-- БЛОК 2: ГРЯДКИ И ТРАКТОР -->
         <div class="flex justify-between items-center mb-3">
             <div>
                 <h3 class="font-bold text-lg leading-tight">Ваши грядки</h3>
@@ -269,12 +280,10 @@
             </button>
         </div>
         
-        <!-- СЮДА СКРИПТ БУДЕТ ВСТАВЛЯТЬ ГРЯДКИ -->
         <div id="farmSlotsContainer" class="grid grid-cols-2 gap-3 mb-6">
             <p class="text-gray-500 text-sm col-span-2 text-center py-4">⏳ Загрузка участка...</p>
         </div>
         
-        <!-- БЛОК 3: МАГАЗИН СЕМЯН -->
         <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700/50">
             <h3 class="font-bold text-sm mb-3 text-gray-300">🛒 Каталог семян</h3>
             <div class="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
@@ -299,7 +308,7 @@
                     <button onclick="buySeed('sunflower', 150, '🌻 Подсолнух')" class="bg-blue-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md">150 💎</button>
                 </div>
 
-                    <div class="flex justify-between items-center bg-black/30 p-2 rounded-lg border border-gray-700">
+                <div class="flex justify-between items-center bg-black/30 p-2 rounded-lg border border-gray-700">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🌿</span><div><p class="text-xs font-bold text-white">Петрушка (8ч)</p><p class="text-[9px] text-gray-400">Шанс на Ордер или Щит</p></div></div>
                     <button onclick="buySeed('parsley', 100, '🌿 Петрушка')" class="bg-gray-700 px-3 py-1.5 rounded text-xs font-bold active:scale-95">100 💎</button>
                 </div>
@@ -321,33 +330,39 @@
                 
                 <div class="flex justify-between items-center bg-purple-900/20 p-2 rounded-lg border border-purple-800/50">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🌳</span><div><p class="text-xs font-bold text-purple-300">К. Каштан (Пассив)</p><p class="text-[9px] text-purple-400/80">+1 попытка взлома в день</p></div></div>
-            <button onclick="buySeed('chestnut', 1000, '🌳 К. Каштан')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1000 <span class="text-[10px]">💎</span></button>
-        </div> <!-- 👈 ВОТ ЭТА СКОБКА БЫЛА УТЕРЯНА -->
+                    <button onclick="buySeed('chestnut', 1000, '🌳 К. Каштан')" class="bg-purple-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1000 <span class="text-[10px]">💎</span></button>
+                </div> 
 
-        <div class="flex justify-between items-center bg-pink-900/20 p-2 rounded-lg border border-pink-800/50">
+                <div class="flex justify-between items-center bg-pink-900/20 p-2 rounded-lg border border-pink-800/50">
                     <div class="flex items-center space-x-2"><span class="text-2xl">🌸</span><div><p class="text-xs font-bold text-pink-300">Рододендрон (Пассив)</p><p class="text-[9px] text-pink-400/80">-5% комиссии на Рынке</p></div></div>
                     <button onclick="buySeed('rhododendron', 1500, '🌸 Рододендрон')" class="bg-pink-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">1500 <span class="text-[10px]">💎</span></button>
                 </div>
-            </div>
-        </div>
-    </div> <!-- 🔥 ВОТ ЭТУ СКОБКУ Я СЪЕЛ! ДОБАВЬ ЕЁ СЮДА 🔥 -->
+
+                <div class="flex justify-between items-center bg-green-900/20 p-2 rounded-lg border border-green-800/50 mt-2">
+                    <div class="flex items-center space-x-2"><span class="text-2xl">🌳</span><div><p class="text-xs font-bold text-green-300">Ден. Дерево (5д)</p><p class="text-[9px] text-green-400/80">Многоразовый кэшбэк в ₽</p></div></div>
+                    <button onclick="buySeed('money_tree', 5000, '🌳 Денежное Дерево')" class="bg-green-600 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-white shadow-md flex items-center gap-1">5000 <span class="text-[10px]">💎</span></button>
+                </div>
+
+            </div> <!-- Закрывает скролл -->
+        </div> <!-- Закрывает сурфейс магазина -->
+    </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ФЕРМЫ 🔥 -->
 
     <!-- ================= ВКЛАДКА 7: ЗАДАНИЯ И КЕЙСЫ ================= -->
     <div id="tab-tasks" class="tab-content">
-        <h2 class="font-bold text-2xl mb-4">Ежедневные Задания</h2>
-        <p class="text-xs text-gray-400 mb-6">Выполняйте условия и открывайте кейсы. Прогресс сбрасывается в полночь.</p>
+        <h2 class="font-bold text-2xl mb-1">Ежедневные Задания</h2>
+        <p class="text-sm font-bold text-blue-400 mb-4" id="tasksDayName">День Недели...</p>
 
         <!-- Деревянный Кейс -->
         <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-amber-800/50">
             <div class="flex justify-between items-center mb-2">
                 <div class="flex items-center space-x-3">
                     <div class="text-4xl drop-shadow-[0_0_10px_rgba(180,83,9,0.5)]">🪵</div>
-                    <div><h3 class="font-bold text-amber-500">Деревянный Кейс</h3><p class="text-[10px] text-gray-400">Общение в чатах</p></div>
+                    <div><h3 class="font-bold text-amber-500">Деревянный Кейс</h3><p class="text-[10px] text-gray-400">Базовая награда</p></div>
                 </div>
-                <button id="btnCase_wooden" onclick="openTaskCase('wooden')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/15</button>
+                <button id="btnCase_wooden" onclick="openTaskCase('wooden')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/0</button>
             </div>
-            <p class="text-xs text-gray-300">💬 Напишите 15 содержательных сообщений в любых наших чатах.</p>
-            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
+            <div id="desc_wooden" class="text-xs text-gray-300 mb-2">Загрузка...</div>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-2" id="progress_wooden_container">
                 <div id="progress_wooden" class="bg-amber-600 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
             </div>
         </div>
@@ -357,14 +372,14 @@
             <div class="flex justify-between items-center mb-2">
                 <div class="flex items-center space-x-3">
                     <div class="text-4xl drop-shadow-[0_0_10px_rgba(156,163,175,0.5)]">🥈</div>
-                    <div><h3 class="font-bold text-gray-300">Серебряный Кейс</h3><p class="text-[10px] text-gray-400">Хозяйственность</p></div>
+                    <div><h3 class="font-bold text-gray-300">Серебряный Кейс</h3><p class="text-[10px] text-gray-400">Продвинутая награда</p></div>
                 </div>
-                <button id="btnCase_silver" onclick="openTaskCase('silver')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/2</button>
+                <button id="btnCase_silver" onclick="openTaskCase('silver')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/0</button>
             </div>
-            <ul class="text-xs text-gray-300 space-y-1">
-                <li id="cond_s1">❌ Забрать Ежедневный бонус</li>
-                <li id="cond_s2">❌ Полить грядку на ферме</li>
-            </ul>
+            <div id="desc_silver" class="text-xs text-gray-300 mb-2">Загрузка...</div>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-2" id="progress_silver_container">
+                <div id="progress_silver" class="bg-gray-400 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
         </div>
 
         <!-- Золотой Кейс -->
@@ -372,16 +387,16 @@
             <div class="flex justify-between items-center mb-2">
                 <div class="flex items-center space-x-3">
                     <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]">🥇</div>
-                    <div><h3 class="font-bold text-yellow-500">Золотой Кейс</h3><p class="text-[10px] text-gray-400">Азартный игрок</p></div>
+                    <div><h3 class="font-bold text-yellow-500">Золотой Кейс</h3><p class="text-[10px] text-gray-400">Элитная награда</p></div>
                 </div>
-                <button id="btnCase_gold" onclick="openTaskCase('gold')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/3</button>
+                <button id="btnCase_gold" onclick="openTaskCase('gold')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/0</button>
             </div>
-            <p class="text-xs text-gray-300">🎰 Сыграйте в Гача-Рулетку 3 раза за день.</p>
-            <div class="w-full bg-black/50 rounded-full h-1.5 mt-3">
+            <div id="desc_gold" class="text-xs text-gray-300 mb-2">Загрузка...</div>
+            <div class="w-full bg-black/50 rounded-full h-1.5 mt-2" id="progress_gold_container">
                 <div id="progress_gold" class="bg-yellow-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
             </div>
         </div>
-    </div>
+    </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ЗАДАНИЙ 🔥 -->
         
     <!-- 🔥 НАШИ ПУЛЕНЕПРОБИВАЕМЫЕ МОДАЛЬНЫЕ ОКНА 🔥 -->
     
@@ -457,6 +472,23 @@
             <p id="rouletteModalText" class="text-gray-300 mb-6 text-sm whitespace-pre-wrap leading-relaxed">Текст приза...</p>
             <button onclick="closeRouletteModal()" class="w-full bg-blue-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Отлично!</button>
         </div>
+    </div>
+
+    <!-- 6. CS:GO РУЛЕТКА ДЛЯ КЕЙСА АГЕНТА -->
+    <div id="csgoRouletteModal" class="hidden fixed inset-0 bg-black/95 z-[600] flex flex-col items-center justify-center p-4 backdrop-blur-md transition-opacity">
+        <h2 class="text-3xl font-black mb-2 tracking-widest uppercase text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-500 text-center drop-shadow-lg">Открытие кейса</h2>
+        <p class="text-sm text-gray-400 mb-8 animate-pulse">Скайнет крутит барабан...</p>
+        
+        <div class="roulette-container mb-8 shadow-[0_0_40px_rgba(168,85,247,0.3)]">
+            <div class="roulette-selector"></div>
+            <div id="rouletteRibbon" class="roulette-ribbon">
+                <!-- Карточки генерируются через JS -->
+            </div>
+        </div>
+        
+        <button id="closeRouletteBtn" onclick="document.getElementById('csgoRouletteModal').classList.add('hidden')" class="hidden bg-gray-700 px-10 py-3 rounded-xl font-bold text-white active:scale-95 transition-transform border border-gray-500">
+            Забрать куш
+        </button>
     </div>
 
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
@@ -970,6 +1002,9 @@
                     document.getElementById('cpaHold').innerText = data.hold || 0;
                     document.getElementById('cpaFraud').innerText = data.fraud || 0;
                     document.getElementById('cpaDupes').innerText = data.duplicates || 0;
+                    if(document.getElementById('agentCasesCount')) {
+                        document.getElementById('agentCasesCount').innerText = data.cases || 0;
+                    }
                 }
             });
 
@@ -1033,6 +1068,106 @@
             }).catch(() => {
                 customAlert("Не удалось скопировать автоматически. Скопируйте текст вручную.", "Ошибка", "⚠️");
             });
+        }
+
+        // ================= КЕЙС АГЕНТА (CS:GO РУЛЕТКА) =================
+        const agentLootTable = [
+            { id: "points_25", name: "25 Очков", icon: "💎", color: "text-blue-400" },
+            { id: "points_50", name: "50 Очков", icon: "💎", color: "text-blue-400" },
+            { id: "points_100", name: "100 Очков", icon: "💰", color: "text-green-400" },
+            { id: "shield_1", name: "Щит", icon: "🛡", color: "text-yellow-400" },
+            { id: "shards_5", name: "5 Осколков", icon: "🧩", color: "text-purple-400" },
+            { id: "points_500", name: "500 Очков", icon: "💸", color: "text-red-400" },
+            { id: "vip_status", name: "VIP СТАТУС", icon: "👑", color: "text-yellow-500" },
+            { id: "cash_500", name: "500 ₽", icon: "💵", color: "text-green-500" }
+        ];
+
+        function startAgentCaseRoulette() {
+            const btn = document.getElementById('openAgentCaseBtn');
+            const origText = btn.innerHTML;
+            btn.innerHTML = "⏳ Связь со Скайнетом...";
+            btn.disabled = true;
+
+            apiCall('/api/open_agent_case').then(data => {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+
+                if (data.error) {
+                    customAlert(data.error, "Внимание", "⚠️");
+                    return;
+                }
+                document.getElementById('agentCasesCount').innerText = data.cases_left;
+                showRouletteAnimation(data.won_id, data.won_name);
+            });
+        }
+
+        function showRouletteAnimation(wonId, wonName) {
+            const modal = document.getElementById('csgoRouletteModal');
+            const ribbon = document.getElementById('rouletteRibbon');
+            const closeBtn = document.getElementById('closeRouletteBtn');
+            
+            modal.classList.remove('hidden');
+            closeBtn.classList.add('hidden');
+            
+            ribbon.style.transition = 'none';
+            ribbon.style.transform = `translateX(0px)`;
+            
+            let html = '';
+            const totalCards = 60;
+            const winningIndex = 50; 
+            
+            const wonItemInfo = agentLootTable.find(i => i.id === wonId) || { name: wonName, icon: "🎁", color: "text-white" };
+
+            for (let i = 0; i < totalCards; i++) {
+                let item;
+                if (i === winningIndex) {
+                    item = wonItemInfo; 
+                } else {
+                    if (i === winningIndex - 1 || i === winningIndex + 1) {
+                        item = agentLootTable.find(i => i.id === "vip_status" || i.id === "cash_500");
+                    } else {
+                        item = agentLootTable[Math.floor(Math.random() * agentLootTable.length)];
+                    }
+                }
+                html += `
+                <div class="roulette-item">
+                    <div class="text-4xl mb-2 drop-shadow-md">${item.icon}</div>
+                    <div class="text-[10px] font-black uppercase tracking-wider ${item.color} text-center px-1 break-words leading-tight">${item.name}</div>
+                </div>`;
+            }
+            ribbon.innerHTML = html;
+            
+            setTimeout(() => {
+                ribbon.style.transition = 'transform 5s cubic-bezier(0.15, 0.85, 0.15, 1)';
+                const cardWidth = 90; 
+                const containerWidth = document.querySelector('.roulette-container').clientWidth;
+                const randomOffset = Math.floor(Math.random() * (cardWidth - 10)) - ((cardWidth - 10) / 2); 
+                const finalOffset = (winningIndex * cardWidth) - (containerWidth / 2) + (cardWidth / 2) + randomOffset;
+                
+                ribbon.style.transform = `translateX(-${finalOffset}px)`;
+                
+                let ticks = 0;
+                let tickInterval = setInterval(() => {
+                    safeHaptic('impact', 'light');
+                    ticks++;
+                    if(ticks > 30) clearInterval(tickInterval);
+                }, 150);
+
+                setTimeout(() => {
+                    clearInterval(tickInterval);
+                    closeBtn.classList.remove('hidden');
+                    
+                    let icon = wonItemInfo.icon;
+                    if(wonId.includes('vip') || wonId.includes('cash') || wonId.includes('500')) {
+                        safeHaptic('impact', 'heavy'); setTimeout(() => safeHaptic('impact', 'heavy'), 300);
+                        customAlert(`ДЖЕКПОТ!!! Выбили: ${wonName}!`, "СУПЕР-ПРИЗ", icon);
+                    } else {
+                        safeHaptic('notify', 'success');
+                        customAlert(`Вы получили: ${wonName}!`, "Кейс открыт", icon);
+                    }
+                    loadProfile(); 
+                }, 5200); 
+            }, 100);
         }
 
         // ================= ВЗЛОМ СЕЙФОВ =================
@@ -1121,12 +1256,13 @@
                         // Кнопки полива и удобрения (сделали компактнее)
                         let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[9px] text-blue-400 font-bold bg-blue-900/30 px-1.5 py-0.5 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
                         let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[9px] text-purple-400 font-bold bg-purple-900/30 px-1.5 py-0.5 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>`;
+                        let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[9px] text-red-400 font-bold bg-red-900/30 px-1.5 py-0.5 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
 
                         html += `
                         <div class="surface border border-green-700/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 shadow-[0_0_10px_rgba(34,197,94,0.1)] relative">
                             <div class="flex justify-between items-center w-full px-1 mb-1">
                                 <span class="text-xs font-bold">${plot.name.split(' ')[1] || plot.name}</span>
-                                <div class="flex gap-1 whitespace-nowrap">${fertBtn} ${waterBtn}</div>
+                                <div class="flex gap-1 whitespace-nowrap">${digBtn} ${fertBtn}${waterBtn}</div>
                             </div>
                             <div class="text-3xl animate-pulse">🌿</div>
                             <div class="w-full bg-black/50 rounded-full h-1.5 mt-2">
@@ -1149,9 +1285,11 @@
                         
                         let actionHtml = `<button onclick="farmAction('harvest', ${plot.slot_id})" class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">Собрать</button>`;
                         
-                        // Если это декор, выводим заглушку вместо кнопки сбора
+                        // Если это декор, выводим заглушку И кнопку выкопки!
                         if (plot.seed_type === 'chestnut' || plot.seed_type === 'rhododendron' || plot.seed_type === 'cactus') {
-                            actionHtml = `<div class="bg-purple-900/50 w-full py-1.5 rounded text-[10px] font-bold text-purple-300 border border-purple-700/50 mt-1">Пассивный бонус</div>`;
+                            actionHtml = `
+                            <div class="bg-purple-900/50 w-full py-1.5 rounded text-[10px] font-bold text-purple-300 border border-purple-700/50 mt-1 mb-1">Пассивный бонус</div>
+                            <button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="bg-red-900/80 w-full py-1.5 rounded text-[10px] font-bold text-gray-300 shadow-md active:scale-95 border border-red-700">⛏ Выкопать</button>`;
                         }
 
                         html += `
@@ -1210,6 +1348,12 @@
             });
         }
 
+        function farmActionCheck(action, slotId) {
+            customConfirm("Растение будет вырвано с корнем. Ресурсы не вернутся. Вы уверены?", function(c) {
+                if(c) farmAction(action, slotId);
+            });
+        }
+
         // --- ЕЖЕДНЕВНЫЙ БОНУС ---
         function claimDailyBonus() {
             const btn = document.getElementById('bonusBtn');
@@ -1231,26 +1375,32 @@
             });
         }
 
-        // ================= ЗАДАНИЯ И КЕЙСЫ =================
+        // ================= ЗАДАНИЯ И КЕЙСЫ (ДИНАМИКА) =================
         function loadTasks() {
             apiCall('/api/get_tasks').then(data => {
                 if(data.error) return;
                 
-                // 1. Деревянный
-                const w_msgs = Math.min(data.messages, 15);
-                document.getElementById('progress_wooden').style.width = `${(w_msgs/15)*100}%`;
-                updateCaseButton('wooden', w_msgs >= 15, `${w_msgs}/15`, data.opened_cases);
+                document.getElementById('tasksDayName').innerText = "📅 " + data.day_name;
+                
+                function renderCase(caseType, d) {
+                    let w = data[caseType];
+                    let val = Math.min(w.val, w.goal);
+                    
+                    if (w.type === 'water_bonus') {
+                        // Особенный рендер для комбо-заданий
+                        document.getElementById(`desc_${caseType}`).innerHTML = `<ul class="space-y-1"><li>${data.bonus ? '✅' : '❌'} Забрать Ежедневный бонус</li><li>${data.watered ? '✅' : '❌'} Полить грядку на ферме</li></ul>`;
+                        document.getElementById(`progress_${caseType}_container`).classList.add('hidden');
+                    } else {
+                        document.getElementById(`desc_${caseType}`).innerHTML = `<p>${w.desc}</p>`;
+                        document.getElementById(`progress_${caseType}_container`).classList.remove('hidden');
+                        document.getElementById(`progress_${caseType}`).style.width = `${(val/w.goal)*100}%`;
+                    }
+                    updateCaseButton(caseType, w.ready, `${val}/${w.goal}`, data.opened);
+                }
 
-                // 2. Серебряный
-                let s_count = 0;
-                if(data.bonus_claimed) { s_count++; document.getElementById('cond_s1').innerText = "✅ Забрать Ежедневный бонус"; }
-                if(data.watered) { s_count++; document.getElementById('cond_s2').innerText = "✅ Полить грядку на ферме"; }
-                updateCaseButton('silver', s_count === 2, `${s_count}/2`, data.opened_cases);
-
-                // 3. Золотой
-                const g_spins = Math.min(data.roulette_spins, 3);
-                document.getElementById('progress_gold').style.width = `${(g_spins/3)*100}%`;
-                updateCaseButton('gold', g_spins >= 3, `${g_spins}/3`, data.opened_cases);
+                renderCase('wooden');
+                renderCase('silver');
+                renderCase('gold');
             });
         }
 

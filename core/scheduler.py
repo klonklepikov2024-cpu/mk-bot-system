@@ -64,25 +64,49 @@ def check_giveaways_task():
             db['giveaways'].update_one({"_id": gw_id}, {"$set": {"status": "completed", "winner": "Нет участников"}})
             continue
             
-        winning_number = random.randint(1, last_ticket)
-        tickets = db['tickets_history'].find({"giveaway_id": gw_id})
-        winner_uid, winner_name = None, None
+        winners_count = gw.get("winners_count", 1)
+        # Защита: не можем выдать больше призов, чем всего куплено билетов
+        winners_count = min(winners_count, last_ticket)
         
-        for t in tickets:
-            r_start, r_end = map(int, t['range'].split('-'))
-            if r_start <= winning_number <= r_end:
-                winner_uid, winner_name = t['uid'], t['name']
-                break
-                
-        db['giveaways'].update_one({"_id": gw_id}, {"$set": {"status": "completed", "winner_uid": winner_uid, "winning_number": winning_number}})
+        # Выбираем уникальные номера билетов
+        winning_numbers = random.sample(range(1, last_ticket + 1), winners_count)
+        tickets = list(db['tickets_history'].find({"giveaway_id": gw_id}))
+        winners_info = [] 
+        
+        for win_num in winning_numbers:
+            for t in tickets:
+                r_start, r_end = map(int, t['range'].split('-'))
+                if r_start <= win_num <= r_end:
+                    winners_info.append({"uid": t['uid'], "name": t['name'], "ticket": win_num})
+                    break
+                    
+        winners_names_str = ", ".join([f"{w['name']} (№{w['ticket']})" for w in winners_info])
+        
+        db['giveaways'].update_one({"_id": gw_id}, {
+            "$set": {
+                "status": "completed", 
+                "winner_name": winners_names_str, 
+                "winners_data": winners_info 
+            }
+        })
+        
         from core.bot import bot
         from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
         
+        # Уведомляем каждого счастливчика в личку
+        for w in winners_info:
+            try:
+                bot.send_message(w['uid'], f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{w['ticket']} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
+            except: pass
+            
+        # Отчет админам
+        admin_report = f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\n🎁 Приз: **{gw['title']}**\n🏆 Победители:\n"
+        for i, w in enumerate(winners_info, 1):
+            admin_report += f"{i}. {w['name']} (`{w['uid']}`) — Билет №{w['ticket']}\n"
+            
         try:
-            bot.send_message(STAFF_GROUP_ID, f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\nПриз: {gw['title']}\n🎟 Выиграл билет № **{winning_number}**!\nПобедитель: {winner_name} (`{winner_uid}`)", message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
-            bot.send_message(winner_uid, f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{winning_number} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
-        except:
-            pass
+            bot.send_message(STAFF_GROUP_ID, admin_report, message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
+        except: pass
 
     # 2. ПРОГРЕВ ГОРЯЩИХ РОЗЫГРЫШЕЙ (Те, кому осталось < 1 часа)
     almost_ended = db['giveaways'].find({
