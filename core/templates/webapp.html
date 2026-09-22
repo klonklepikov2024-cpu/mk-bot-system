@@ -1190,7 +1190,7 @@
                 blueSafeInterval = setInterval(() => {
                     blueBal++;
                     document.getElementById('blueSafeBal').innerText = blueBal + ' 💎';
-                }, 1000);
+                }, 12000);
                 
                 let b_logs = data.blue_logs.map(l => `<div><span class="text-white">${l.name}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
                 document.getElementById('blueSafeLogs').innerHTML = b_logs || '<div class="text-center mt-3 opacity-50">Ожидание...</div>';
