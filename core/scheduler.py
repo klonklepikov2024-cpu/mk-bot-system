@@ -125,8 +125,8 @@ def check_giveaways_task():
         broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
 
 def tick_blue_safe():
-    """Каждую минуту добавляем 60 очков в Сейф Данных"""
-    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 60}})
+    """Каждую минуту добавляем 5 очков в Сейф Данных"""
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 5}})
 
 # ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС =================
 
