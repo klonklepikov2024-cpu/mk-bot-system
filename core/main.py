@@ -112,6 +112,10 @@ def get_profile():
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
+    import time
+    # 🔥 Радар Скайнета: Запоминаем, что юзер зашел в Web App именно сейчас
+    db['users'].update_one({"_id": uid}, {"$set": {"last_webapp_visit": time.time()}}, upsert=True)
+    
     user_db = paid_collection.find_one({"uid": uid}) or {}
     return jsonify({
         "points": user_db.get("bounty_points", 0),
@@ -218,7 +222,8 @@ def api_get_giveaways():
             "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
             "water_req": CROPS[seed_type]["water_req"] if seed_type in CROPS else False,
             "last_watered": plot.get("last_watered"),
-            "fertilized": plot.get("fertilized", False) # <--- ДОБАВЬ ЭТУ СТРОКУ
+            "fertilized": plot.get("fertilized", False),
+            "pest": plot.get("pest") # <--- ДОБАВЬ ЭТУ СТРОКУ
         })
         
     return jsonify(result)
@@ -1195,6 +1200,10 @@ def api_farm_action():
 
     # Для остальных действий нам нужна конкретная грядка
     plot = db['farm_plots'].find_one({"uid": uid, "slot_id": slot_id})
+    # Защита от действий во время заражения
+    if action in ['water', 'fertilize', 'harvest']:
+        if plot.get('pest'):
+            return jsonify({"error": f"Сначала прогоните вредителя ({plot['pest']['emoji']})!"}), 400
     if not plot: return jsonify({"error": "Грядка не найдена!"}), 400
     
     # === ПОСАДКА ===
@@ -1215,6 +1224,15 @@ def api_farm_action():
         })
         return jsonify({"success": True, "msg": f"🌱 Вы посадили {CROPS[seed_type]['name']}!"})
         
+
+    # === ПРОГНАТЬ ВРЕДИТЕЛЯ ===
+    elif action == 'chase_pest':
+        if not plot.get('pest'): return jsonify({"error": "На грядке никого нет!"}), 400
+        pest_emoji = plot['pest']['emoji']
+        # Прогоняем гада и откатываем время посадки вперед (компенсируем время простоя)
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$unset": {"pest": ""}})
+        return jsonify({"success": True, "msg": f"👞 Вы успешно прогнали гада ({pest_emoji})! Растение снова в безопасности."})
+
     # === ПОЛИВ ===
     elif action == 'water':
         if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400

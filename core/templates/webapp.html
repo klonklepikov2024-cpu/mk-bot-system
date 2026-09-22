@@ -1245,6 +1245,20 @@
                             <p class="text-[9px] text-gray-600 mt-1">Свободно</p>
                         </div>`;
                     } 
+                    else if (plot.pest) {
+                        // 🚨 ВРЕДИТЕЛЬ НА ГРЯДКЕ (АНИМАЦИЯ ПРЫЖКА И КРАСНЫЙ ФОН) 🚨
+                        html += `
+                        <div class="surface border border-red-500 rounded-xl p-3 text-center flex flex-col shadow-[0_0_15px_rgba(239,68,68,0.4)] relative bg-red-900/20 overflow-hidden">
+                            <div class="absolute inset-0 bg-red-500/10 animate-pulse rounded-xl"></div>
+                            <div class="flex justify-between items-center w-full mb-1 relative z-10">
+                                <span class="text-xs font-bold text-red-400">${plot.name.split(' ')[1] || plot.name}</span>
+                                <span class="text-[9px] text-red-500 font-black uppercase drop-shadow">ОПАСНОСТЬ!</span>
+                            </div>
+                            <div class="text-4xl animate-bounce mb-1 mt-2 relative z-10 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]">${plot.pest.emoji}</div>
+                            <p class="text-[9px] text-red-300 font-bold mb-2 relative z-10 leading-tight">${plot.pest.name} жрет урожай!</p>
+                            <button onclick="farmAction('chase_pest', ${plot.slot_id})" class="bg-red-600 w-full py-2 rounded-lg text-xs font-black text-white shadow-[0_0_10px_rgba(239,68,68,0.6)] active:scale-95 mt-auto relative z-10 border border-red-400">👞 ПРОГНАТЬ!</button>
+                        </div>`;
+                    }
                     else if (plot.status === 'growing') {
                         let elapsed = now - plot.planted_at;
                         let left = plot.grow_time - elapsed;
@@ -1347,7 +1361,7 @@
                 if(data.error) { 
                     customAlert(data.error, "Ошибка", "❌"); 
                 } else {
-                    let icon = action === 'harvest' ? '🚜' : (action === 'water' ? '💧' : (action === 'fertilize' ? '🧪' : '🌱'));
+                    let icon = action === 'harvest' ? '🚜' : (action === 'water' ? '💧' : (action === 'fertilize' ? '🧪' : (action === 'chase_pest' ? '👞' : '🌱')));
                     customAlert(data.msg, "Участок", icon);
                     loadFarm();
                     loadProfile(); 

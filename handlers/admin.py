@@ -2372,6 +2372,13 @@ def handle_admin_panel_clicks(call):
         total_users = db['users'].count_documents({})
         total_banned = db['banned'].count_documents({})
         
+        # 🔥 СЧИТАЕМ ЖИВОЙ ОНЛАЙН В WEB APP 🔥
+        import time
+        now = time.time()
+        webapp_total = db['users'].count_documents({"last_webapp_visit": {"$exists": True}})
+        webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now - 86400}}) # Заходили за последние 24 часа
+        active_plots = db['farm_plots'].count_documents({"status": "growing"}) # Сколько грядок сейчас растет
+        
         # Считаем сумму очков и кэшбека у населения
         pipeline = [{"$group": {"_id": None, "total_points": {"$sum": "$bounty_points"}, "total_cb": {"$sum": "$cashback_balance"}}}]
         wealth = list(paid_collection.aggregate(pipeline))
@@ -2383,8 +2390,12 @@ def handle_admin_panel_clicks(call):
         
         text = (
             "📊 **ГЛОБАЛЬНАЯ СВОДКА СКАЙНЕТА**\n\n"
-            f"👥 Всего пользователей в базе: **{total_users}**\n"
+            f"👥 Всего бот-юзеров: **{total_users}**\n"
             f"🚷 В глобальном бане: **{total_banned}**\n\n"
+            f"📱 **ИГРОВАЯ СТАТИСТИКА (WEB APP):**\n"
+            f"🎮 Всего игроков: **{webapp_total}**\n"
+            f"🔥 Онлайн за 24 часа: **{webapp_dau} чел.**\n"
+            f"🌱 Растущих грядок: **{active_plots} шт.**\n\n"
             f"💰 Очков на руках: **{total_points} ⭐️**\n"
             f"💸 Кэшбека на руках: **{total_cb} ₽**\n\n"
             f"🎟 Неиспользованных промокодов: **{active_promos}**\n"

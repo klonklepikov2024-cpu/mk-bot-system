@@ -131,41 +131,79 @@ def tick_blue_safe():
 # ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС =================
 
 def personal_farm_notifications():
-    """Проверяет грядки и пишет в ЛС, если созрело или засыхает"""
+    """Проверяет грядки, пишет в ЛС и генерирует нападение Вредителей!"""
     from core.bot import bot
-    now = int(time.time())
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    from config import APP_URL
+    WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
     
+    now = int(time.time())
     growing_plots = db['farm_plots'].find({"status": "growing"})
+    
+    # === ЗООПАРК СКАЙНЕТА ===
+    possible_pests = [
+        {"id": "goat", "emoji": "🐐", "name": "Соседская Коза", "targets": ["money_tree", "chestnut", "cactus", "amanita"]},
+        {"id": "crow", "emoji": "🐦", "name": "Наглая Ворона", "targets": ["sunflower", "watermelon"]},
+        {"id": "caterpillar", "emoji": "🐛", "name": "Троянская Гусеница", "targets": ["radish", "mizuna", "tomato", "parsley"]},
+        {"id": "locust", "emoji": "🚁", "name": "Дрон-Саранча", "targets": ["sunflower", "rhododendron"]},
+        {"id": "mole", "emoji": "⛏", "name": "Крипто-Крот", "targets": ["money_tree", "watermelon", "tomato"]},
+        {"id": "miner", "emoji": "🪲", "name": "Жук-Майнер", "targets": ["ALL"]}
+    ]
     
     for plot in growing_plots:
         seed = plot.get("seed_type")
         if seed not in CROPS: continue
         crop = CROPS[seed]
-        
         uid = plot["uid"]
         planted_at = plot.get("planted_at", now)
         last_watered = plot.get("last_watered", now)
         
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🚜 На ферму", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm")))
 
-        # 1. Проверка на смерть (засохло) - 24 часа без воды (86400 сек)
+        # --- 1. ПРОВЕРКА НА ВРЕДИТЕЛЯ (ЕСЛИ УЖЕ ЗАРАЖЕНО) ---
+        if plot.get("pest"):
+            spawned_at = plot["pest"].get("spawned_at", now)
+            if now - spawned_at > 43200: # 12 часов на то, чтобы убить гада
+                db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}, "$unset": {"pest": ""}})
+                try: bot.send_message(uid, f"🥀 <b>УРОЖАЙ УНИЧТОЖЕН!</b>\n{plot['pest']['name']} {plot['pest']['emoji']} сожрал(а) ваш {crop['name']}.", parse_mode="HTML", reply_markup=markup)
+                except: pass
+            continue # Если заражено, воду не проверяем и не растем
+            
+        # --- 2. ГЕНЕРАЦИЯ НОВОГО НАПАДЕНИЯ (Шанс 2% каждые 15 мин) ---
+        if random.randint(1, 100) <= 2: 
+            valid_pests = [p for p in possible_pests if seed in p["targets"] or "ALL" in p["targets"]]
+            if valid_pests:
+                pest = random.choice(valid_pests)
+                
+                # Проверка АВТО-ЩИТА!
+                user_db = paid_collection.find_one({"uid": uid}) or {}
+                if user_db.get("immunity", 0) > 0:
+                    paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+                    try: bot.send_message(uid, f"🛡 <b>ЗАЩИТА ФЕРМЫ!</b>\n{pest['name']} {pest['emoji']} попытался сожрать ваш {crop['name']}, но ваш <b>Щит Иммунитета</b> ударил его током!\n<i>(Списан 1 щит, урожай спасен)</i>", parse_mode="HTML", reply_markup=markup)
+                    except: pass
+                else:
+                    # Заражаем грядку!
+                    db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"pest": {"id": pest["id"], "name": pest["name"], "emoji": pest["emoji"], "spawned_at": now}}})
+                    try: bot.send_message(uid, f"🚨 <b>ТРЕВОГА НА ФЕРМЕ!</b>\nНа ваш {crop['name']} напал(а) <b>{pest['name']} {pest['emoji']}</b>!\n\nУ вас есть <b>12 часов</b>, чтобы зайти в Кабинет и прогнать вредителя, иначе он сожрет урожай!", parse_mode="HTML", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("👞 ПРОГНАТЬ!", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm"))))
+                    except: pass
+                continue # Прерываем цикл, так как напали
+
+        # --- 3. ОБЫЧНЫЕ ПРОВЕРКИ ВОДЫ И СОЗРЕВАНИЯ ---
         if crop["water_req"] and (now - last_watered > 86400):
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
-            try: bot.send_message(uid, f"🥀 <b>ПЛОХИЕ НОВОСТИ!</b>\nВаш {crop['name']} засох без воды.\n\nВам придется очистить грядку и посадить новое семя.", parse_mode="HTML", reply_markup=markup)
+            try: bot.send_message(uid, f"🥀 <b>ПЛОХИЕ НОВОСТИ!</b>\nВаш {crop['name']} засох без воды.", parse_mode="HTML", reply_markup=markup)
             except: pass
             continue
             
-        # 2. Предупреждение о жажде (осталось < 4 часов до смерти)
         if crop["water_req"] and (now - last_watered > 72000) and not plot.get("water_warning"):
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"water_warning": True}})
-            try: bot.send_message(uid, f"⚠️ <b>ТРЕВОГА НА УЧАСТКЕ!</b>\nВаш {crop['name']} скоро засохнет!\n\nУ вас осталось меньше 4 часов, чтобы зайти и полить его.", parse_mode="HTML", reply_markup=markup)
+            try: bot.send_message(uid, f"⚠️ <b>ТРЕВОГА НА УЧАСТКЕ!</b>\nВаш {crop['name']} скоро засохнет! (Осталось <4 часов)", parse_mode="HTML", reply_markup=markup)
             except: pass
             continue
             
-        # 3. Созревание урожая
         if now >= planted_at + crop["grow_time"]:
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
-            try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел.\n\nСкорее заходите собрать урожай (и, возможно, найти ключи от сейфа)!", parse_mode="HTML", reply_markup=markup)
+            try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел!", parse_mode="HTML", reply_markup=markup)
             except: pass
 
 def daily_bonus_reminder():
