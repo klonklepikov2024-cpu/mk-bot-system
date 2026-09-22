@@ -214,16 +214,14 @@ def api_get_giveaways():
                 winner_name = f"ID {gw['winner_uid']}"
 
         result.append({
-            "slot_id": plot["slot_id"],
-            "status": status,
-            "seed_type": seed_type,
-            "name": CROPS[seed_type]["name"] if seed_type in CROPS else "",
-            "planted_at": plot.get("planted_at"),
-            "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
-            "water_req": CROPS[seed_type]["water_req"] if seed_type in CROPS else False,
-            "last_watered": plot.get("last_watered"),
-            "fertilized": plot.get("fertilized", False),
-            "pest": plot.get("pest") # <--- ДОБАВЬ ЭТУ СТРОКУ
+            "id": str(gw["_id"]),
+            "title": gw["title"],
+            "price": gw["ticket_price"],
+            "total": gw.get("total_tickets", 0),
+            "time_left": time_left_str,
+            "status": gw["status"],
+            "winner_name": winner_name,
+            "winning_number": gw.get("winning_number")
         })
         
     return jsonify(result)
@@ -1157,7 +1155,9 @@ def api_get_farm():
             "planted_at": plot.get("planted_at"),
             "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
             "water_req": CROPS[seed_type]["water_req"] if seed_type in CROPS else False,
-            "last_watered": plot.get("last_watered")
+            "last_watered": plot.get("last_watered"),
+            "fertilized": plot.get("fertilized", False),
+            "pest": plot.get("pest")
         })
         
     user_db = paid_collection.find_one({"uid": uid}) or {}
