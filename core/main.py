@@ -210,14 +210,15 @@ def api_get_giveaways():
                 winner_name = f"ID {gw['winner_uid']}"
 
         result.append({
-            "id": str(gw["_id"]),
-            "title": gw["title"],
-            "price": gw["ticket_price"],
-            "total": gw.get("total_tickets", 0),
-            "time_left": time_left_str,
-            "status": gw["status"],
-            "winner_name": winner_name,
-            "winning_number": gw.get("winning_number")
+            "slot_id": plot["slot_id"],
+            "status": status,
+            "seed_type": seed_type,
+            "name": CROPS[seed_type]["name"] if seed_type in CROPS else "",
+            "planted_at": plot.get("planted_at"),
+            "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
+            "water_req": CROPS[seed_type]["water_req"] if seed_type in CROPS else False,
+            "last_watered": plot.get("last_watered"),
+            "fertilized": plot.get("fertilized", False) # <--- ДОБАВЬ ЭТУ СТРОКУ
         })
         
     return jsonify(result)
@@ -1210,7 +1211,7 @@ def api_farm_action():
         if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
         
         db['farm_plots'].update_one({"_id": plot["_id"]}, {
-            "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now}
+            "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now, "fertilized": False}
         })
         return jsonify({"success": True, "msg": f"🌱 Вы посадили {CROPS[seed_type]['name']}!"})
         
@@ -1240,13 +1241,13 @@ def api_farm_action():
     # === ОЧИСТКА ЗАСОХШЕГО ===
     elif action == 'clear':
         if plot['status'] != 'withered': return jsonify({"error": "Грядка еще жива!"}), 400
-        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None}})
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "fertilized": False}})
         return jsonify({"success": True, "msg": "🥀 Засохший куст убран. Слот свободен."})
         
     # === ВЫКОПКА ЖИВОГО РАСТЕНИЯ ===
     elif action == 'dig_up':
         if plot['status'] == 'empty': return jsonify({"error": "Грядка и так пуста!"}), 400
-        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "planted_at": None, "last_watered": None}})
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "planted_at": None, "last_watered": None, "fertilized": False}})
         return jsonify({"success": True, "msg": "⛏ Вы вырвали растение с корнем. Грядка очищена!"})
         
     # === СБОР УРОЖАЯ ===
@@ -1280,7 +1281,8 @@ def api_farm_action():
                 "$set": {
                     "status": "growing", 
                     "planted_at": new_planted_at,
-                    "last_watered": now 
+                    "last_watered": now,
+                    "fertilized": False # <--- Сброс удобрения для следующего урожая
                 }
             })
             return jsonify({"success": True, "msg": f"🌳 Вы стрясли с дерева {reward_rub} ₽!\nДерево сбросило плоды. Следующий урожай будет готов через 24 часа. Не забывайте поливать!"})
@@ -1314,7 +1316,7 @@ def api_farm_action():
             msg += f"\n\n🔑 УРА! ВЫ НАШЛИ {key_name} КЛЮЧ ОТ СЕЙФА!"
             
         paid_collection.update_one({"uid": uid}, update_query)
-        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None}})
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "fertilized": False}})
         
         return jsonify({"success": True, "msg": msg})
 
@@ -1323,6 +1325,9 @@ def api_farm_action():
         cost = 50 
         if plot['status'] != 'growing': 
             return jsonify({"error": "Удобрение работает только на растущие культуры!"}), 400
+            
+        if plot.get('fertilized'):
+            return jsonify({"error": "Это растение уже удобрено! Максимум 1 раз."}), 400
         
         user_db = paid_collection.find_one_and_update(
             {"uid": uid, "bounty_points": {"$gte": cost}},
@@ -1333,9 +1338,12 @@ def api_farm_action():
         
         crop = CROPS.get(plot['seed_type'])
         time_boost = crop['grow_time'] // 2
-        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$inc": {"planted_at": -time_boost}})
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {
+            "$inc": {"planted_at": -time_boost},
+            "$set": {"fertilized": True}
+        })
         
-        return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nВремя созревания сокращено в 2 раза."})
+        return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nВремя созревания сокращено в 2 раза (использован лимит)."})
 
 # ================= 🗄 КИБЕР-СЕЙФЫ: БЭКЕНД =================
 

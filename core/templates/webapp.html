@@ -1257,7 +1257,9 @@
                         
                         // Кнопки полива и удобрения выводим вниз
                         let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[10px] text-blue-400 font-bold bg-blue-900/30 px-2 py-1 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
-                        let fertBtn = `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[10px] text-purple-400 font-bold bg-purple-900/30 px-2 py-1 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>`;
+                        let fertBtn = !plot.fertilized ? 
+    `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[10px] text-purple-400 font-bold bg-purple-900/30 px-2 py-1 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>` : 
+    `<button class="text-[10px] text-gray-500 bg-gray-800/80 px-2 py-1 rounded shadow-sm border border-gray-700 cursor-not-allowed" disabled>🧪 Макс</button>`;
                         let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[10px] text-red-400 font-bold bg-red-900/30 px-2 py-1 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
 
                         html += `
