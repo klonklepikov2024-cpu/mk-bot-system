@@ -3,7 +3,7 @@ import html
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from database.mongo import db, paid_collection
-from config import STAFF_GROUP_ID, chat_ids_mk
+from config import STAFF_GROUP_ID, chat_ids_mk, CONTESTS_THREAD_ID
 
 # --- 1. ПРИЕМ РАБОТ ---
 @bot.message_handler(commands=['contest', 'конкурс'])
@@ -77,7 +77,8 @@ def process_contest_title(message, contest_id, photo_id):
         photo_id,
         caption=f"🎃 <b>НОВАЯ РАБОТА НА КОНКУРС</b>\n\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 Название: «{safe_title}»",
         reply_markup=markup,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        message_thread_id=CONTESTS_THREAD_ID # <--- ВОТ ЭТА СТРОЧКА ОТПРАВИТ В НУЖНУЮ ТЕМУ
     )
 
 # --- 2. МОДЕРАЦИЯ И ПУБЛИКАЦИЯ ---
@@ -172,3 +173,91 @@ def handle_contest_vote(call):
     except:
         try: bot.answer_callback_query(call.id, "Голос учтен, обновляю счетчик...")
         except: pass
+
+# --- 4. ПОДВЕДЕНИЕ ИТОГОВ И РАЗДАЧА ПРИЗОВ ---
+@bot.message_handler(commands=['end_contest'])
+def end_contest_cmd(message):
+    # Команду может писать только админ в служебной группе
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.send_message(message.chat.id, "❌ Укажите ID конкурса.\nПример: `/end_contest halloween_2026`", parse_mode="Markdown", message_thread_id=message.message_thread_id)
+        return
+        
+    contest_id = parts[1]
+    
+    # Достаем все работы, которые были опубликованы
+    works = list(db['contests'].find({"contest_id": contest_id, "status": "published"}))
+    if not works:
+        bot.send_message(message.chat.id, f"❌ Нет активных работ для конкурса `{contest_id}`.", parse_mode="Markdown", message_thread_id=message.message_thread_id)
+        return
+        
+    # Считаем длину массива голосов для каждой работы
+    for w in works:
+        w['vote_count'] = len(w.get('votes', []))
+        
+    # Сортируем от большего к меньшему
+    works.sort(key=lambda x: x['vote_count'], reverse=True)
+    
+    # Берем ТОП-3 (если участников меньше 3, Питон просто возьмет сколько есть)
+    top_works = works[:3] 
+    
+    report = f"🏆 <b>ИТОГИ КОНКУРСА: {contest_id}</b> 🏆\n\n"
+    
+    for i, work in enumerate(top_works):
+        place = i + 1
+        uid = work['uid']
+        safe_username = html.escape(work['username'])
+        safe_title = html.escape(work['title'])
+        votes = work['vote_count']
+        
+        # --- ВЫДАЧА ПРИЗОВ ПО МЕСТАМ ---
+        if place == 1:
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            has_vip = u_info.get("is_vip", False)
+            has_beyond = u_info.get("is_queer", False) # is_queer — это флаг BEYOND в базе
+            
+            if has_beyond:
+                # Максимальный статус уже есть -> Компенсируем деньгами (+1000₽ сверху)
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 5000, "cashback_balance": 2500}}, upsert=True)
+                prize_text = "5000 💎 + 2500 ₽ (Компенсация за макс. статус)"
+            elif has_vip:
+                # Есть VIP -> Апаем до BEYOND
+                db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 5000, "cashback_balance": 1500}}, upsert=True)
+                prize_text = "5000 💎 + Апгрейд до BEYOND + 1500 ₽"
+            else:
+                # Нет ничего -> Даем базовый VIP
+                db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 5000, "cashback_balance": 1500}}, upsert=True)
+                prize_text = "5000 💎 + Пожизненный VIP + 1500 ₽"
+                
+            medal = "🥇"
+            
+        elif place == 2:
+            import random
+            # Генерируем 3 Ордера на арест
+            for _ in range(3):
+                code = f"ARREST-{random.randint(100, 999)}"
+                db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000}}, upsert=True)
+            prize_text = "3000 💎 + 3 Ордера на Арест"
+            medal = "🥈"
+            
+        elif place == 3:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "immunity": 2}}, upsert=True)
+            prize_text = "1000 💎 + 2 Щита Иммунитета"
+            medal = "🥉"
+            
+        report += f"<b>{place} МЕСТО {medal}</b>\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 «{safe_title}»\n❤️ Голосов: <b>{votes}</b>\n🎁 Приз: <i>{prize_text}</i>\n\n"
+        
+        # Радуем победителя в ЛС
+        try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nВаш образ «{safe_title}» занял <b>{place} место</b> в конкурсе!\n\nВаша награда: <b>{prize_text}</b> успешно зачислена на ваш баланс Скайнета. Можете проверить в Кабинете!", parse_mode="HTML")
+        except: pass
+        
+    # Меняем статус всем участникам, чтобы заморозить конкурс
+    db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
+    
+    # Отправляем отчет тебе в админскую тему
+    bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", message_thread_id=message.message_thread_id)
