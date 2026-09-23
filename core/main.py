@@ -221,7 +221,8 @@ def api_get_giveaways():
             "time_left": time_left_str,
             "status": gw["status"],
             "winner_name": winner_name,
-            "winning_number": gw.get("winning_number")
+            "winning_number": gw.get("winning_number"),
+            "winners_count": gw.get("winners_count", 1)
         })
         
     return jsonify(result)

@@ -774,12 +774,19 @@
                 }
                 let html = '';
                 data.forEach(gw => {
+                    let winnersCount = gw.winners_count || 1; // Защита от старых розыгрышей без этого поля
+                    
                     if (gw.status === 'active') {
                         html += `
                         <div class="surface rounded-2xl p-4 border border-gray-700 relative overflow-hidden shadow-lg">
                             <div class="absolute top-0 right-0 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg shadow-md">АКТИВЕН</div>
                             <h3 class="font-bold text-xl mb-1 mt-2 text-white">${gw.title}</h3>
-                            <p class="text-sm text-gray-400 mb-4 flex items-center">🎟 <span class="text-blue-400 font-bold ml-1">${gw.price} Очков</span> <span class="mx-2">•</span> ⏳ ${gw.time_left}</p>
+                            
+                            <div class="flex justify-between items-center text-xs text-gray-400 mb-4 bg-black/20 p-2 rounded-lg border border-gray-700/50">
+                                <span>🎟 <b class="text-blue-400 text-sm">${gw.price} 💎</b></span>
+                                <span>🏆 Призов: <b class="text-yellow-500 text-sm">${winnersCount}</b></span>
+                                <span>⏳ ${gw.time_left}</span>
+                            </div>
                             
                             <div class="flex items-center space-x-2 mb-4 bg-black/30 p-1.5 rounded-xl border border-gray-600/50">
                                 <button onclick="changeTickets('${gw.id}', -1, ${gw.price})" class="w-12 h-10 rounded-lg font-bold text-2xl active:scale-90 bg-gray-800 text-gray-300 hover:text-white">-</button>
@@ -804,7 +811,11 @@
                         <div class="surface rounded-2xl p-4 border border-gray-800 relative overflow-hidden opacity-90 shadow-lg">
                             <div class="absolute top-0 right-0 bg-gray-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">ЗАВЕРШЕН</div>
                             <h3 class="font-bold text-xl mb-1 mt-2 text-gray-300">${gw.title}</h3>
-                            <p class="text-sm text-gray-500 mb-4">Участвовало билетов: ${gw.total}</p>
+                            
+                            <div class="flex justify-between text-xs text-gray-500 mb-4 bg-black/20 p-2 rounded-lg border border-gray-800">
+                                <span>Билетов: <b>${gw.total}</b></span>
+                                <span>🏆 Призов: <b>${winnersCount}</b></span>
+                            </div>
                             
                             <div class="bg-yellow-900/20 border border-yellow-700/40 rounded-xl p-4 mb-3 text-center">
                                 <p class="text-[10px] text-yellow-600 uppercase tracking-widest font-bold mb-2">🏆 Итоги розыгрыша</p>
