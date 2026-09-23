@@ -25,6 +25,7 @@ import handlers.admin
 import handlers.casino
 import handlers.payments
 import handlers.polls
+import handlers.contests
 import handlers.market
 import handlers.start_menu
 
