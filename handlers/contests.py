@@ -1,5 +1,8 @@
 import time
 import html
+import requests
+import json
+import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from database.mongo import db, paid_collection
@@ -237,10 +240,15 @@ def end_contest_cmd(message):
             
         elif place == 2:
             import random
-            # Генерируем 3 Ордера на арест
+            # Генерируем 3 Ордера на арест с ЗАЩИТОЙ от дубликатов
             for _ in range(3):
-                code = f"ARREST-{random.randint(100, 999)}"
-                db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                while True:
+                    code = f"ARREST-{random.randint(10000, 999999)}" # Увеличили диапазон
+                    # Проверяем, есть ли уже такой код в базе
+                    if not db['promocodes'].find_one({"_id": code}):
+                        db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                        break # Выходим из цикла while, код уникален
+            
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000}}, upsert=True)
             prize_text = "3000 💎 + 3 Ордера на Арест"
             medal = "🥈"
@@ -261,3 +269,74 @@ def end_contest_cmd(message):
     
     # Отправляем отчет тебе в админскую тему
     bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", message_thread_id=message.message_thread_id)
+
+# --- 5. ГЕНЕРАЦИЯ КОНКУРСА ЧЕРЕЗ ИИ (GROQ) ---
+@bot.message_handler(commands=['ai_contest'])
+def generate_ai_contest(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    theme = message.text.replace('/ai_contest', '').strip()
+    if not theme:
+        bot.send_message(message.chat.id, "❌ Укажите праздник или тему.\nПример: `/ai_contest День Холостяка (18+)`", parse_mode="Markdown", message_thread_id=message.message_thread_id)
+        return
+
+    msg = bot.send_message(message.chat.id, f"🧠 <i>Скайнет анализирует нейронные связи и придумывает концепт для «{theme}»...</i>", parse_mode="HTML", message_thread_id=message.message_thread_id)
+
+    # Жесткий системный промпт для LLM, чтобы она отдавала только JSON
+    system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
+    Твоя задача — придумать тематический фотоконкурс. 
+    Верни СТРОГО валидный JSON без маркдауна и лишнего текста.
+    Формат ответа:
+    {
+      "contest_id": "уникальный_id_на_английском_например_single_day_2026",
+      "title": "Яркое название с эмодзи",
+      "description": "Завлекающий текст анонса. Опиши, какие фото нужно присылать.",
+      "prizes": {
+         "1": {"text": "5000 💎 + VIP + 1500 ₽"},
+         "2": {"text": "3000 💎 + 3 Ордера на Арест"},
+         "3": {"text": "1000 💎 + 2 Щита Иммунитета"}
+      }
+    }"""
+    
+    try:
+        api_key = random.choice(GROQ_API_KEYS)
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": "llama3-70b-8192", 
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Сгенерируй конкурс на тему: {theme}"}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.7
+        }
+        
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers).json()
+        result_json = json.loads(response['choices'][0]['message']['content'])
+        
+        # Сохраняем черновик в базу
+        result_json['status'] = 'draft' 
+        db['active_contest'].update_one({"_id": "current_event"}, {"$set": result_json}, upsert=True)
+        
+        # Выводим админу на проверку
+        text = f"💡 <b>ИДЕЯ ОТ СКАЙНЕТА</b>\n\n"
+        text += f"🏷 <b>Название:</b> {result_json['title']}\n"
+        text += f"🆔 <b>ID:</b> <code>{result_json['contest_id']}</code>\n\n"
+        text += f"📝 <b>Описание:</b>\n{result_json['description']}\n\n"
+        text += f"🎁 <b>Призы:</b>\n1. {result_json['prizes']['1']['text']}\n2. {result_json['prizes']['2']['text']}\n3. {result_json['prizes']['3']['text']}"
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("✅ Запустить этот конкурс", callback_data="ai_start_contest"))
+        
+        bot.edit_message_text(text, message.chat.id, msg.message_id, reply_markup=markup, parse_mode="HTML")
+        
+    except Exception as e:
+        bot.edit_message_text(f"❌ Ошибка связи с нейросетью: {e}", message.chat.id, msg.message_id)
+
+# --- Активация черновика ---
+@bot.callback_query_handler(func=lambda call: call.data == 'ai_start_contest')
+def handle_ai_start(call):
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "running"}})
+    bot.edit_message_text(f"{call.message.text}\n\n🚀 <b>СТАТУС: ЗАПУЩЕН! Участники могут отправлять фото.</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
