@@ -234,6 +234,7 @@ def api_get_market():
         return jsonify({"error": "Auth failed"}), 403
 
     lots = list(db['market_orders'].find({"status": "active"}).sort("created_at", -1))
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
     
     import time
     from datetime import datetime
@@ -241,7 +242,7 @@ def api_get_market():
     
     result = []
     for lot in lots:
-        # Правильные названия
+        # 1. Правильные названия
         if lot.get('type') == 'artifact' and lot.get('target') == 'mute':
             title_str = "🚓 Ордер на Арест (1 час)"
         else:
@@ -249,15 +250,26 @@ def api_get_market():
             val = f"{lot.get('value')}%" if lot.get('type') == 'percent' else f"{lot.get('value')}₽"
             title_str = f"Скидка {val} на {t_name}"
             
-        # Дата и время
+        # 2. Вычисляем, продают ли НИЖЕ РЫНКА
+        target_type = lot.get("target", "all")
+        base_price = 500
+        if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
+        elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
+        elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+        
+        real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
+        rec_price = int(real_value * 0.6)
+        if rec_price < 10: rec_price = 10
+        
+        original_rub = lot['price_rub']
+        is_below_market = original_rub < rec_price # True, если цена продавца меньше рекомендованной
+            
+        # 3. Дата и время + Уценка
         created_at = lot.get('created_at', now)
         dt_str = datetime.fromtimestamp(created_at).strftime('%d.%m %H:%M')
         age_seconds = now - created_at
         
-        # Логика Уценки (Распродажи)
-        original_rub = lot['price_rub']
         discount_pct = 0
-        
         if age_seconds > 172800: # Больше 48 часов
             discount_pct = 50
         elif age_seconds > 86400: # Больше 24 часов
@@ -266,7 +278,7 @@ def api_get_market():
         current_rub = original_rub
         if discount_pct > 0:
             current_rub = int(original_rub * (1 - discount_pct / 100))
-            if current_rub < 5: current_rub = 5 # Минималка
+            if current_rub < 5: current_rub = 5 
             
         current_pts = int(current_rub * 2.5)
         original_pts = int(original_rub * 2.5)
@@ -281,7 +293,8 @@ def api_get_market():
             "price_pts": current_pts,
             "old_price_rub": original_rub if discount_pct > 0 else None,
             "old_price_pts": original_pts if discount_pct > 0 else None,
-            "discount": discount_pct
+            "discount": discount_pct,
+            "is_below_market": is_below_market # <--- Передаем флаг на фронтенд
         })
         
     return jsonify(result)

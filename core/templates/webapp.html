@@ -937,19 +937,19 @@
                 data.forEach(lot => {
                     let isMine = (lot.seller_uid == user.id);
                     
-                    // Блок ценников (С уценкой или без)
+                    // Блок ценников (С темной подложкой под перечеркнутую цену)
                     let priceHtml = '';
                     if (lot.discount > 0) {
                         priceHtml = `
                             <div class="flex space-x-2 mt-3 relative">
                                 <div class="absolute -top-3 left-2 bg-red-600 text-white text-[9px] font-black px-2 py-0.5 rounded shadow animate-pulse border border-red-400 z-10">УЦЕНКА -${lot.discount}%</div>
                                 <button onclick="buyLot('${lot.id}', 'rub')" class="flex-1 bg-green-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center relative overflow-hidden">
-                                    <span class="text-[9px] text-red-300 line-through absolute top-1 right-2">${lot.old_price_rub}₽</span>
+                                    <span class="bg-black/40 text-white/90 px-1.5 rounded text-[10px] line-through absolute top-1 right-2">${lot.old_price_rub}₽</span>
                                     <span class="text-lg mt-1">${lot.price_rub} ₽</span>
                                     <span class="text-[10px] font-normal">за кэшбэк</span>
                                 </button>
                                 <button onclick="buyLot('${lot.id}', 'pts')" class="flex-1 bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex flex-col items-center justify-center relative overflow-hidden">
-                                    <span class="text-[9px] text-red-300 line-through absolute top-1 right-2">${lot.old_price_pts}💎</span>
+                                    <span class="bg-black/40 text-white/90 px-1.5 rounded text-[10px] line-through absolute top-1 right-2">${lot.old_price_pts}💎</span>
                                     <span class="text-lg mt-1">${lot.price_pts} 💎</span>
                                     <span class="text-[10px] font-normal">за очки</span>
                                 </button>
@@ -960,14 +960,17 @@
                     
                     let buyButtons = isMine ? `<button onclick="actionItem('cancel_lot', '${lot.id}', this)" class="w-full bg-red-600/80 py-2 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-transform mt-3 border border-red-500/50">❌ Снять с продажи</button>` : priceHtml;
                     
+                    // Плашка 🔥 НИЖЕ РЫНКА
+                    let belowMarketBadge = lot.is_below_market ? `<span class="bg-green-600/90 text-white text-[8px] font-bold px-1.5 py-0.5 rounded ml-2 border border-green-500 shadow-sm align-middle whitespace-nowrap">🔥 НИЖЕ РЫНКА</span>` : '';
+                    
                     html += `
                     <div class="surface rounded-2xl p-4 shadow-lg border ${lot.discount > 0 ? 'border-red-900/50 bg-red-900/10' : 'border-gray-700/50'}">
                         <div class="flex justify-between items-start mb-2">
-                            <div>
-                                <h3 class="font-bold text-md leading-tight">${lot.title}</h3>
+                            <div class="flex-1">
+                                <h3 class="font-bold text-md leading-tight">${lot.title}${belowMarketBadge}</h3>
                                 <p class="text-[9px] text-gray-400 mt-1">📅 Выложено: ${lot.date_str}</p>
                             </div>
-                            <span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2 text-right leading-tight">Продавец:<br>${lot.seller}</span>
+                            <span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2 text-right leading-tight min-w-max">Продавец:<br>${lot.seller}</span>
                         </div>
                         ${buyButtons}
                     </div>`;
