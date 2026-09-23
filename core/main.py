@@ -235,18 +235,53 @@ def api_get_market():
 
     lots = list(db['market_orders'].find({"status": "active"}).sort("created_at", -1))
     
+    import time
+    from datetime import datetime
+    now = time.time()
+    
     result = []
     for lot in lots:
-        t_name = "Штраф" if lot.get('target') == 'fine' else "Рекламу" if lot.get('target') == 'ads' else "VIP" if lot.get('target') == 'vip' else "Любую услугу"
-        val = f"{lot.get('value')}%" if lot.get('type') == 'percent' else f"{lot.get('value')}₽"
+        # Правильные названия
+        if lot.get('type') == 'artifact' and lot.get('target') == 'mute':
+            title_str = "🚓 Ордер на Арест (1 час)"
+        else:
+            t_name = "Штраф" if lot.get('target') == 'fine' else "Рекламу" if lot.get('target') == 'ads' else "VIP" if lot.get('target') == 'vip' else "Любую услугу"
+            val = f"{lot.get('value')}%" if lot.get('type') == 'percent' else f"{lot.get('value')}₽"
+            title_str = f"Скидка {val} на {t_name}"
+            
+        # Дата и время
+        created_at = lot.get('created_at', now)
+        dt_str = datetime.fromtimestamp(created_at).strftime('%d.%m %H:%M')
+        age_seconds = now - created_at
+        
+        # Логика Уценки (Распродажи)
+        original_rub = lot['price_rub']
+        discount_pct = 0
+        
+        if age_seconds > 172800: # Больше 48 часов
+            discount_pct = 50
+        elif age_seconds > 86400: # Больше 24 часов
+            discount_pct = 20
+            
+        current_rub = original_rub
+        if discount_pct > 0:
+            current_rub = int(original_rub * (1 - discount_pct / 100))
+            if current_rub < 5: current_rub = 5 # Минималка
+            
+        current_pts = int(current_rub * 2.5)
+        original_pts = int(original_rub * 2.5)
         
         result.append({
             "id": str(lot["_id"]),
             "seller": lot.get('seller_name', 'Аноним'),
             "seller_uid": lot.get('seller_uid'),
-            "title": f"Скидка {val} на {t_name}",
-            "price_rub": lot['price_rub'],
-            "price_pts": int(lot['price_rub'] * 2.5)
+            "title": title_str,
+            "date_str": dt_str,
+            "price_rub": current_rub,
+            "price_pts": current_pts,
+            "old_price_rub": original_rub if discount_pct > 0 else None,
+            "old_price_pts": original_pts if discount_pct > 0 else None,
+            "discount": discount_pct
         })
         
     return jsonify(result)
@@ -263,55 +298,96 @@ def api_buy_market():
     
     lot_id = data.get('lot_id')
     currency = data.get('currency')
-    
     from bson.objectid import ObjectId
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
-    
     lot = db['market_orders'].find_one({"_id": ObjectId(lot_id), "status": "active"})
-    if not lot:
-        return jsonify({"error": "Упс! Лот уже продан или снят с продажи!"}), 400
-        
-    if lot['seller_uid'] == uid:
-        return jsonify({"error": "Вы не можете купить свой собственный лот!"}), 400
-        
-    price_rub = lot['price_rub']
-    price_pts = int(price_rub * 2.5)
     
-    if currency == "rub":
-        if user_db.get("cashback_balance", 0) < price_rub:
-            return jsonify({"error": "Недостаточно рублей (кэшбэка)!"}), 400
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -price_rub}})
-    elif currency == "pts":
-        if user_db.get("bounty_points", 0) < price_pts:
-            return jsonify({"error": "Недостаточно очков!"}), 400
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price_pts}})
+    if not lot: return jsonify({"error": "Упс! Лот уже продан или снят с продажи!"}), 400
+    if lot['seller_uid'] == uid: return jsonify({"error": "Вы не можете купить свой собственный лот!"}), 400
         
-        # 🔥 ДОБАВЬ ЭТИ ДВЕ СТРОЧКИ 🔥
-        pts_commission = price_pts - int(price_pts * 0.9)
+    # 🔥 ЛОГИКА УЦЕНКИ И УМНЫХ СУБСИДИЙ 🔥
+    import time
+    age_seconds = time.time() - lot.get('created_at', time.time())
+    
+    discount_pct = 0
+    if age_seconds > 172800: discount_pct = 50
+    elif age_seconds > 86400: discount_pct = 20
+    
+    original_rub = lot['price_rub']
+    buyer_price_rub = original_rub
+    
+    if discount_pct > 0:
+        buyer_price_rub = int(original_rub * (1 - discount_pct / 100))
+        if buyer_price_rub < 5: buyer_price_rub = 5
+        
+    buyer_price_pts = int(buyer_price_rub * 2.5)
+    
+    # === 1. СПИСАНИЕ С ПОКУПАТЕЛЯ ===
+    if currency == "rub":
+        if user_db.get("cashback_balance", 0) < buyer_price_rub:
+            return jsonify({"error": "Недостаточно рублей (кэшбэка)!"}), 400
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -buyer_price_rub}})
+    elif currency == "pts":
+        if user_db.get("bounty_points", 0) < buyer_price_pts:
+            return jsonify({"error": "Недостаточно очков!"}), 400
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -buyer_price_pts}})
+        pts_commission = buyer_price_pts - int(buyer_price_pts * 0.9)
         db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": pts_commission}})
-    else:
-        return jsonify({"error": "Ошибка валюты!"}), 400
+    else: return jsonify({"error": "Ошибка валюты!"}), 400
         
     db['market_orders'].update_one({"_id": ObjectId(lot_id)}, {"$set": {"status": "sold", "buyer_uid": uid}})
     
-    # 🔥 ПАССИВКА: РОДОДЕНДРОН 🔥
-    # Проверяем, есть ли у продавца выращенный Рододендрон на грядке
+    # === 2. РАСЧЕТ ВЫПЛАТЫ ПРОДАВЦУ И СУБСИДИИ ===
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
+    target_type = lot.get("target", "all")
+    base_price = 500
+    if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
+    elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
+    elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+    
+    real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
+    rec_price = int(real_value * 0.6)
+    if rec_price < 10: rec_price = 10
+    
+    # Адекватная ли цена? (Даем люфт +10 руб)
+    is_adequate = original_rub <= (rec_price + 10)
+    
+    gross_payout = original_rub
+    subsidy_msg = ""
+    
+    if discount_pct > 0:
+        if is_adequate:
+            if discount_pct == 20:
+                gross_payout = int(original_rub * 0.90) # Теряет 10%, Скайнет платит 10%
+                subsidy_msg = "🔥 _Лот ушел со скидкой -20%. Так как ваша цена была честной, Скайнет компенсировал половину уценки из своих фондов!_"
+            elif discount_pct == 50:
+                gross_payout = int(original_rub * 0.85) # Теряет 15%, Скайнет платит 35%
+                subsidy_msg = "🔥 _Лот ушел со скидкой -50%. Так как ваша цена была честной, Скайнет компенсировал 35% от уценки из своих фондов!_"
+        else:
+            gross_payout = buyer_price_rub # Жадный продавец теряет всё
+            subsidy_msg = f"📉 _Лот продан со скидкой -{discount_pct}%. Цена была выше рекомендованной, поэтому субсидия от Скайнета не начислена._"
+            
+    # Комиссия рынка
     has_rhodo = db['farm_plots'].find_one({"uid": lot['seller_uid'], "seed_type": "rhododendron", "status": "ready"})
     multiplier = 0.95 if has_rhodo else 0.90
-    
-    seller_profit = int(price_rub * multiplier)
-    safe_commission = price_rub - seller_profit # Остаток летит в Сейф
+    seller_profit = int(gross_payout * multiplier)
     
     paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
-    db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}}) # Пополняем Красный Сейф
+    
+    if currency == "rub":
+        safe_commission = buyer_price_rub - seller_profit
+        if safe_commission > 0: db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}}) 
     
     promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
     
+    # === 3. УВЕДОМЛЕНИЕ ПРОДАВЦУ ===
     try:
         from core.bot import bot
-        bot.send_message(lot['seller_uid'], f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (с учетом 10% комиссии).", parse_mode="Markdown")
+        msg_text = f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (комиссия рынка учтена)."
+        if subsidy_msg: msg_text += f"\n\n{subsidy_msg}"
+        bot.send_message(lot['seller_uid'], msg_text, parse_mode="Markdown")
     except: pass
     
     return jsonify({"success": True, "promo_id": promo_id})
@@ -948,15 +1024,36 @@ def api_get_my_promos():
     uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0, "type": {"$ne": "airdrop"}}))
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
     
     result = []
     for p in promos:
-        t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Любую услугу"
-        val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
+        target_type = p.get("target", "all")
+        # Вычисляем базовую стоимость в рублях
+        base_price = 500
+        if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
+        elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
+        elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+        
+        # Считаем Рекомендованную цену (60% от номинала)
+        if p.get('type') == 'artifact' and target_type == 'mute':
+            real_value = 500
+            name_str = "🚓 Ордер на Арест"
+        else:
+            val = p.get('value', 0)
+            real_value = int(base_price * (val / 100))
+            t_name = "Штраф" if target_type == 'fine' else "Рекламу" if target_type == 'ads' else "VIP" if target_type == 'vip' else "Любую услугу"
+            name_str = f"Скидка {val}% на {t_name}"
+
+        rec_price = int(real_value * 0.6)
+        if rec_price < 10: rec_price = 10
+            
+        full_name_str = f"{p['_id']} ({name_str} | Рек: ~{rec_price}₽)"
+        
         result.append({
             "id": p["_id"], 
-            "name": f"{p['_id']} (Скидка {val} на {t_name})", 
-            "target": p.get("target", "all")
+            "name": full_name_str, 
+            "target": target_type
         })
         
     return jsonify(result)
@@ -985,10 +1082,20 @@ def api_add_market_lot():
     elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
     elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
     
-    max_price = int(base_price * 1.2)
+    # 🔥 НОВАЯ АДЕКВАТНАЯ ОЦЕНКА 🔥
+    if promo.get("type") == "artifact":
+        max_price = 500 # Ордера можно продавать до 500 рублей
+    elif promo.get("type") == "percent":
+        # Реальная ценность скидки в рублях
+        real_value = int(base_price * (promo.get("value", 0) / 100))
+        # Продавать можно максимум за 90% от реальной ценности, чтобы покупателю БЫЛО ВЫГОДНО!
+        max_price = int(real_value * 0.9)
+        if max_price < 10: max_price = 10
+    else:
+        max_price = int(base_price * 1.2)
     
     if price < 10 or price > max_price:
-        return jsonify({"error": f"Цена должна быть от 10₽ до {max_price}₽!"}), 400
+        return jsonify({"error": f"Слишком дорого! Никто не купит без выгоды. Максимальная цена: {max_price}₽!"}), 400
         
     import time
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": "MARKET"}})
