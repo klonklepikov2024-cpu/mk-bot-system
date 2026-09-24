@@ -1725,7 +1725,8 @@ def api_admin_generate_contest():
     
     import requests, time
     for model_name in models_queue:
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        # 🔥 ВОТ ОНА — ЧИСТАЯ И ИДЕАЛЬНАЯ ССЫЛКА 🔥
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
         for attempt in range(2):
             try:
                 payload = {
@@ -1750,7 +1751,6 @@ def api_admin_generate_contest():
     db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
 
     return jsonify(ai_data)
-
 
 @app.route('/api/admin/deploy_contest', methods=['POST'])
 def api_admin_deploy_contest():
