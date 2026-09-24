@@ -1591,12 +1591,45 @@ def api_crack_safe():
             "$set": {"pin_code": new_pin, "balance": start_balance, "logs": []}
         })
         
+        # 1. Отчет админам (Тихо)
         try:
             from core.bot import bot
             from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
             safe_name = "СЕЙФА ДАННЫХ (Очки)" if safe_color == 'blue' else "ФИНАНСОВОГО СЕЙФА (Рубли)"
             bot.send_message(STAFF_GROUP_ID, f"🚨 <b>СИСТЕМА ВЗЛОМАНА!</b>\n\nХакер {user_name_str} подобрал пароль от {safe_name} и унес куш в размере <b>{prize} {currency}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
         except: pass
+
+        # 🔥 2. ГРОМКОЕ ОПОВЕЩЕНИЕ ПО ВСЕМ ЧАТАМ 🔥
+        def broadcast_safe_crack():
+            from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+            import time
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            
+            all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+            unique_chats = set(all_chats)
+            
+            safe_title = "🔵 СЕЙФ ДАННЫХ" if safe_color == 'blue' else "🔴 ФИНАНСОВЫЙ СЕЙФ"
+            
+            msg_text = (
+                f"🚨 <b>ВНИМАНИЕ ВСЕМ УЗЛАМ СКАЙНЕТА! СИСТЕМА ВЗЛОМАНА!</b> 🚨\n\n"
+                f"Хакер {user_name_str} только что подобрал пароль и вскрыл <b>{safe_title}</b>!\n"
+                f"💰 Украденный куш: <b>{prize} {currency}</b>!\n\n"
+                f"<i>Сейф обнулен, сгенерирован новый пароль. Успей добыть ключи на Кибер-Участке и сорвать следующий джекпот!</i>"
+            )
+            
+            try:
+                bot_username = bot.get_me().username
+                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔐 Пойти взламывать", url=f"https://t.me/{bot_username}?start=app_farm"))
+                
+                for cid in unique_chats:
+                    try:
+                        bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
+                        time.sleep(0.3) # Защита от лимитов Telegram
+                    except: pass
+            except: pass
+
+        import threading
+        threading.Thread(target=broadcast_safe_crack, daemon=True).start()
         
         return jsonify({"success": True, "msg": f"ПОЛНЫЙ ДОСТУП!\nВы сорвали куш: {prize} {currency}!", "cracked": True})
         
@@ -1977,6 +2010,23 @@ def api_admin_stats():
     import datetime
     import time
     
+    # 🔥 ЕДИНЫЙ ЦЕНТР ПОДСЧЕТА (Игнорирует минусовые балансы-глитчи) 🔥
+    def get_real_wealth():
+        # Считаем очки (только те, что больше нуля)
+        pts_res = list(paid_collection.aggregate([
+            {"$match": {"bounty_points": {"$gt": 0}}},
+            {"$group": {"_id": None, "total": {"$sum": "$bounty_points"}}}
+        ]))
+        # Считаем рубли (только те, что больше нуля)
+        cb_res = list(paid_collection.aggregate([
+            {"$match": {"cashback_balance": {"$gt": 0}}},
+            {"$group": {"_id": None, "total": {"$sum": "$cashback_balance"}}}
+        ]))
+        return (
+            pts_res[0]["total"] if pts_res else 0,
+            cb_res[0]["total"] if cb_res else 0
+        )
+
     # === ГЛОБАЛЬНАЯ СВОДКА ===
     if stat_type == "global":
         total_users = db['users'].count_documents({})
@@ -1987,10 +2037,8 @@ def api_admin_stats():
         webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now_time - 86400}})
         active_plots = db['farm_plots'].count_documents({"status": "growing"})
         
-        pipeline = [{"$group": {"_id": None, "total_points": {"$sum": "$bounty_points"}, "total_cb": {"$sum": "$cashback_balance"}}}]
-        wealth = list(paid_collection.aggregate(pipeline))
-        total_points = wealth[0]["total_points"] if wealth else 0
-        total_cb = wealth[0]["total_cb"] if wealth else 0
+        # Используем единую функцию
+        total_points, total_cb = get_real_wealth()
         
         active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
         active_airdrops = db['active_airdrops'].count_documents({"claimed_count": {"$lt": 5}})
@@ -2013,8 +2061,10 @@ def api_admin_stats():
     # === БАНК КАЗИНО ===
     elif stat_type == "bank":
         bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
-        users_with_cb = list(paid_collection.find({"cashback_balance": {"$gt": 0}}))
-        total_cb = sum(u.get("cashback_balance", 0) for u in users_with_cb)
+        
+        # Используем ту же самую единую функцию
+        _, total_cb = get_real_wealth()
+        
         text = (
             f"🏦 БАНК КАЗИНО\n\n"
             f"💎 Фонд Premium: {int(bank_data.get('balance', 0))} ⭐️\n"

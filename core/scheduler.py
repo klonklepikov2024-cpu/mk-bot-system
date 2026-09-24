@@ -396,6 +396,139 @@ def smart_funnel_teaser():
 
     broadcast_teaser(selected["text"], selected["btn"], selected["tab"])
 
+import os
+import json
+import requests
+
+def holiday_contest_scout():
+    """Разведчик Скайнета: Ищет крупные праздники за 10 дней и предлагает лонгрид-конкурс"""
+    now = datetime.datetime.now(tz)
+    target_date = now + datetime.timedelta(days=10) # Ищем за 10 дней до события
+    month_day = target_date.strftime("%m-%d")
+
+    # Календарь КРУПНЫХ тематических праздников для мужского комьюнити
+    major_holidays = {
+        "12-31": "Новый Год",
+        "02-14": "День всех влюбленных (Конкурс для парочек и тех, кто в активном поиске)",
+        "02-23": "23 Февраля (Суровый мужской праздник)",
+        "04-01": "1 Апреля (День смеха и нелепых ситуаций)",
+        "05-01": "Майские праздники (Открытие шашлычного сезона и отдых на природе)",
+        "06-01": "Первый день Лета (Пляжный сезон, шорты и пресс)",
+        "10-31": "Хэллоуин (Время темных и мистических образов)",
+        "11-11": "Всемирный день холостяка (Показываем себя во всей красе)",
+        "11-19": "Международный мужской день"
+    }
+
+    if month_day not in major_holidays:
+        return
+
+    holiday_name = major_holidays[month_day]
+    
+    # 1. Проверяем, нет ли уже запущенного конкурса
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if active: 
+        return # Не перебиваем текущий, пусть юзеры спокойно доиграют
+        
+    # 2. Проверяем, не предлагали ли мы это уже (защита от спама)
+    year = now.year
+    proposed_id = f"scout_{month_day}_{year}"
+    if db['settings'].find_one({"_id": proposed_id}): 
+        return 
+        
+    db['settings'].insert_one({"_id": proposed_id, "status": "proposed"})
+
+    # 3. Генерируем конкурс через Gemini (Мега-Промпт по твоему ТЗ)
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key: return
+
+    system_prompt = """Ты креативный директор мужского Telegram-сообщества. Твоя задача — придумать МАСШТАБНЫЙ тематический фотоконкурс.
+    Верни СТРОГО валидный JSON без маркдауна (без ```json).
+    Формат ответа:
+    {
+      "contest_id": "уникальный_id",
+      "title": "Яркое название с эмодзи",
+      "description": "Короткое описание",
+      "announcement_text": "ОГРОМНЫЙ текст поста-анонса и правил (используй HTML теги <b> и <i>). ОБЯЗАТЕЛЬНО СКОПИРУЙ ЭТУ СТРУКТУРУ ТЕКСТА:
+      
+      [Завлекающее вступление в брутальном мужском стиле]
+      
+      <b>⚡️ Суть конкурса</b>
+      [Что нужно сфоткать в тематике праздника]
+      
+      <b>🚀 Как участвовать?</b>
+      1. Сделай снимок.
+      2. Перейди в личку бота и отправь команду /contest.
+      3. [Еще один пункт по теме]
+      
+      <b>🎭 Номинации — выбери свою категорию!</b>
+      [Придумай 4-5 крутых названий номинаций по теме конкурса и распиши, за что они даются]
+      
+      <b>⏰ Важные даты</b>
+      [Укажи, что дедлайн приема работ — ровно через 10 дней от сегодня]
+      
+      <b>💡 Советы для успеха</b>
+      [Дай 3 полезных совета по свету, фону и композиции]
+      
+      <b>📜 ПРАВИЛА КОНКУРСА</b>
+      - Кто участвует: Мужчины 18+
+      - 1 аккаунт = максимум 3 фото
+      - Никаких ИИ, стоков и чужих фото из интернета
+      - Запрет на реалистичную кровь, наготу, политику
+      - Накрутка = мгновенная дисквалификация",
+      "prizes": {
+         "1": {"text": "5000 💎 + VIP + 1500 ₽"},
+         "2": {"text": "3000 💎 + 3 Ордера на Арест"},
+         "3": {"text": "1000 💎 + 2 Щита Иммунитета"}
+      }
+    }"""
+    
+    models_queue = ["gemini-3.7-flash", "gemini-3.6-flash"]
+    ai_data = None
+    
+    for model_name in models_queue:
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        for attempt in range(2):
+            try:
+                payload = {
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"parts": [{"text": f"Придумай крутой конкурс на тему: {holiday_name}"}]}],
+                    "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
+                }
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+                if res.status_code == 200:
+                    raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    clean_text = raw_text.strip()
+                    if clean_text.startswith("```json"): clean_text = clean_text[7:]
+                    if clean_text.startswith("```"): clean_text = clean_text[3:]
+                    if clean_text.endswith("```"): clean_text = clean_text[:-3]
+                    ai_data = json.loads(clean_text.strip())
+                    break
+            except: time.sleep(2)
+        if ai_data: break
+
+    if not ai_data: return
+
+    # 4. Сохраняем в базу как ЧЕРНОВИК СКАЙНЕТА
+    ai_data['status'] = 'scout_draft'
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
+
+    # 5. Отправляем в админ-чат красивое уведомление с кнопками
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
+    
+    prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {ai_data.get('prizes', {}).get('1', {}).get('text', '')}\n🥈 2 место: {ai_data.get('prizes', {}).get('2', {}).get('text', '')}\n🥉 3 место: {ai_data.get('prizes', {}).get('3', {}).get('text', '')}"
+    
+    full_text = f"🤖 <b>РАЗВЕДКА СКАЙНЕТА</b> 🤖\n\nСэр, через 10 дней наступит <b>{holiday_name}</b>!\nЯ проверил: активных конкурсов сейчас нет. Я подготовил для вас масштабный проект:\n\n🏷 <b>{ai_data.get('title')}</b>\n\n{ai_data.get('announcement_text')}{prize_block}\n\n👇 <i>Запустить этот конкурс в работу?</i>"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Одобрить и ЗАПУСТИТЬ", callback_data="scout_deploy_contest"))
+    markup.add(InlineKeyboardButton("❌ Отклонить идею", callback_data="scout_reject_contest"))
+    
+    try:
+        bot.send_message(STAFF_GROUP_ID, full_text, parse_mode="HTML", reply_markup=markup, message_thread_id=CONTESTS_THREAD_ID)
+    except Exception as e:
+        pass
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
@@ -412,6 +545,12 @@ def start_scheduler():
              
         # 4. Умная воронка-карусель в чаты (Проверяет базу каждую минуту)
         scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
+
+        # Умная воронка-карусель в чаты
+        scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
+        
+        # 🔥 НОВОЕ: Разведчик конкурсов (Каждое утро в 10:00) 🔥
+        scheduler.add_job(holiday_contest_scout, 'cron', hour=10, minute=0, id='holiday_scout', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш)!")

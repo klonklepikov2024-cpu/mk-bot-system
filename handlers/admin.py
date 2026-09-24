@@ -2285,3 +2285,53 @@ def handle_payout_decisions(call):
         
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО. ДЕНЬГИ ВОЗВРАЩЕНЫ НА БАЛАНС ЮЗЕРА.**", call.message.chat.id, call.message.message_id)
         except: pass
+
+# ================= РАЗВЕДЧИК КОНКУРСОВ (СКАЙНЕТ) =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('scout_'))
+def handle_scout_contest(call):
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    action = call.data.replace("scout_", "")
+    
+    if action == "reject_contest":
+        db['active_contest'].update_one({"_id": "current_event", "status": "scout_draft"}, {"$set": {"status": "rejected"}})
+        try: bot.edit_message_text(f"{call.message.html}\n\n❌ <b>Идея отклонена администратором.</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        except: pass
+        
+    elif action == "deploy_contest":
+        # 1. Меняем статус на running
+        active = db['active_contest'].find_one_and_update({"_id": "current_event", "status": "scout_draft"}, {"$set": {"status": "running"}})
+        if not active:
+            try: bot.answer_callback_query(call.id, "❌ Черновик не найден или уже запущен!", show_alert=True)
+            except: pass
+            return
+            
+        try: bot.edit_message_text(f"{call.message.html}\n\n🚀 <b>ЗАПУЩЕНО! Скайнет начинает рассылку по чатам...</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        except: pass
+        
+        # 2. Фоновая рассылка
+        def broadcast_scout():
+            from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+            import time
+            
+            all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+            unique_chats = set(all_chats)
+            
+            prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {active.get('prizes', {}).get('1', {}).get('text', '')}\n🥈 2 место: {active.get('prizes', {}).get('2', {}).get('text', '')}\n🥉 3 место: {active.get('prizes', {}).get('3', {}).get('text', '')}"
+            announcement = active.get("announcement_text", "") + prize_block
+            
+            success = 0
+            for chat_id in unique_chats:
+                try:
+                    bot.send_message(chat_id, announcement, parse_mode="HTML")
+                    success += 1
+                    time.sleep(0.3)
+                except: pass
+                
+            try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Авто-конкурс успешно разослан в {success} чатов!</b>", parse_mode="HTML", message_thread_id=call.message.message_thread_id)
+            except: pass
+
+        import threading
+        threading.Thread(target=broadcast_scout, daemon=True).start()
