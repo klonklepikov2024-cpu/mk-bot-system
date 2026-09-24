@@ -307,7 +307,7 @@ def generate_ai_contest(message):
     last_error = ""
 
     for model_name in models_queue:
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
         
         for attempt in range(3):
             try:
