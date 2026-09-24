@@ -1,8 +1,8 @@
+import os  # <--- ВОТ ЭТА СТРОЧКА РЕШИТ ПРОБЛЕМУ
 import time
 import html
 import requests
 import json
-import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from database.mongo import db, paid_collection
