@@ -270,22 +270,26 @@ def end_contest_cmd(message):
     # Отправляем отчет тебе в админскую тему
     bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", message_thread_id=message.message_thread_id)
 
-# --- 5. ГЕНЕРАЦИЯ КОНКУРСА ЧЕРЕЗ ИИ (GROQ) ---
+# --- 5. ГЕНЕРАЦИЯ КОНКУРСА ЧЕРЕЗ ИИ (GEMINI) ---
 @bot.message_handler(commands=['ai_contest'])
 def generate_ai_contest(message):
     if str(message.chat.id) != str(STAFF_GROUP_ID): return
     
     theme = message.text.replace('/ai_contest', '').strip()
     if not theme:
-        bot.send_message(message.chat.id, "❌ Укажите праздник или тему.\nПример: `/ai_contest День Холостяка (18+)`", parse_mode="Markdown", message_thread_id=message.message_thread_id)
+        bot.send_message(message.chat.id, "❌ Укажите праздник или тему.\nПример: `/ai_contest Киберпанк-вечеринка`", parse_mode="Markdown", message_thread_id=message.message_thread_id)
         return
 
-    msg = bot.send_message(message.chat.id, f"🧠 <i>Скайнет анализирует нейронные связи и придумывает концепт для «{theme}»...</i>", parse_mode="HTML", message_thread_id=message.message_thread_id)
+    msg = bot.send_message(message.chat.id, f"🧠 <i>Скайнет переключает мощности на Gemini и придумывает концепт для «{theme}»...</i>", parse_mode="HTML", message_thread_id=message.message_thread_id)
 
-    # Жесткий системный промпт для LLM, чтобы она отдавала только JSON
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        bot.edit_message_text("❌ Ошибка: GEMINI_API_KEY не найден в переменных окружения!", message.chat.id, msg.message_id)
+        return
+
     system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
     Твоя задача — придумать тематический фотоконкурс. 
-    Верни СТРОГО валидный JSON без маркдауна и лишнего текста.
+    Верни СТРОГО валидный JSON без маркдауна и лишнего текста (без ```json).
     Формат ответа:
     {
       "contest_id": "уникальный_id_на_английском_например_single_day_2026",
@@ -298,32 +302,68 @@ def generate_ai_contest(message):
       }
     }"""
     
+    models_queue = ["gemini-3.7-flash", "gemini-3.6-flash"]
+    ai_data = None
+    last_error = ""
+
+    for model_name in models_queue:
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        
+        for attempt in range(3):
+            try:
+                payload = {
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"parts": [{"text": f"Сгенерируй конкурс на тему: {theme}"}]}],
+                    "generationConfig": {
+                        "temperature": 0.8, 
+                        "responseMimeType": "application/json"
+                    }
+                }
+
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+
+                if res.status_code == 200:
+                    content = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    try:
+                        ai_data = json.loads(content)
+                        break 
+                    except json.JSONDecodeError:
+                        last_error = "Невалидный JSON от модели"
+                        
+                elif res.status_code in [503, 429]:
+                    last_error = f"Код {res.status_code}. Ждем..."
+                    time.sleep(5)
+                else:
+                    last_error = f"Код {res.status_code}"
+                    break 
+
+            except Exception as e:
+                last_error = str(e)
+                time.sleep(3)
+                
+        if ai_data:
+            break
+
+    if not ai_data:
+        bot.edit_message_text(f"❌ Ошибка генерации: {last_error}", message.chat.id, msg.message_id)
+        return
+
     try:
-        api_key = random.choice(GROQ_API_KEYS)
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": "llama3-70b-8192", 
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Сгенерируй конкурс на тему: {theme}"}
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.7
-        }
-        
-        response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers).json()
-        result_json = json.loads(response['choices'][0]['message']['content'])
-        
         # Сохраняем черновик в базу
-        result_json['status'] = 'draft' 
-        db['active_contest'].update_one({"_id": "current_event"}, {"$set": result_json}, upsert=True)
+        ai_data['status'] = 'draft' 
+        db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
         
         # Выводим админу на проверку
-        text = f"💡 <b>ИДЕЯ ОТ СКАЙНЕТА</b>\n\n"
-        text += f"🏷 <b>Название:</b> {result_json['title']}\n"
-        text += f"🆔 <b>ID:</b> <code>{result_json['contest_id']}</code>\n\n"
-        text += f"📝 <b>Описание:</b>\n{result_json['description']}\n\n"
-        text += f"🎁 <b>Призы:</b>\n1. {result_json['prizes']['1']['text']}\n2. {result_json['prizes']['2']['text']}\n3. {result_json['prizes']['3']['text']}"
+        text = f"💡 <b>ИДЕЯ ОТ СКАЙНЕТА (Gemini)</b>\n\n"
+        text += f"🏷 <b>Название:</b> {ai_data.get('title', 'Без названия')}\n"
+        text += f"🆔 <b>ID:</b> <code>{ai_data.get('contest_id', 'unknown')}</code>\n\n"
+        text += f"📝 <b>Описание:</b>\n{ai_data.get('description', '')}\n\n"
+        
+        prizes = ai_data.get('prizes', {})
+        text += f"🎁 <b>Призы:</b>\n"
+        text += f"1. {prizes.get('1', {}).get('text', '')}\n"
+        text += f"2. {prizes.get('2', {}).get('text', '')}\n"
+        text += f"3. {prizes.get('3', {}).get('text', '')}"
         
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("✅ Запустить этот конкурс", callback_data="ai_start_contest"))
@@ -331,7 +371,7 @@ def generate_ai_contest(message):
         bot.edit_message_text(text, message.chat.id, msg.message_id, reply_markup=markup, parse_mode="HTML")
         
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка связи с нейросетью: {e}", message.chat.id, msg.message_id)
+        bot.edit_message_text(f"❌ Ошибка вывода интерфейса: {e}", message.chat.id, msg.message_id)
 
 # --- Активация черновика ---
 @bot.callback_query_handler(func=lambda call: call.data == 'ai_start_contest')
