@@ -2,6 +2,7 @@ import os  # <--- ВОТ ЭТА СТРОЧКА РЕШИТ ПРОБЛЕМУ
 import time
 import html
 import requests
+import threading
 import json
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
@@ -12,77 +13,29 @@ from config import STAFF_GROUP_ID, chat_ids_mk, CONTESTS_THREAD_ID
 @bot.message_handler(commands=['contest', 'конкурс'])
 def start_contest(message):
     uid = message.from_user.id
-    active_contest = "halloween_2026"
+    
+    # 🔥 Тянем активный конкурс из базы (тот самый, который мы утвердили)
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if not active:
+        bot.send_message(uid, "😴 Пока что активных конкурсов нет! Скайнет готовит что-то грандиозное к следующему празднику.")
+        return
+        
+    active_contest = active['contest_id']
     
     works_count = db['contests'].count_documents({"uid": uid, "contest_id": active_contest, "status": {"$ne": "rejected"}})
     if works_count >= 3:
         bot.send_message(uid, "❌ Вы уже отправили максимальное количество работ (3) на этот конкурс!")
         return
         
+    title = active.get('title', 'Конкурс')
+    desc = active.get('description', 'Пришлите ваше фото.')
+        
     msg = bot.send_message(
         uid,
-        "🎃 <b>КОНКУРС: ХЭЛЛОУИН-2026</b>\n\nОтправьте <b>ОДНО ФОТО</b> вашего образа.\n<i>Убедитесь, что фото загружено как картинка, а не файлом.</i>",
+        f"🎉 <b>{title}</b>\n\n{desc}\n\n👇 <b>Отправьте ОДНО ФОТО вашей работы.</b>\n<i>Убедитесь, что фото загружено как картинка, а не файлом.</i>",
         parse_mode="HTML"
     )
     bot.register_next_step_handler(msg, process_contest_photo, active_contest)
-
-def process_contest_photo(message, contest_id):
-    uid = message.from_user.id
-    if not message.photo:
-        msg = bot.send_message(uid, "❌ Это не фото! Пожалуйста, отправьте фотографию:")
-        bot.register_next_step_handler(msg, process_contest_photo, contest_id)
-        return
-        
-    file_id = message.photo[-1].file_id
-    
-    msg = bot.send_message(uid, "📸 Отлично! Теперь придумайте <b>Название</b> для вашей работы (до 50 символов):", parse_mode="HTML")
-    bot.register_next_step_handler(msg, process_contest_title, contest_id, file_id)
-
-def process_contest_title(message, contest_id, photo_id):
-    uid = message.from_user.id
-    title = message.text.strip()
-    
-    if len(title) > 50:
-        msg = bot.send_message(uid, "❌ Название слишком длинное! Напишите короче (до 50 символов):")
-        bot.register_next_step_handler(msg, process_contest_title, contest_id, photo_id)
-        return
-        
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
-    work_id = f"cw_{int(time.time())}_{uid}"
-    
-    db['contests'].insert_one({
-        "_id": work_id,
-        "contest_id": contest_id,
-        "uid": uid,
-        "username": username,
-        "title": title,
-        "photo_id": photo_id,
-        "status": "pending",
-        "votes": [],
-        "timestamp": time.time()
-    })
-    
-    bot.send_message(uid, "⏳ Ваша работа отправлена на проверку Темному Жюри!\nЕсли она пройдет модерацию, она будет опубликована анонимно.")
-    
-    # Экранируем спецсимволы для безопасности HTML
-    safe_username = html.escape(username)
-    safe_title = html.escape(title)
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton("✅ В Галерею (SFW)", callback_data=f"cmod_gal_{work_id}"),
-        InlineKeyboardButton("🔥 В «Без предрассудков» (18+)", callback_data=f"cmod_nsfw_{work_id}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"cmod_rej_{work_id}")
-    )
-    
-    bot.send_photo(
-        STAFF_GROUP_ID,
-        photo_id,
-        caption=f"🎃 <b>НОВАЯ РАБОТА НА КОНКУРС</b>\n\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 Название: «{safe_title}»",
-        reply_markup=markup,
-        parse_mode="HTML",
-        message_thread_id=CONTESTS_THREAD_ID # <--- ВОТ ЭТА СТРОЧКА ОТПРАВИТ В НУЖНУЮ ТЕМУ
-    )
 
 # --- 2. МОДЕРАЦИЯ И ПУБЛИКАЦИЯ ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cmod_'))
@@ -277,14 +230,18 @@ def generate_ai_contest(message):
     
     theme = message.text.replace('/ai_contest', '').strip()
     if not theme:
-        bot.send_message(message.chat.id, "❌ Укажите праздник или тему.\nПример: `/ai_contest Киберпанк-вечеринка`", parse_mode="Markdown", message_thread_id=message.message_thread_id)
+        bot.send_message(message.chat.id, "❌ Укажите праздник или тему.\nПример: `/ai_contest Октоберфест`", parse_mode="Markdown", message_thread_id=message.message_thread_id)
         return
 
     msg = bot.send_message(message.chat.id, f"🧠 <i>Скайнет переключает мощности на Gemini и придумывает концепт для «{theme}»...</i>", parse_mode="HTML", message_thread_id=message.message_thread_id)
 
+    # Запускаем тяжелую задачу в фоне, чтобы Telegram не паниковал
+    threading.Thread(target=process_ai_contest_task, args=(message.chat.id, msg.message_id, theme)).start()
+
+def process_ai_contest_task(chat_id, msg_id, theme):
     gemini_key = os.getenv("GEMINI_API_KEY")
     if not gemini_key:
-        bot.edit_message_text("❌ Ошибка: GEMINI_API_KEY не найден в переменных окружения!", message.chat.id, msg.message_id)
+        bot.edit_message_text("❌ Ошибка: GEMINI_API_KEY не найден в переменных окружения!", chat_id, msg_id)
         return
 
     system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
@@ -314,10 +271,7 @@ def generate_ai_contest(message):
                 payload = {
                     "systemInstruction": {"parts": [{"text": system_prompt}]},
                     "contents": [{"parts": [{"text": f"Сгенерируй конкурс на тему: {theme}"}]}],
-                    "generationConfig": {
-                        "temperature": 0.8, 
-                        "responseMimeType": "application/json"
-                    }
+                    "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
                 }
 
                 res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
@@ -341,42 +295,27 @@ def generate_ai_contest(message):
                 last_error = str(e)
                 time.sleep(3)
                 
-        if ai_data:
-            break
+        if ai_data: break
 
     if not ai_data:
-        bot.edit_message_text(f"❌ Ошибка генерации: {last_error}", message.chat.id, msg.message_id)
+        try: bot.edit_message_text(f"❌ Ошибка генерации: {last_error}", chat_id, msg_id)
+        except: pass
         return
 
     try:
-        # Сохраняем черновик в базу
         ai_data['status'] = 'draft' 
         db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
         
-        # Выводим админу на проверку
         text = f"💡 <b>ИДЕЯ ОТ СКАЙНЕТА (Gemini)</b>\n\n"
         text += f"🏷 <b>Название:</b> {ai_data.get('title', 'Без названия')}\n"
         text += f"🆔 <b>ID:</b> <code>{ai_data.get('contest_id', 'unknown')}</code>\n\n"
         text += f"📝 <b>Описание:</b>\n{ai_data.get('description', '')}\n\n"
         
         prizes = ai_data.get('prizes', {})
-        text += f"🎁 <b>Призы:</b>\n"
-        text += f"1. {prizes.get('1', {}).get('text', '')}\n"
-        text += f"2. {prizes.get('2', {}).get('text', '')}\n"
-        text += f"3. {prizes.get('3', {}).get('text', '')}"
+        text += f"🎁 <b>Призы:</b>\n1. {prizes.get('1', {}).get('text', '')}\n2. {prizes.get('2', {}).get('text', '')}\n3. {prizes.get('3', {}).get('text', '')}"
         
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("✅ Запустить этот конкурс", callback_data="ai_start_contest"))
-        
-        bot.edit_message_text(text, message.chat.id, msg.message_id, reply_markup=markup, parse_mode="HTML")
-        
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Запустить этот конкурс", callback_data="ai_start_contest"))
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup, parse_mode="HTML")
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка вывода интерфейса: {e}", message.chat.id, msg.message_id)
-
-# --- Активация черновика ---
-@bot.callback_query_handler(func=lambda call: call.data == 'ai_start_contest')
-def handle_ai_start(call):
-    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
-    
-    db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "running"}})
-    bot.edit_message_text(f"{call.message.text}\n\n🚀 <b>СТАТУС: ЗАПУЩЕН! Участники могут отправлять фото.</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        try: bot.edit_message_text(f"❌ Ошибка вывода интерфейса: {e}", chat_id, msg_id)
+        except: pass
