@@ -397,6 +397,57 @@
             </div>
         </div>
     </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ЗАДАНИЙ 🔥 -->
+<!-- ================= ВКЛАДКА 8: ЦУП (АДМИНКА) ================= -->
+    <div id="tab-admin" class="tab-content">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="font-black text-2xl text-red-500 tracking-widest uppercase">Режим Бога</h2>
+            <span class="bg-red-600 text-white text-[10px] px-2 py-1 rounded animate-pulse">ADMIN</span>
+        </div>
+
+        <!-- Модуль 1: Генератор Конкурсов -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-[0_0_15px_rgba(239,68,68,0.2)] border border-red-500/50">
+            <h3 class="font-bold text-lg mb-2 text-white">🎨 ИИ-Генератор Конкурсов</h3>
+            <p class="text-xs text-gray-400 mb-3">Введите тему, и Gemini придумает всё остальное.</p>
+            
+            <input type="text" id="adminContestTheme" placeholder="Например: Октоберфест" class="w-full text-white bg-black/50 rounded-lg p-3 mb-3 outline-none border border-red-900 focus:border-red-500">
+            <button onclick="adminGenerateContest()" id="btnGenerateContest" class="w-full bg-gradient-to-r from-red-600 to-purple-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform flex justify-center items-center gap-2">
+                <span>🧠 Придумать через Gemini</span>
+            </button>
+
+            <!-- Скрытый блок результата генерации -->
+            <div id="adminContestDraft" class="hidden mt-4 pt-4 border-t border-red-900/50">
+                <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">Название</label>
+                <input type="text" id="draftTitle" class="w-full text-white bg-black/30 rounded p-2 mb-2 text-sm border border-gray-700">
+                
+                <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">Пост-анонс (Правила)</label>
+                <textarea id="draftDesc" class="w-full text-white bg-black/30 rounded p-2 mb-2 text-sm border border-gray-700 h-24 custom-scrollbar"></textarea>
+                
+                <div class="grid grid-cols-3 gap-2 mb-3">
+                    <div>
+                        <label class="text-[10px] text-gray-400 font-bold block">1 Место</label>
+                        <input type="text" id="draftPrize1" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-gray-700">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-400 font-bold block">2 Место</label>
+                        <input type="text" id="draftPrize2" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-gray-700">
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-400 font-bold block">3 Место</label>
+                        <input type="text" id="draftPrize3" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-gray-700">
+                    </div>
+                </div>
+
+                <button onclick="adminDeployContest()" id="btnDeployContest" class="w-full bg-green-600 py-3 rounded-xl font-bold text-white shadow-[0_0_15px_rgba(22,163,74,0.4)] active:scale-95 transition-transform">
+                    🚀 Сохранить и РАЗОСЛАТЬ в чаты
+                </button>
+            </div>
+        </div>
+        
+        <!-- Заглушки для будущих модулей -->
+        <div class="surface rounded-2xl p-4 mb-4 border border-gray-700 opacity-50 flex items-center justify-center h-20">
+            <span class="text-gray-400 font-bold">Выдача штрафов (В разработке)</span>
+        </div>
+    </div>
         
     <!-- 🔥 НАШИ ПУЛЕНЕПРОБИВАЕМЫЕ МОДАЛЬНЫЕ ОКНА 🔥 -->
     
@@ -514,6 +565,10 @@
         <button onclick="switchTab('farm', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">🚜</span><span class="text-[8px] font-bold">Участок</span>
         </button>
+        <!-- 🔥 СЕКРЕТНАЯ КНОПКА АДМИНА (Скрыта по умолчанию) 🔥 -->
+        <button id="adminNavBtn" onclick="switchTab('admin', this)" class="hidden nav-item text-red-500 flex flex-col items-center p-1 flex-1">
+            <span class="text-2xl mb-1">👁</span><span class="text-[8px] font-bold">ЦУП</span>
+        </button>
     </div>
 
     <script>
@@ -526,6 +581,12 @@
             document.getElementById('userName').innerText = user.first_name;
             document.getElementById('userId').innerText = 'ID: ' + user.id;
             if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
+            
+            // 🔥 РЕЖИМ БОГА: Показываем кнопку ЦУПа только Владельцу 🔥
+            const ADMIN_IDS = [479938867]; // Сюда можно через запятую добавить других админов
+            if (ADMIN_IDS.includes(user.id)) {
+                document.getElementById('adminNavBtn').classList.remove('hidden');
+            }
         }
 
         // ================= БЕЗОПАСНАЯ ВИБРАЦИЯ =================

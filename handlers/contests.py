@@ -7,7 +7,7 @@ import json
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from database.mongo import db, paid_collection
-from config import STAFF_GROUP_ID, chat_ids_mk, CONTESTS_THREAD_ID
+from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_rainbow, chat_ids_gayznak, CONTESTS_THREAD_ID
 
 # --- 1. ПРИЕМ РАБОТ ---
 @bot.message_handler(commands=['contest', 'конкурс'])
@@ -244,14 +244,16 @@ def process_ai_contest_task(chat_id, msg_id, theme):
         bot.edit_message_text("❌ Ошибка: GEMINI_API_KEY не найден в переменных окружения!", chat_id, msg_id)
         return
 
+    # 🔥 ПРОМПТ ПРОКАЧАН: Теперь требуем правила и готовый пост-анонс
     system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
     Твоя задача — придумать тематический фотоконкурс. 
     Верни СТРОГО валидный JSON без маркдауна и лишнего текста (без ```json).
     Формат ответа:
     {
-      "contest_id": "уникальный_id_на_английском_например_single_day_2026",
+      "contest_id": "уникальный_id_на_английском",
       "title": "Яркое название с эмодзи",
-      "description": "Завлекающий текст анонса. Опиши, какие фото нужно присылать.",
+      "description": "Короткое системное описание для меню бота.",
+      "announcement_text": "ПОЛНЫЙ текст поста-анонса для рассылки по чатам (в HTML тегах <b> и <i>). Обязательно пропиши тут правила: 1. Что нужно сфоткать. 2. Никаких чужих фото. 3. Для участия перейдите в личку бота и отправьте команду /contest.",
       "prizes": {
          "1": {"text": "5000 💎 + VIP + 1500 ₽"},
          "2": {"text": "3000 💎 + 3 Ордера на Арест"},
@@ -264,8 +266,7 @@ def process_ai_contest_task(chat_id, msg_id, theme):
     last_error = ""
 
     for model_name in models_queue:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
-        
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
         for attempt in range(3):
             try:
                 payload = {
@@ -273,9 +274,7 @@ def process_ai_contest_task(chat_id, msg_id, theme):
                     "contents": [{"parts": [{"text": f"Сгенерируй конкурс на тему: {theme}"}]}],
                     "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
                 }
-
                 res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
-
                 if res.status_code == 200:
                     content = res.json()["candidates"][0]["content"]["parts"][0]["text"]
                     try:
@@ -283,18 +282,15 @@ def process_ai_contest_task(chat_id, msg_id, theme):
                         break 
                     except json.JSONDecodeError:
                         last_error = "Невалидный JSON от модели"
-                        
                 elif res.status_code in [503, 429]:
                     last_error = f"Код {res.status_code}. Ждем..."
                     time.sleep(5)
                 else:
                     last_error = f"Код {res.status_code}"
                     break 
-
             except Exception as e:
                 last_error = str(e)
                 time.sleep(3)
-                
         if ai_data: break
 
     if not ai_data:
@@ -309,13 +305,128 @@ def process_ai_contest_task(chat_id, msg_id, theme):
         text = f"💡 <b>ИДЕЯ ОТ СКАЙНЕТА (Gemini)</b>\n\n"
         text += f"🏷 <b>Название:</b> {ai_data.get('title', 'Без названия')}\n"
         text += f"🆔 <b>ID:</b> <code>{ai_data.get('contest_id', 'unknown')}</code>\n\n"
-        text += f"📝 <b>Описание:</b>\n{ai_data.get('description', '')}\n\n"
+        text += f"📢 <b>Текст анонса для рассылки:</b>\n{ai_data.get('announcement_text', '')}\n\n"
         
         prizes = ai_data.get('prizes', {})
         text += f"🎁 <b>Призы:</b>\n1. {prizes.get('1', {}).get('text', '')}\n2. {prizes.get('2', {}).get('text', '')}\n3. {prizes.get('3', {}).get('text', '')}"
         
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Запустить этот конкурс", callback_data="ai_start_contest"))
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Запустить и РАЗОСЛАТЬ анонс", callback_data="ai_start_contest"))
         bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup, parse_mode="HTML")
     except Exception as e:
         try: bot.edit_message_text(f"❌ Ошибка вывода интерфейса: {e}", chat_id, msg_id)
         except: pass
+
+# --- Активация черновика и КОВРОВАЯ БОМБАРДИРОВКА ---
+@bot.callback_query_handler(func=lambda call: call.data == 'ai_start_contest')
+def handle_ai_start(call):
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "draft"})
+    if not active:
+        bot.answer_callback_query(call.id, "Конкурс уже запущен или не найден!", show_alert=True)
+        return
+        
+    # Меняем статус в базе
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "running"}})
+    bot.edit_message_text(f"{call.message.text}\n\n🚀 <b>СТАТУС: ЗАПУЩЕН! Начинаю рассылку анонса по всем чатам...</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+    
+    # Собираем все чаты из матрицы ЦУПа
+    all_target_chats = []
+    all_target_chats.extend(chat_ids_mk.values())
+    all_target_chats.extend(chat_ids_parni.values())
+    all_target_chats.extend(chat_ids_ns.values())
+    all_target_chats.extend(chat_ids_gayznak.values())
+    all_target_chats.extend(chat_ids_rainbow.values())
+    
+    unique_chats = set(all_target_chats)
+    
+    # Формируем пост (добавляем призы к анонсу)
+    prizes = active.get('prizes', {})
+    prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {prizes.get('1', {}).get('text', '')}\n🥈 2 место: {prizes.get('2', {}).get('text', '')}\n🥉 3 место: {prizes.get('3', {}).get('text', '')}"
+    
+    announcement = active.get('announcement_text', "У нас новый конкурс!") + prize_block
+    
+    # Фоновая рассылка, чтобы бот не завис
+    def broadcast_announcement():
+        success_count = 0
+        for chat_id in unique_chats:
+            try:
+                bot.send_message(chat_id, announcement, parse_mode="HTML")
+                success_count += 1
+                time.sleep(0.3) # Пауза против лимитов ТГ
+            except: pass
+            
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            f"📢 <b>Анонс конкурса «{active.get('title')}» успешно разослан в {success_count} чатов!</b>", 
+            message_thread_id=call.message.message_thread_id, 
+            parse_mode="HTML"
+        )
+        
+    import threading
+    threading.Thread(target=broadcast_announcement, daemon=True).start()
+
+# --- 6. РУЧНАЯ КОРРЕКТИРОВКА ПРИЗОВ В ЧЕРНОВИКЕ ---
+@bot.message_handler(commands=['set_prize'])
+def edit_draft_prize(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+    
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        bot.send_message(message.chat.id, "❌ Формат: `/set_prize [место 1-3] [новый текст приза]`\nПример: `/set_prize 1 10000 💎 + Супер-VIP`", parse_mode="Markdown")
+        return
+        
+    place = parts[1]
+    new_prize = parts[2]
+    
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "draft"})
+    if not active:
+        bot.send_message(message.chat.id, "❌ Нет активного черновика! Сначала сгенерируйте конкурс через `/ai_contest` или создайте вручную.")
+        return
+        
+    # Точечно обновляем конкретный приз в базе
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": {f"prizes.{place}.text": new_prize}})
+    bot.send_message(message.chat.id, f"✅ <b>Приз за {place} место успешно изменен на:</b>\n{new_prize}\n\n<i>Теперь можете нажать кнопку запуска под карточкой конкурса!</i>", parse_mode="HTML")
+
+# --- 7. РУЧНОЕ СОЗДАНИЕ КОНКУРСА (БЕЗ ИИ) ---
+@bot.message_handler(commands=['manual_contest'])
+def manual_contest_start(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+    msg = bot.send_message(message.chat.id, "🛠 <b>Ручное создание конкурса</b>\n\nВведите уникальный ID (на английском, без пробелов, например: `summer_2027`):", parse_mode="HTML")
+    bot.register_next_step_handler(msg, process_manual_id)
+
+def process_manual_id(message):
+    contest_id = message.text.strip()
+    msg = bot.send_message(message.chat.id, "Отлично. Теперь введите <b>Название конкурса</b> (с эмодзи):", parse_mode="HTML")
+    bot.register_next_step_handler(msg, process_manual_title, contest_id)
+
+def process_manual_title(message, contest_id):
+    title = message.text.strip()
+    msg = bot.send_message(message.chat.id, "Теперь отправьте <b>Текст анонса и правила</b> (этот текст уйдет в рассылку по всем чатам):", parse_mode="HTML")
+    bot.register_next_step_handler(msg, process_manual_desc, contest_id, title)
+
+def process_manual_desc(message, contest_id, title):
+    desc = message.text.strip()
+    
+    # Создаем базовый черновик со стандартными призами
+    draft_data = {
+        "contest_id": contest_id,
+        "title": title,
+        "description": desc,
+        "announcement_text": desc,
+        "status": "draft",
+        "prizes": {
+             "1": {"text": "5000 💎 + VIP + 1500 ₽"},
+             "2": {"text": "3000 💎 + 3 Ордера на Арест"},
+             "3": {"text": "1000 💎 + 2 Щита Иммунитета"}
+        }
+    }
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": draft_data}, upsert=True)
+    
+    text = f"💡 <b>РУЧНОЙ ЧЕРНОВИК СОЗДАН</b>\n\n🏷 <b>Название:</b> {title}\n🆔 <b>ID:</b> <code>{contest_id}</code>\n\n📢 <b>Анонс:</b>\n{desc}\n\n"
+    text += "🎁 <b>Призы по умолчанию:</b>\n1. 5000 💎 + VIP + 1500 ₽\n2. 3000 💎 + 3 Ордера на Арест\n3. 1000 💎 + 2 Щита Иммунитета\n\n"
+    text += "<i>Если хотите изменить призы, используйте команду `/set_prize 1 Новый приз`. Если всё ок — жмите запуск!</i>"
+    
+    # Та самая кнопка, которая запустит рассылку!
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Запустить и РАЗОСЛАТЬ анонс", callback_data="ai_start_contest"))
+    bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
