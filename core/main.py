@@ -463,6 +463,28 @@ def api_spin_roulette():
         prize_msg = "🎰 МИНИ-ДЖЕКПОТ!\nФонд Premium пуст, поэтому вы получаете +1000 Очков и 5 Осколков!"
         prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
 
+    # === НОВЫЙ БЛОК: УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ ===
+    cert_cost_stars = 1250
+    if val == 62 and bank_data.get("balance", 0) >= cert_cost_stars:
+        db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cert_cost_stars}})
+        prize_msg = "🛍 СУПЕР-ПРИЗ!!!\nВы выиграли Универсальный Сертификат (1500 ₽)!\nЗаявка отправлена админам."
+        prize_id, prize_name = "certificate", "Сертификат 1500₽"
+        
+        import time
+        db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
+            bot.send_message(STAFF_GROUP_ID, f"🛍 <b>СОРВАН СУПЕР-ПРИЗ (СЕРТИФИКАТ) ИЗ WEB APP!</b> 🛍\n\n👤 Победитель: {first_name} ({username_str})\n\n❗️ <i>Заявка добавлена в Веб-панель.</i>", parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
+        except: pass
+
+    elif val == 62:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
+        prize_msg = "🎰 МИНИ-ДЖЕКПОТ!\nФонд пуст, поэтому вы получаете +1000 Очков и 5 Осколков!"
+        prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
+
     elif val == 64:
         code = f"JACKPOT-{random.randint(1000, 9999)}"
         db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
@@ -679,30 +701,35 @@ def api_craft():
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
             return jsonify({"success": True, "msg": "🛡 Вы сковали Щит Иммунитета!"})
         else:
-            import time
-            db['premium_claims'].insert_one({
-                "uid": uid,
-                "username": username_str,
-                "timestamp": time.time(),
-                "status": "pending"
-            })
+            # 🔥 БЕЗОПАСНЫЙ КРАФТ С ПРОВЕРКОЙ КАССЫ 🔥
+            bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+            premium_cost = 1500
             
-            try:
-                from core.bot import bot
-                from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
-                from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
-                bot.send_message(
-                    STAFF_GROUP_ID, 
-                    f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n"
-                    f"👤 Победитель: {first_name} ({username_str})\n\n"
-                    f"❗️ <i>Заявка добавлена в Веб-панель.</i>", 
-                    parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
-                )
-            except Exception as e:
-                logger.error(f"Ошибка уведомления ТГ: {e}")
+            if bank_data.get("balance", 0) >= premium_cost:
+                db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost}})
                 
-            return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ! Вы выиграли Telegram Premium! Заявка отправлена администрации."})
+                import time
+                db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
+                
+                try:
+                    from core.bot import bot
+                    from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+                    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
+                    bot.send_message(
+                        STAFF_GROUP_ID, 
+                        f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ КРАФТА!</b> 🏆\n\n"
+                        f"👤 Победитель: {first_name} ({username_str})\n"
+                        f"❗️ <i>Списано {premium_cost}⭐️ из фонда. Заявка в Веб-панели.</i>", 
+                        parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+                    )
+                except Exception as e:
+                    pass
+                return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ! Вы выиграли Telegram Premium! Заявка отправлена администрации."})
+            else:
+                # Касса пуста! Даем жирный, но ВИРТУАЛЬНЫЙ приз
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000, "jackpot_shards": 5}})
+                return jsonify({"success": True, "msg": "🎰 СУПЕР-ПРИЗ!\nФонд Premium сейчас копится, поэтому Наковальня выдала вам 3000 💎 и 5 Осколков обратно!"})
 
     elif action == 'beyond':
         if user_data.get("bounty_points", 0) < 3000 or user_data.get("immunity", 0) < 2:
@@ -2009,19 +2036,28 @@ def api_admin_stats():
     
     import datetime
     import time
+    from config import ADMIN_CHAT_IDS
     
-    # 🔥 ЕДИНЫЙ ЦЕНТР ПОДСЧЕТА (Игнорирует минусовые балансы-глитчи) 🔥
+    # 🔥 ИДЕАЛЬНЫЙ ЦЕНТР ПОДСЧЕТА (Игнорирует минуса и тестовые счета админов) 🔥
     def get_real_wealth():
-        # Считаем очки (только те, что больше нуля)
+        # Считаем очки (строго > 0, ИСКЛЮЧАЯ АДМИНОВ)
         pts_res = list(paid_collection.aggregate([
-            {"$match": {"bounty_points": {"$gt": 0}}},
+            {"$match": {
+                "uid": {"$nin": ADMIN_CHAT_IDS}, 
+                "bounty_points": {"$gt": 0}
+            }},
             {"$group": {"_id": None, "total": {"$sum": "$bounty_points"}}}
         ]))
-        # Считаем рубли (только те, что больше нуля)
+        
+        # Считаем рубли (строго > 0, ИСКЛЮЧАЯ АДМИНОВ)
         cb_res = list(paid_collection.aggregate([
-            {"$match": {"cashback_balance": {"$gt": 0}}},
+            {"$match": {
+                "uid": {"$nin": ADMIN_CHAT_IDS}, 
+                "cashback_balance": {"$gt": 0}
+            }},
             {"$group": {"_id": None, "total": {"$sum": "$cashback_balance"}}}
         ]))
+        
         return (
             pts_res[0]["total"] if pts_res else 0,
             cb_res[0]["total"] if cb_res else 0
@@ -2037,7 +2073,7 @@ def api_admin_stats():
         webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now_time - 86400}})
         active_plots = db['farm_plots'].count_documents({"status": "growing"})
         
-        # Используем единую функцию
+        # Получаем очищенные данные
         total_points, total_cb = get_real_wealth()
         
         active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
@@ -2051,8 +2087,8 @@ def api_admin_stats():
             f"🎮 Всего игроков: {webapp_total}\n"
             f"🔥 Онлайн за 24 часа: {webapp_dau} чел.\n"
             f"🌱 Растущих грядок: {active_plots} шт.\n\n"
-            f"💰 Очков на руках: {total_points} 💎\n"
-            f"💸 Кэшбека на руках: {total_cb} ₽\n\n"
+            f"💰 Очков на руках (у игроков): {total_points} 💎\n"
+            f"💸 Кэшбека на руках (у игроков): {total_cb} ₽\n\n"
             f"🎟 Активных артефактов: {active_promos}\n"
             f"📦 Аирдропов в чатах: {active_airdrops}"
         )
@@ -2062,14 +2098,14 @@ def api_admin_stats():
     elif stat_type == "bank":
         bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
         
-        # Используем ту же самую единую функцию
+        # Получаем очищенные данные
         _, total_cb = get_real_wealth()
         
         text = (
             f"🏦 БАНК КАЗИНО\n\n"
             f"💎 Фонд Premium: {int(bank_data.get('balance', 0))} ⭐️\n"
             f"💸 На руках у юзеров (Кэшбэк): {total_cb} ₽\n\n"
-            f"Фонд пополняется на 20% от всех покупок в боте."
+            f"Фонд пополняется на 10% от всех покупок в боте."
         )
         return jsonify({"text": text})
         

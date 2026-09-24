@@ -259,8 +259,8 @@ def successful_payment(message):
     })
     # 👆 ======================================================== 👆
 
-    # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА И КРАСНОГО СЕЙФА
-    db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": int(amount * 0.20)}}, upsert=True)
+    # ПОПОЛНЕНИЕ КАССЫ ПРЕМИУМА (Снизили до 10%, чтобы не уходить в минус)
+    db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": int(amount * 0.10)}}, upsert=True)
     
     # Красный Сейф забирает 10% от всех покупок, штрафов и донатов
     db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": int(amount * 0.10)}}, upsert=True)
