@@ -1726,8 +1726,8 @@ def api_admin_generate_contest():
     
     import requests, time
     for model_name in models_queue:
-        # 🔥 Идеально чистая ссылка без маркдаун-скобок 🔥
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        # 🔥 ВОТ ОНА — ЧИСТАЯ И ИДЕАЛЬНАЯ ССЫЛКА 🔥
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
         for attempt in range(2):
             try:
                 payload = {
