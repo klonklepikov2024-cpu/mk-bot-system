@@ -1702,7 +1702,7 @@ def api_admin_generate_contest():
     if not theme: return jsonify({"error": "Укажите тему конкурса!"}), 400
 
     gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key: return jsonify({"error": "Ключ Gemini не найден!"}), 500
+    if not gemini_key: return jsonify({"error": "Ключ Gemini не найден на сервере!"}), 500
 
     system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
     Твоя задача — придумать тематический фотоконкурс. 
@@ -1722,11 +1722,12 @@ def api_admin_generate_contest():
     
     models_queue = ["gemini-3.7-flash", "gemini-3.6-flash"]
     ai_data = None
+    last_err_msg = "Неизвестная ошибка"
     
     import requests, time
     for model_name in models_queue:
-        # 🔥 ВОТ ОНА — ЧИСТАЯ И ИДЕАЛЬНАЯ ССЫЛКА 🔥
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        # 🔥 Идеально чистая ссылка без маркдаун-скобок 🔥
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
         for attempt in range(2):
             try:
                 payload = {
@@ -1735,16 +1736,33 @@ def api_admin_generate_contest():
                     "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
                 }
                 res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=20)
+                
                 if res.status_code == 200:
-                    try:
-                        ai_data = json.loads(res.json()["candidates"][0]["content"]["parts"][0]["text"])
-                        break
-                    except: pass
-            except: time.sleep(2)
+                    raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    
+                    # 🔥 ЖЕСТКАЯ ОЧИСТКА ОТ МАРКДАУНА (Срезаем ```json если Gemini их прислала) 🔥
+                    clean_text = raw_text.strip()
+                    if clean_text.startswith("```json"): clean_text = clean_text[7:]
+                    if clean_text.startswith("```"): clean_text = clean_text[3:]
+                    if clean_text.endswith("```"): clean_text = clean_text[:-3]
+                    clean_text = clean_text.strip()
+                    
+                    ai_data = json.loads(clean_text)
+                    break
+                else:
+                    last_err_msg = f"Ошибка API: {res.status_code}"
+                    
+            except json.JSONDecodeError as e:
+                last_err_msg = f"Кривой JSON: {str(e)}"
+            except Exception as e:
+                last_err_msg = str(e)
+                time.sleep(2)
+                
         if ai_data: break
 
     if not ai_data:
-        return jsonify({"error": "Нейросеть не смогла сгенерировать ответ. Попробуйте еще раз."}), 500
+        # Теперь бот выдаст РЕАЛЬНУЮ причину сбоя прямо в Web App!
+        return jsonify({"error": f"Сбой Скайнета: {last_err_msg}"}), 500
 
     # Сохраняем черновик
     ai_data['status'] = 'draft'
