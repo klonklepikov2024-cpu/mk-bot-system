@@ -1691,28 +1691,59 @@ def api_admin_generate_contest():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
 
-    # Проверка на права админа
     parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
     uid = json.loads(parsed_data['user'])['id']
     from config import ADMIN_CHAT_IDS
     if uid not in ADMIN_CHAT_IDS:
         return jsonify({"error": "Доступ запрещен. Вы не администратор."}), 403
 
+    # 🔥 ПРОВЕРКА НА АКТИВНЫЙ КОНКУРС (Чтобы не перебивать текущий) 🔥
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if active:
+        return jsonify({"error": f"Сейчас уже идет конкурс «{active.get('title', 'Без названия')}»! Сначала подведите итоги командой /end_contest."}), 400
+
+    # 🔥 АВТО-ПОДБОР ТЕМЫ (Если поле пустое, ИИ придумывает сам) 🔥
     theme = data.get('theme')
-    if not theme: return jsonify({"error": "Укажите тему конкурса!"}), 400
+    theme_instruction = f"Сгенерируй конкурс на тему: {theme}" if theme else "Определи ближайший крупный праздник, время года или актуальный тренд (сейчас 2026 год) и придумай масштабный конкурс на эту тему."
 
     gemini_key = os.getenv("GEMINI_API_KEY")
     if not gemini_key: return jsonify({"error": "Ключ Gemini не найден на сервере!"}), 500
 
-    system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
-    Твоя задача — придумать тематический фотоконкурс. 
-    Верни СТРОГО валидный JSON без маркдауна и лишнего текста (без ```json).
+    # 🔥 МЕГА-ПРОМПТ СО СТРУКТУРОЙ ИЗ ТВОЕГО ПРИМЕРА 🔥
+    system_prompt = """Ты креативный директор мужского Telegram-сообщества. Твоя задача — придумать МАСШТАБНЫЙ тематический фотоконкурс.
+    Верни СТРОГО валидный JSON без маркдауна (без ```json).
     Формат ответа:
     {
       "contest_id": "уникальный_id_на_английском",
       "title": "Яркое название с эмодзи",
       "description": "Короткое описание",
-      "announcement_text": "ПОЛНЫЙ текст поста-анонса для рассылки по чатам (в HTML тегах <b> и <i>). Обязательно пропиши тут правила: 1. Что нужно сфоткать. 2. Никаких чужих фото. 3. Для участия перейдите в личку бота и отправьте команду /contest.",
+      "announcement_text": "ОГРОМНЫЙ текст поста-анонса и правил (используй HTML теги <b> и <i>). ОБЯЗАТЕЛЬНО СКОПИРУЙ ЭТУ СТРУКТУРУ ТЕКСТА:
+      
+      [Завлекающее вступление и призыв к действию]
+      
+      <b>⚡️ Суть конкурса</b>
+      [Что именно нужно сфоткать и как проявить креатив]
+      
+      <b>🚀 Как участвовать?</b>
+      1. Сделай снимок.
+      2. Перейди в личку бота и отправь команду /contest.
+      3. (Добавь свои пункты по теме).
+      
+      <b>🎭 Номинации</b>
+      [Придумай 4-5 крутых названий номинаций по теме конкурса и распиши, за что они даются]
+      
+      <b>⏰ Важные даты</b>
+      [Придумай дедлайн приема работ (примерно через 7-10 дней)]
+      
+      <b>💡 Советы для успеха</b>
+      [Дай 3 креативных совета участникам]
+      
+      <b>📜 ПРАВИЛА КОНКУРСА</b>
+      - Кто участвует: Мужчины 18+
+      - 1 аккаунт = максимум 3 фото
+      - Никаких ИИ, стоков и чужих фото из интернета
+      - Запрет на реалистичную кровь, наготу, политику
+      - Накрутка = мгновенная дисквалификация",
       "prizes": {
          "1": {"text": "5000 💎 + VIP + 1500 ₽"},
          "2": {"text": "3000 💎 + 3 Ордера на Арест"},
@@ -1732,22 +1763,19 @@ def api_admin_generate_contest():
             try:
                 payload = {
                     "systemInstruction": {"parts": [{"text": system_prompt}]},
-                    "contents": [{"parts": [{"text": f"Сгенерируй конкурс на тему: {theme}"}]}],
+                    "contents": [{"parts": [{"text": theme_instruction}]}],
                     "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
                 }
-                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=20)
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
                 
                 if res.status_code == 200:
                     raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
-                    
-                    # 🔥 ЖЕСТКАЯ ОЧИСТКА ОТ МАРКДАУНА (Срезаем ```json если Gemini их прислала) 🔥
                     clean_text = raw_text.strip()
                     if clean_text.startswith("```json"): clean_text = clean_text[7:]
                     if clean_text.startswith("```"): clean_text = clean_text[3:]
                     if clean_text.endswith("```"): clean_text = clean_text[:-3]
-                    clean_text = clean_text.strip()
                     
-                    ai_data = json.loads(clean_text)
+                    ai_data = json.loads(clean_text.strip())
                     break
                 else:
                     last_err_msg = f"Ошибка API: {res.status_code}"
@@ -1761,10 +1789,8 @@ def api_admin_generate_contest():
         if ai_data: break
 
     if not ai_data:
-        # Теперь бот выдаст РЕАЛЬНУЮ причину сбоя прямо в Web App!
         return jsonify({"error": f"Сбой Скайнета: {last_err_msg}"}), 500
 
-    # Сохраняем черновик
     ai_data['status'] = 'draft'
     db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
 
