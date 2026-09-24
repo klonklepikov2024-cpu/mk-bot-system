@@ -1683,6 +1683,272 @@ def api_open_agent_case():
         "cases_left": cases_count - 1
     })
 
+# ================= АДМИН-ПАНЕЛЬ (ЦУП В WEB APP) =================
+
+@app.route('/api/admin/generate_contest', methods=['POST'])
+def api_admin_generate_contest():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+
+    # Проверка на права админа
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    from config import ADMIN_CHAT_IDS
+    if uid not in ADMIN_CHAT_IDS:
+        return jsonify({"error": "Доступ запрещен. Вы не администратор."}), 403
+
+    theme = data.get('theme')
+    if not theme: return jsonify({"error": "Укажите тему конкурса!"}), 400
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key: return jsonify({"error": "Ключ Gemini не найден!"}), 500
+
+    system_prompt = """Ты креативный директор мужского Telegram-сообщества. 
+    Твоя задача — придумать тематический фотоконкурс. 
+    Верни СТРОГО валидный JSON без маркдауна и лишнего текста (без ```json).
+    Формат ответа:
+    {
+      "contest_id": "уникальный_id_на_английском",
+      "title": "Яркое название с эмодзи",
+      "description": "Короткое описание",
+      "announcement_text": "ПОЛНЫЙ текст поста-анонса для рассылки по чатам (в HTML тегах <b> и <i>). Обязательно пропиши тут правила: 1. Что нужно сфоткать. 2. Никаких чужих фото. 3. Для участия перейдите в личку бота и отправьте команду /contest.",
+      "prizes": {
+         "1": {"text": "5000 💎 + VIP + 1500 ₽"},
+         "2": {"text": "3000 💎 + 3 Ордера на Арест"},
+         "3": {"text": "1000 💎 + 2 Щита Иммунитета"}
+      }
+    }"""
+    
+    models_queue = ["gemini-3.7-flash", "gemini-3.6-flash"]
+    ai_data = None
+    
+    import requests, time
+    for model_name in models_queue:
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        for attempt in range(2):
+            try:
+                payload = {
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"parts": [{"text": f"Сгенерируй конкурс на тему: {theme}"}]}],
+                    "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
+                }
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=20)
+                if res.status_code == 200:
+                    try:
+                        ai_data = json.loads(res.json()["candidates"][0]["content"]["parts"][0]["text"])
+                        break
+                    except: pass
+            except: time.sleep(2)
+        if ai_data: break
+
+    if not ai_data:
+        return jsonify({"error": "Нейросеть не смогла сгенерировать ответ. Попробуйте еще раз."}), 500
+
+    # Сохраняем черновик
+    ai_data['status'] = 'draft'
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
+
+    return jsonify(ai_data)
+
+
+@app.route('/api/admin/deploy_contest', methods=['POST'])
+def api_admin_deploy_contest():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    from config import ADMIN_CHAT_IDS
+    if uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен"}), 403
+
+    # Обновляем черновик теми данными, которые ты отредактировал ручками в Web App
+    db['active_contest'].update_one({"_id": "current_event"}, {
+        "$set": {
+            "title": data.get("title"),
+            "announcement_text": data.get("desc"),
+            "prizes.1.text": data.get("prize1"),
+            "prizes.2.text": data.get("prize2"),
+            "prizes.3.text": data.get("prize3"),
+            "status": "running"
+        }
+    })
+
+    # Запускаем фоновую рассылку
+    def broadcast():
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
+        from core.bot import bot
+        import time
+        
+        all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+        unique_chats = set(all_chats)
+        
+        prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {data.get('prize1')}\n🥈 2 место: {data.get('prize2')}\n🥉 3 место: {data.get('prize3')}"
+        announcement = data.get("desc") + prize_block
+        
+        success = 0
+        for chat_id in unique_chats:
+            try:
+                bot.send_message(chat_id, announcement, parse_mode="HTML")
+                success += 1
+                time.sleep(0.3)
+            except: pass
+            
+        try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Анонс конкурса успешно разослан в {success} чатов! (Запущено из ЦУП)</b>", parse_mode="HTML")
+        except: pass
+
+    import threading
+    threading.Thread(target=broadcast, daemon=True).start()
+
+    return jsonify({"success": True, "msg": "Конкурс запущен! Идет рассылка по чатам."})
+
+# ================= АДМИН-ПАНЕЛЬ (ЦУП В WEB APP) =================
+
+@app.route('/api/admin/user_action', methods=['POST'])
+def api_admin_user_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    admin_uid = json.loads(parsed_data['user'])['id']
+    from config import ADMIN_CHAT_IDS
+    if admin_uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен."}), 403
+
+    target_uid = data.get('target_uid')
+    action = data.get('action')
+    value = data.get('value', '')
+    
+    if not target_uid or not target_uid.isdigit(): return jsonify({"error": "Некорректный ID."}), 400
+    target_uid = int(target_uid)
+
+    from core.bot import bot
+    from utils.cryptobot import get_crypto_pay_url
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    import time, datetime
+
+    try:
+        if action == "invoice":
+            amount = int(value)
+            # Тут старый код генерации меню (как в предыдущем сообщении)
+            url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+            markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+            bot.send_message(target_uid, f"🧾 **Вам выставлен счет на: {amount}⭐️**", reply_markup=markup, parse_mode="Markdown")
+            return jsonify({"success": True, "msg": f"Счет на {amount}⭐️ отправлен!"})
+
+        elif action == "give_points":
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": int(value)}}, upsert=True)
+            bot.send_message(target_uid, f"🎁 **Бонус!**\nНачислено: **{value} Очков**.", parse_mode="Markdown")
+            return jsonify({"success": True, "msg": f"Выдано {value} очков."})
+
+        elif action == "give_shards":
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": int(value)}}, upsert=True)
+            bot.send_message(target_uid, f"🧩 **Бонус!**\nНачислено: **{value} Осколков**.", parse_mode="Markdown")
+            return jsonify({"success": True, "msg": f"Выдано {value} осколков."})
+
+        elif action == "send_msg":
+            bot.send_message(target_uid, f"🎁 **Сообщение от Администрации:**\n\n{value}", parse_mode="Markdown")
+            return jsonify({"success": True, "msg": "Сообщение доставлено!"})
+            
+        elif action == "ban":
+            db['banned'].insert_one({"_id": target_uid, "reason": "Бан из ЦУПа"})
+            return jsonify({"success": True, "msg": "Пользователь забанен."})
+            
+        elif action == "unban":
+            db['banned'].delete_one({"_id": target_uid})
+            db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": time.time()})
+            return jsonify({"success": True, "msg": "Приказ на разбан передан."})
+            
+        elif action == "mute":
+            hours = int(value)
+            db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_mute", "duration": hours * 3600, "timestamp": time.time()})
+            return jsonify({"success": True, "msg": f"Мут на {hours}ч. выдан."})
+            
+        elif action == "tag":
+            tag = value[:15]
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag}}, upsert=True)
+            return jsonify({"success": True, "msg": f"Тег {tag} установлен."})
+
+    except Exception as e:
+        return jsonify({"error": f"Ошибка API: {str(e)}"}), 500
+
+@app.route('/api/admin/giveaway', methods=['POST'])
+def api_admin_giveaway():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    import datetime
+    title = data.get('title')
+    price = int(data.get('price'))
+    hours = int(data.get('hours'))
+    winners = int(data.get('winners'))
+    
+    end_date = datetime.datetime.now() + datetime.timedelta(hours=hours)
+    gw_id = f"gw_{int(datetime.datetime.now().timestamp())}" 
+    
+    db['giveaways'].insert_one({
+        "_id": gw_id, "title": title, "ticket_price": price, 
+        "last_ticket_num": 0, "total_tickets": 0, 
+        "winners_count": winners, "status": "active", "end_date": end_date
+    })
+    return jsonify({"success": True, "msg": f"Розыгрыш '{title}' успешно запущен!"})
+
+@app.route('/api/admin/emission', methods=['POST'])
+def api_admin_emission():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    action = data.get('action')
+    
+    import random
+    if action == "promo_vip":
+        code = f"VIP-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True})
+        return jsonify({"success": True, "msg": f"Код VIP: {code}"})
+        
+    elif action == "promo_ads":
+        code = f"ADS-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "ads", "usage_limit": 1, "used_count": 0, "is_active": True})
+        return jsonify({"success": True, "msg": f"Код Реклама: {code}"})
+        
+    elif action == "airdrop":
+        try:
+            from handlers.casino import trigger_random_airdrop 
+            trigger_random_airdrop(is_manual=True)
+            return jsonify({"success": True, "msg": "Аирдроп успешно сброшен в чат!"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/stats', methods=['POST'])
+def api_admin_stats():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    stat_type = data.get('type')
+    
+    import datetime
+    if stat_type == "bank":
+        bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+        users_with_cb = list(paid_collection.find({"cashback_balance": {"$gt": 0}}))
+        total_cb = sum(u.get("cashback_balance", 0) for u in users_with_cb)
+        text = f"🏦 БАНК КАЗИНО\nФонд Premium: {int(bank_data.get('balance', 0))} ⭐️\nКэшбэк у юзеров: {total_cb} ₽"
+        return jsonify({"text": text})
+        
+    elif stat_type == "cpa":
+        total = db['cpa_traffic'].count_documents({})
+        approved = db['cpa_traffic'].count_documents({"status": "approved"})
+        text = f"🔗 CPA СТАТИСТИКА\nВсего кликов: {total}\nУспешных лидов: {approved}"
+        return jsonify({"text": text})
+        
+    elif stat_type == "zreport":
+        today_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        today_raw = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        all_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        
+        today_total = sum(i["total"] for i in today_raw)
+        all_total = sum(i["total"] for i in all_raw)
+        
+        text = f"🧾 Z-ОТЧЕТ ({today_str})\nВыручка сегодня: {today_total} ⭐️\nВыручка за всё время: {all_total} ⭐️\n\n(Детальная разбивка работает)"
+        return jsonify({"text": text})
+
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db

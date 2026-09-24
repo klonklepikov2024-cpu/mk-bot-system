@@ -443,11 +443,59 @@
             </div>
         </div>
         
-        <!-- Заглушки для будущих модулей -->
-        <div class="surface rounded-2xl p-4 mb-4 border border-gray-700 opacity-50 flex items-center justify-center h-20">
-            <span class="text-gray-400 font-bold">Выдача штрафов (В разработке)</span>
+        <!-- Модуль 2: Управление Пользователями (РАСШИРЕННЫЙ) -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700">
+            <h3 class="font-bold text-lg mb-2 text-white">🎛 Управление Игроками</h3>
+            
+            <input type="number" id="adminTargetUid" placeholder="ID пользователя" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-gray-600 focus:border-blue-500">
+            <input type="text" id="adminActionValue" placeholder="Сумма / Текст ЛС / Тег / Часы мута" class="w-full text-white bg-black/50 rounded-lg p-3 mb-3 outline-none border border-gray-600 focus:border-blue-500">
+            
+            <div class="grid grid-cols-2 gap-2 mb-2">
+                <button onclick="adminUserAction('invoice')" class="bg-red-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-red-500/50">🧾 Штраф</button>
+                <button onclick="adminUserAction('send_msg')" class="bg-green-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-green-500/50">✉️ Отправить ЛС</button>
+                <button onclick="adminUserAction('give_points')" class="bg-blue-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-blue-500/50">💎 Дать Очки</button>
+                <button onclick="adminUserAction('give_shards')" class="bg-purple-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-purple-500/50">🧩 Дать Осколки</button>
+            </div>
+            <div class="grid grid-cols-4 gap-2">
+                <button onclick="adminUserAction('ban')" class="bg-gray-800 py-2 rounded-xl font-bold text-red-500 text-xs active:scale-95 border border-red-900">🔨 Бан</button>
+                <button onclick="adminUserAction('unban')" class="bg-gray-800 py-2 rounded-xl font-bold text-green-500 text-xs active:scale-95 border border-green-900">🕊 Разбан</button>
+                <button onclick="adminUserAction('mute')" class="bg-gray-800 py-2 rounded-xl font-bold text-yellow-500 text-xs active:scale-95 border border-yellow-900">🔇 Мут</button>
+                <button onclick="adminUserAction('tag')" class="bg-gray-800 py-2 rounded-xl font-bold text-blue-400 text-xs active:scale-95 border border-blue-900">🏷 Тег</button>
+            </div>
         </div>
-    </div>
+
+        <!-- Модуль 3: Конструктор Розыгрышей -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-yellow-700/50">
+            <h3 class="font-bold text-lg mb-2 text-yellow-500">🎁 Запуск Розыгрыша</h3>
+            <input type="text" id="gwTitle" placeholder="Приз (Например: 1000₽ на карту)" class="w-full text-white bg-black/50 rounded p-2 mb-2 text-sm border border-gray-600">
+            <div class="grid grid-cols-3 gap-2 mb-3">
+                <input type="number" id="gwPrice" placeholder="Цена (Очки)" class="w-full text-white bg-black/50 rounded p-2 text-xs border border-gray-600">
+                <input type="number" id="gwHours" placeholder="Время (Часы)" class="w-full text-white bg-black/50 rounded p-2 text-xs border border-gray-600">
+                <input type="number" id="gwWinners" placeholder="Победители" class="w-full text-white bg-black/50 rounded p-2 text-xs border border-gray-600">
+            </div>
+            <button onclick="adminCreateGiveaway()" class="w-full bg-yellow-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95">Запустить Розыгрыш</button>
+        </div>
+
+        <!-- Модуль 4: Эмиссия и Аирдропы -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-indigo-700/50">
+            <h3 class="font-bold text-lg mb-2 text-indigo-400">📦 Эмиссия и Аирдропы</h3>
+            <div class="grid grid-cols-2 gap-2 mb-2">
+                <button onclick="adminEmission('promo_vip')" class="bg-indigo-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🎟 Код 100% VIP</button>
+                <button onclick="adminEmission('promo_ads')" class="bg-indigo-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95">📢 Код 100% Реклама</button>
+            </div>
+            <button onclick="adminEmission('airdrop')" class="w-full bg-blue-600 py-2 rounded-xl font-bold text-white shadow-md active:scale-95">🚨 СБРОСИТЬ АИРДРОП В СЕТЬ</button>
+        </div>
+
+        <!-- Модуль 5: Аналитика -->
+        <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-green-700/50">
+            <h3 class="font-bold text-lg mb-2 text-green-400">📊 Аналитика Скайнета</h3>
+            <div class="grid grid-cols-3 gap-2 mb-3">
+                <button onclick="adminGetStats('zreport')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-[10px] active:scale-95">🧾 Z-Отчет</button>
+                <button onclick="adminGetStats('bank')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-[10px] active:scale-95">🏦 Банк Казино</button>
+                <button onclick="adminGetStats('cpa')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-[10px] active:scale-95">🔗 CPA Лиды</button>
+            </div>
+            <div id="adminStatsResult" class="hidden bg-black/50 p-3 rounded-lg border border-gray-600 text-xs font-mono text-green-300 whitespace-pre-wrap max-h-64 overflow-y-auto custom-scrollbar"></div>
+        </div>
         
     <!-- 🔥 НАШИ ПУЛЕНЕПРОБИВАЕМЫЕ МОДАЛЬНЫЕ ОКНА 🔥 -->
     
@@ -1559,6 +1607,122 @@
                     loadTasks();
                     loadProfile();
                 }
+            });
+        }
+
+// ================= ЦУП: ИИ-ГЕНЕРАТОР КОНКУРСОВ =================
+        function adminGenerateContest() {
+            const theme = document.getElementById('adminContestTheme').value;
+            if (!theme) { customAlert("Введите тему конкурса!", "Внимание", "⚠️"); return; }
+            
+            const btn = document.getElementById('btnGenerateContest');
+            const origText = btn.innerHTML;
+            btn.innerHTML = "⏳ Скайнет думает..."; 
+            btn.disabled = true;
+            
+            apiCall('/api/admin/generate_contest', {theme: theme}).then(data => {
+                btn.innerHTML = origText; 
+                btn.disabled = false;
+                
+                if (data.error) { 
+                    customAlert(data.error, "Ошибка", "❌"); 
+                    return; 
+                }
+                
+                // Заполняем поля данными от нейросети
+                document.getElementById('draftTitle').value = data.title || '';
+                document.getElementById('draftDesc').value = data.announcement_text || '';
+                
+                if(data.prizes) {
+                    document.getElementById('draftPrize1').value = data.prizes['1']?.text || '';
+                    document.getElementById('draftPrize2').value = data.prizes['2']?.text || '';
+                    document.getElementById('draftPrize3').value = data.prizes['3']?.text || '';
+                }
+                
+                // Показываем скрытый блок с редактором
+                document.getElementById('adminContestDraft').classList.remove('hidden');
+                safeHaptic('notify', 'success');
+            });
+        }
+
+        function adminDeployContest() {
+            const payload = {
+                title: document.getElementById('draftTitle').value,
+                desc: document.getElementById('draftDesc').value,
+                prize1: document.getElementById('draftPrize1').value,
+                prize2: document.getElementById('draftPrize2').value,
+                prize3: document.getElementById('draftPrize3').value
+            };
+            
+            customConfirm("Сохранить изменения и запустить массовую рассылку во все чаты?", function(c) {
+                if(c) {
+                    const btn = document.getElementById('btnDeployContest');
+                    btn.innerHTML = "🚀 Запускаю..."; 
+                    btn.disabled = true;
+                    
+                    apiCall('/api/admin/deploy_contest', payload).then(data => {
+                        btn.innerHTML = "🚀 Сохранить и РАЗОСЛАТЬ в чаты"; 
+                        btn.disabled = false;
+                        
+                        if(data.error) { 
+                            customAlert(data.error, "Ошибка", "❌"); 
+                        } else {
+                            customAlert(data.msg, "Успех!", "✅");
+                            document.getElementById('adminContestDraft').classList.add('hidden');
+                            document.getElementById('adminContestTheme').value = '';
+                        }
+                    });
+                }
+            });
+        }
+
+// ================= ЦУП: УПРАВЛЕНИЕ ИГРОКАМИ =================
+        function adminUserAction(actionType) {
+            const targetUid = document.getElementById('adminTargetUid').value;
+            const actionValue = document.getElementById('adminActionValue').value;
+            
+            if (!targetUid) { customAlert("Укажите ID пользователя!", "Внимание", "⚠️"); return; }
+            
+            apiCall('/api/admin/user_action', { target_uid: targetUid, action: actionType, value: actionValue }).then(data => {
+                if (data.error) customAlert(data.error, "Ошибка", "❌");
+                else { customAlert(data.msg, "Успех!", "✅"); document.getElementById('adminActionValue').value = ''; }
+            });
+        }
+
+        function adminCreateGiveaway() {
+            const payload = {
+                title: document.getElementById('gwTitle').value,
+                price: document.getElementById('gwPrice').value,
+                hours: document.getElementById('gwHours').value,
+                winners: document.getElementById('gwWinners').value
+            };
+            if (!payload.title || !payload.price || !payload.hours || !payload.winners) {
+                customAlert("Заполните все поля розыгрыша!", "Внимание", "⚠️"); return;
+            }
+            apiCall('/api/admin/giveaway', payload).then(data => {
+                if (data.error) customAlert(data.error, "Ошибка", "❌");
+                else {
+                    customAlert(data.msg, "Запущено!", "🚀");
+                    ['gwTitle', 'gwPrice', 'gwHours', 'gwWinners'].forEach(id => document.getElementById(id).value = '');
+                }
+            });
+        }
+
+        function adminEmission(actionType) {
+            apiCall('/api/admin/emission', { action: actionType }).then(data => {
+                if (data.error) customAlert(data.error, "Ошибка", "❌");
+                else customAlert(data.msg, "Успех!", "✅");
+            });
+        }
+
+        function adminGetStats(type) {
+            const box = document.getElementById('adminStatsResult');
+            box.classList.remove('hidden');
+            box.innerText = "⏳ Формирование отчета...";
+            
+            apiCall('/api/admin/stats', { type: type }).then(data => {
+                if (data.error) box.innerText = "❌ Ошибка: " + data.error;
+                else box.innerText = data.text;
             });
         }
 

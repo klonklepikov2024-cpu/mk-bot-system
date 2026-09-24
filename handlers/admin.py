@@ -1040,38 +1040,6 @@ def handle_admin_replies(message):
     try: bot.copy_message(target_uid, STAFF_GROUP_ID, message.message_id)
     except: logger.warning(f"Ошибка ручного ответа админа юзеру {target_uid}")
 
-@bot.message_handler(commands=['give'])
-def handle_give_cmd(message):
-    if str(message.chat.id) != str(STAFF_GROUP_ID): return
-        
-    args = message.text.split()
-    if len(args) != 4:
-        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        return
-        
-    try:
-        target_uid = int(args[1])
-        currency = args[2].lower()
-        amount = int(args[3])
-        
-        if currency in ['points', 'очки']:
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
-            bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
-            try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-            
-        elif currency in ['shards', 'осколки']:
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
-            bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
-            try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        else:
-            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
-    except ValueError:
-        try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
@@ -2165,562 +2133,6 @@ def ticket_sweeper_task():
 # Запускаем Санитара в отдельном фоновом потоке при старте файла
 threading.Thread(target=ticket_sweeper_task, daemon=True).start()
 
-# ================= ТЕЛЕГРАМ-ПАНЕЛЬ АДМИНИСТРАТОРА (v2.0) =================
-@bot.message_handler(commands=['panel', 'панель', 'п'])
-def admin_telegram_panel(message):
-    if message.from_user.id != OWNER_ID:
-        try:
-            staff = bot.get_chat_member(STAFF_GROUP_ID, message.from_user.id)
-            if staff.status not in ['administrator', 'creator']: return
-        except: return
-
-    bot.send_message(message.chat.id, "🎛 **ГЛАВНЫЙ ТЕРМИНАЛ СКАЙНЕТА**\nВыберите раздел:", reply_markup=get_main_panel_markup(), parse_mode="Markdown")
-
-def get_main_panel_markup():
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("👮‍♂️ Модерация", callback_data="adm_menu_users"),
-        InlineKeyboardButton("💸 Экономика", callback_data="adm_menu_eco")
-    )
-    markup.add(
-        InlineKeyboardButton("🎟 Промокоды", callback_data="adm_menu_promo"),
-        InlineKeyboardButton("📈 Статистика", callback_data="adm_menu_stats")
-    )
-    markup.add(InlineKeyboardButton("❌ Закрыть терминал", callback_data="admin_panel_close"))
-    return markup
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_menu_'))
-def handle_panel_navigation(call):
-    menu = call.data.replace("adm_menu_", "")
-    markup = InlineKeyboardMarkup(row_width=2)
-    text = ""
-    
-    if menu == "main":
-        text = "🎛 **ГЛАВНЫЙ ТЕРМИНАЛ СКАЙНЕТА**\nВыберите раздел:"
-        markup = get_main_panel_markup()
-        
-    elif menu == "users":
-        text = "👮‍♂️ **Раздел: Модерация**\nВыберите действие:"
-        markup.add(
-            InlineKeyboardButton("🔨 Забанить / Разбанить", callback_data="admin_panel_manage"),
-            InlineKeyboardButton("🔇 Выдать Мут", callback_data="admin_panel_mute")
-        )
-        markup.add(
-            InlineKeyboardButton("🏷 Повесить ТЕГ", callback_data="admin_panel_tag"),
-            InlineKeyboardButton("📍 Сменить город", callback_data="admin_panel_city")
-        )
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
-        
-    elif menu == "eco":
-        text = "💸 **Раздел: Экономика**\nВыберите действие:"
-        markup.add(
-            InlineKeyboardButton("🧾 Выставить счет", callback_data="admin_panel_invoice"),
-            InlineKeyboardButton("🎁 Выдать Очки", callback_data="admin_panel_give_points")
-        )
-        markup.add(
-            InlineKeyboardButton("🧩 Выдать Осколки", callback_data="admin_panel_give_shards")
-        )
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
-        
-    elif menu == "promo":
-        text = "🎟 **Раздел: Промокоды и Аирдропы**\nЧто будем создавать?"
-        markup.add(
-            InlineKeyboardButton("👑 Код на VIP", callback_data="admin_panel_promo_vip"),
-            InlineKeyboardButton("📢 Код на Рекламу", callback_data="admin_panel_promo_ads")
-        )
-        markup.add(
-            InlineKeyboardButton("📦 Сбросить Аирдроп в чат", callback_data="admin_panel_do_airdrop")
-        )
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
-        
-    elif menu == "stats":
-        text = "📈 **Раздел: Аналитика**\nКакие данные нужны?"
-        markup.add(
-            InlineKeyboardButton("📊 Глобальная сводка", callback_data="admin_panel_stats"),
-            InlineKeyboardButton("🧾 Z-Отчет (Выручка)", callback_data="admin_panel_zreport")
-        )
-        markup.add(InlineKeyboardButton("🔗 CPA Статистика", callback_data="admin_panel_cpa"))
-        markup.add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_main"))
-
-    try:
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
-
-# ================= ВОЗВРАТ СРЕДСТВ (ИНТЕРАКТИВНЫЙ) =================
-@bot.message_handler(commands=['refund', 'возврат'])
-def handle_refund_stars(message):
-    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
-        return
-
-    args = message.text.split()
-    if len(args) != 2 or not args[1].isdigit():
-        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/refund [ID_пользователя]`", parse_mode="Markdown")
-        except: pass
-        return
-
-    target_uid = int(args[1])
-
-    # Ищем ВСЕ успешные транзакции этого юзера (сортируем от новых к старым)
-    transactions = list(db['star_transactions'].find({"uid": target_uid, "status": "paid"}).sort("timestamp", -1))
-
-    if not transactions:
-        try: bot.reply_to(message, "❌ У этого пользователя нет доступных платежей для возврата.")
-        except: pass
-        return
-
-    # Формируем клавиатуру со списком платежей
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    import datetime
-    for tx in transactions:
-        amount = tx.get("amount")
-        tx_time = datetime.datetime.fromtimestamp(tx.get("timestamp")).strftime('%d.%m %H:%M')
-        # Обрезаем charge_id для callback_data (Телеграм лимитирует длину callback_data)
-        short_id = str(tx["_id"]) 
-        
-        btn_text = f"💰 {amount}⭐️ (от {tx_time})"
-        markup.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"refundtx_{short_id}"))
-
-    bot.reply_to(
-        message, 
-        f"🔎 **Найдены платежи пользователя `{target_uid}`:**\n\nВыберите, какую именно транзакцию вы хотите отменить и вернуть средства:", 
-        parse_mode="Markdown", 
-        reply_markup=markup
-    )
-
-
-# --- ОБРАБОТЧИК КНОПКИ ВОЗВРАТА ---
-@bot.callback_query_handler(func=lambda call: call.data.startswith('refundtx_'))
-def process_specific_refund(call):
-    # Защита: нажимать могут только админы
-    if str(call.message.chat.id) != str(STAFF_GROUP_ID) and call.from_user.id != OWNER_ID:
-        return
-
-    from bson.objectid import ObjectId
-    tx_id = call.data.split('_')[1]
-    
-    # Ищем транзакцию в базе
-    tx = db['star_transactions'].find_one({"_id": ObjectId(tx_id)})
-    
-    if not tx:
-        bot.answer_callback_query(call.id, "❌ Транзакция не найдена!", show_alert=True)
-        return
-        
-    if tx.get("status") == "refunded":
-        bot.answer_callback_query(call.id, "⚠️ Этот платеж УЖЕ был возвращен!", show_alert=True)
-        return
-
-    target_uid = tx.get("uid")
-    charge_id = tx.get("charge_id")
-    amount = tx.get("amount")
-
-    try:
-        # 1. Отправляем команду возврата серверам Telegram (используя конкретный charge_id)
-        bot.refund_star_payment(target_uid, charge_id)
-
-        # 2. Помечаем транзакцию как возвращенную
-        db['star_transactions'].update_one({"_id": ObjectId(tx_id)}, {"$set": {"status": "refunded"}})
-
-        # 3. Корректируем Z-Отчет (добавляем отрицательную сумму)
-        import time, datetime
-        db['daily_revenue'].insert_one({
-            "type": "refund",
-            "amount": -amount,
-            "timestamp": time.time(),
-            "date": datetime.datetime.now().strftime("%d.%m.%Y")
-        })
-
-        # 4. Отчитываемся админу (меняем сообщение с кнопками на текст успеха)
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=f"✅ **Возврат успешно выполнен админом @{call.from_user.username}!**\nПользователю `{target_uid}` возвращено **{amount}⭐️**.",
-            parse_mode="Markdown"
-        )
-        
-        # 5. Уведомляем пользователя
-        try:
-            bot.send_message(target_uid, f"💸 **Возврат средств**\n\nАдминистрация инициировала возврат. На ваш счет зачислено **{amount}⭐️**.\n_Звезды появятся в ваших настройках Telegram в течение нескольких минут._", parse_mode="Markdown")
-        except: pass
-
-    except Exception as e:
-        error_msg = str(e)
-        if "CHARGE_ALREADY_REFUNDED" in error_msg:
-            bot.answer_callback_query(call.id, "❌ Ошибка: Этот платеж уже был возвращен ранее.", show_alert=True)
-            db['star_transactions'].update_one({"_id": ObjectId(tx_id)}, {"$set": {"status": "refunded"}})
-        else:
-            bot.answer_callback_query(call.id, f"❌ Ошибка API: {error_msg}", show_alert=True)
-
-# ================= ОБРАБОТЧИК КНОПОК ПАНЕЛИ =================
-@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_panel_'))
-def handle_admin_panel_clicks(call):
-    action = call.data.replace("admin_panel_", "")
-    
-    try: bot.answer_callback_query(call.id)
-    except: pass
-    
-    if action == "close":
-        try: bot.delete_message(call.message.chat.id, call.message.message_id)
-        except: pass
-        
-    # --- АНАЛИТИКА ---
-    elif action == "stats":
-        try: bot.edit_message_text("⏳ Скайнет собирает данные со всех узлов...", call.message.chat.id, call.message.message_id)
-        except: pass
-        
-        # Собираем реальную стату из БД
-        total_users = db['users'].count_documents({})
-        total_banned = db['banned'].count_documents({})
-        
-        # 🔥 СЧИТАЕМ ЖИВОЙ ОНЛАЙН В WEB APP 🔥
-        import time
-        now = time.time()
-        webapp_total = db['users'].count_documents({"last_webapp_visit": {"$exists": True}})
-        webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now - 86400}}) # Заходили за последние 24 часа
-        active_plots = db['farm_plots'].count_documents({"status": "growing"}) # Сколько грядок сейчас растет
-        
-        # Считаем сумму очков и кэшбека у населения
-        pipeline = [{"$group": {"_id": None, "total_points": {"$sum": "$bounty_points"}, "total_cb": {"$sum": "$cashback_balance"}}}]
-        wealth = list(paid_collection.aggregate(pipeline))
-        total_points = wealth[0]["total_points"] if wealth else 0
-        total_cb = wealth[0]["total_cb"] if wealth else 0
-        
-        active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
-        active_airdrops = db['active_airdrops'].count_documents({"claimed_count": {"$lt": 5}})
-        
-        text = (
-            "📊 **ГЛОБАЛЬНАЯ СВОДКА СКАЙНЕТА**\n\n"
-            f"👥 Всего бот-юзеров: **{total_users}**\n"
-            f"🚷 В глобальном бане: **{total_banned}**\n\n"
-            f"📱 **ИГРОВАЯ СТАТИСТИКА (WEB APP):**\n"
-            f"🎮 Всего игроков: **{webapp_total}**\n"
-            f"🔥 Онлайн за 24 часа: **{webapp_dau} чел.**\n"
-            f"🌱 Растущих грядок: **{active_plots} шт.**\n\n"
-            f"💰 Очков на руках: **{total_points} ⭐️**\n"
-            f"💸 Кэшбека на руках: **{total_cb} ₽**\n\n"
-            f"🎟 Неиспользованных промокодов: **{active_promos}**\n"
-            f"📦 Активных аирдропов в чатах: **{active_airdrops}**"
-        )
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
-        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-        except: pass
-        
-    # --- УПРАВЛЕНИЕ ЮЗЕРАМИ ---
-    elif action == "manage":
-        msg = bot.send_message(call.message.chat.id, "🔨 **Забанить/Разбанить**\nОтправьте ID пользователя:")
-        bot.register_next_step_handler(msg, process_admin_manage_user)
-        
-    elif action == "tag":
-        msg = bot.send_message(call.message.chat.id, "🏷 **Выдача ТЕГА**\nОтправьте ID и Текст тега через пробел (например: `12345 БОСС`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_set_tag)
-        
-    # --- ЭКОНОМИКА ---
-    elif action == "give_points":
-        msg = bot.send_message(call.message.chat.id, "🎁 **Выдача ОЧКОВ**\nОтправьте ID и сумму (например: `123456 500`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_give_points)
-
-    elif action == "give_shards":
-        msg = bot.send_message(call.message.chat.id, "🧩 **Выдача ОСКОЛКОВ**\nОтправьте ID и количество (например: `123456 10`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_give_shards)
-
-# --- НОВЫЕ КНОПКИ МОДЕРАЦИИ ---
-    elif action == "mute":
-        msg = bot.send_message(call.message.chat.id, "🔇 **Выдать Мут**\nОтправьте ID пользователя и время в часах (например: `12345 24`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_mute)
-        
-    elif action == "city":
-        msg = bot.send_message(call.message.chat.id, "📍 **Сменить город**\nОтправьте ID пользователя и новый город (например: `12345 Москва`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_set_city)
-
-    # --- НОВАЯ КНОПКА ЭКОНОМИКИ ---
-    elif action == "invoice":
-        msg = bot.send_message(call.message.chat.id, "🧾 **Выставить счет (Штраф)**\nОтправьте ID пользователя и сумму (например: `12345 500`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_admin_invoice)
-
-    # --- ЗАГЛУШКИ ДЛЯ АНАЛИТИКИ (Если функционал еще не написан) ---
-    # --- АНАЛИТИКА Z-ОТЧЕТ И CPA (ДОСТУП ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА) ---
-    elif action == "zreport":
-        if call.from_user.id != 479938867:
-            try: bot.answer_callback_query(call.id, "❌ У вас нет прав на просмотр финансовой отчетности!", show_alert=True)
-            except: pass
-            return
-
-        try: bot.edit_message_text("⏳ Считаю кассу...", call.message.chat.id, call.message.message_id)
-        except: pass
-        
-        today_str = datetime.datetime.now().strftime("%d.%m.%Y")
-        
-        # 1. Достаем сырые данные из базы
-        all_time_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
-        today_raw = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
-        
-        # 2. УМНАЯ СОРТИРОВКА (Защита от регистра)
-        all_dict = {}
-        for item in all_time_raw:
-            key = str(item["_id"]).lower() if item["_id"] else "unknown"
-            all_dict[key] = all_dict.get(key, 0) + item["total"]
-            
-        today_dict = {}
-        for item in today_raw:
-            key = str(item["_id"]).lower() if item["_id"] else "unknown"
-            today_dict[key] = today_dict.get(key, 0) + item["total"]
-        
-        def format_money(d, key): return d.get(key, 0)
-        
-        # 3. Добавляем новые ключи в список "известных"
-        known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund', 'city_access', 'ads_rub_balance', 'ads_points']
-        
-        # Вычисляем "ПРОЧЕЕ" на будущее
-        today_other = sum(today_dict.values()) - sum(today_dict.get(k, 0) for k in known_keys)
-        all_other = sum(all_dict.values()) - sum(all_dict.get(k, 0) for k in known_keys)
-        
-        today_other_str = f"📦 Прочее (Неизвестно): **{today_other}⭐️**\n" if today_other != 0 else ""
-        all_other_str = f"📦 Прочее (Неизвестно): **{all_other}⭐️**\n" if all_other != 0 else ""
-
-        # УМНАЯ ГРУППИРОВКА
-        # Склеиваем все рекламные платежи в одну сумму
-        today_ads_total = format_money(today_dict, 'ads') + format_money(today_dict, 'ads_rub_balance') + format_money(today_dict, 'ads_points')
-        all_ads_total = format_money(all_dict, 'ads') + format_money(all_dict, 'ads_rub_balance') + format_money(all_dict, 'ads_points')
-
-        # Склеиваем штрафы
-        today_fine_total = format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')
-        all_fine_total = format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')
-        
-        text = (
-            "🧾 **Z-ОТЧЕТ (ВЫРУЧКА СКАЙНЕТА)**\n\n"
-            f"📅 **СЕГОДНЯ ({today_str}):**\n"
-            f"💰 Штрафы: **{today_fine_total}⭐️**\n"
-            f"📢 Реклама: **{today_ads_total}⭐️**\n"
-            f"🏙 Доступ к городам: **{format_money(today_dict, 'city_access')}⭐️**\n"
-            f"👑 VIP-доступ: **{format_money(today_dict, 'vip')}⭐️**\n"
-            f"🏳️‍🌈 BEYOND-чат: **{format_money(today_dict, 'beyond')}⭐️**\n"
-            f"📜 Индульгенции: **{format_money(today_dict, 'indulgence')}⭐️**\n"
-            f"🆘 Саппорт: **{format_money(today_dict, 'support')}⭐️**\n"
-            f"🛒 Магазин очков: **{format_money(today_dict, 'points_shop')}⭐️**\n"
-            f"💖 Донаты: **{format_money(today_dict, 'donation')}⭐️**\n"
-            f"💸 Возвраты: **{format_money(today_dict, 'refund')}⭐️**\n"
-            f"{today_other_str}"
-            f"🟢 **ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())}⭐️**\n\n"
-            f"🌍 **ЗА ВСЁ ВРЕМЯ:**\n"
-            f"💰 Штрафы: **{all_fine_total}⭐️**\n"
-            f"📢 Реклама: **{all_ads_total}⭐️**\n"
-            f"🏙 Доступ к городам: **{format_money(all_dict, 'city_access')}⭐️**\n"
-            f"👑 VIP-доступ: **{format_money(all_dict, 'vip')}⭐️**\n"
-            f"🏳️‍🌈 BEYOND-чат: **{format_money(all_dict, 'beyond')}⭐️**\n"
-            f"📜 Индульгенции: **{format_money(all_dict, 'indulgence')}⭐️**\n"
-            f"🆘 Саппорт: **{format_money(all_dict, 'support')}⭐️**\n"
-            f"🛒 Магазин очков: **{format_money(all_dict, 'points_shop')}⭐️**\n"
-            f"💖 Донаты: **{format_money(all_dict, 'donation')}⭐️**\n"
-            f"💸 Возвраты: **{format_money(all_dict, 'refund')}⭐️**\n"
-            f"{all_other_str}"
-            f"🏆 **ОБЩАЯ КАССА: {sum(all_dict.values())}⭐️**"
-        )
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
-        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-        except: pass
-
-    elif action == "cpa":
-        if call.from_user.id != 479938867:
-            try: bot.answer_callback_query(call.id, "❌ У вас нет прав на просмотр CPA статистики!", show_alert=True)
-            except: pass
-            return
-
-        try: bot.edit_message_text("⏳ Свожу трафик...", call.message.chat.id, call.message.message_id)
-        except: pass
-        
-        total_clicks = db['cpa_traffic'].count_documents({})
-        approved = db['cpa_traffic'].count_documents({"status": "approved"})
-        hold = db['cpa_traffic'].count_documents({"status": "hold"})
-        fraud = db['cpa_traffic'].count_documents({"status": "fraud"})
-        
-        # Топ-3 агента
-        pipeline = [
-            {"$match": {"status": "approved"}},
-            {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1}},
-            {"$limit": 3}
-        ]
-        top_agents = list(db['cpa_traffic'].aggregate(pipeline))
-        
-        text = (
-            "🔗 **CPA СТАТИСТИКА (ПАРТНЕРКА)**\n\n"
-            f"👁 Всего заявок (кликов): **{total_clicks}**\n"
-            f"⏳ На проверке (Холд): **{hold}**\n"
-            f"🚫 Забраковано (Боты): **{fraud}**\n"
-            f"✅ **ОДОБРЕНО (Лиды):** **{approved}**\n\n"
-            "🏆 **ТОП-3 АГЕНТА:**\n"
-        )
-        
-        if top_agents:
-            medals = ["🥇", "🥈", "🥉"]
-            for i, agent in enumerate(top_agents):
-                agent_id = agent["_id"]
-                count = agent["count"]
-                text += f"{medals[i]} `ID {agent_id}` — **{count}** лидов\n"
-        else:
-            text += "_Пока нет одобренных лидов._"
-            
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="adm_menu_stats"))
-        try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-        except: pass
-        
-    # --- ПРОМОКОДЫ И АИРДРОПЫ ---
-    elif action == "promo_vip":
-        code = f"VIP-{random.randint(1000, 9999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True})
-        bot.send_message(call.message.chat.id, f"👑 **Промокод на 100% VIP создан!**\n\nКод: `{code}`\n_Можно смело дарить юзерам!_", parse_mode="Markdown")
-
-    elif action == "promo_ads":
-        code = f"ADS-{random.randint(1000, 9999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "ads", "usage_limit": 1, "used_count": 0, "is_active": True})
-        bot.send_message(call.message.chat.id, f"📢 **Промокод на 100% Рекламу создан!**\n\nКод: `{code}`\n_Можно смело дарить юзерам!_", parse_mode="Markdown")
-
-    elif action == "do_airdrop":
-        # Магия! Вызываем функцию сброса контейнера из казино!
-        try:
-            from handlers.casino import trigger_random_airdrop 
-            trigger_random_airdrop(is_manual=True) # <-- Теперь админ сбрасывает в обход таймера!
-            bot.send_message(call.message.chat.id, "📦 🚨 **Аирдроп успешно сброшен!**\nПрямо сейчас в одном из чатов появилась кнопка с очками!", parse_mode="Markdown")
-        except Exception as e:
-            bot.send_message(call.message.chat.id, f"❌ Ошибка аирдропа: {e}")
-
-# ================= ФУНКЦИИ-ПОМОЩНИКИ ДЛЯ ПАНЕЛИ =================
-def process_admin_manage_user(message):
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "❌ ID должен быть числом!")
-        return
-    uid = int(message.text)
-    
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("🔨 БАН ВО ВСЕХ ЧАТАХ", callback_data=f"adm_tg_ban_{uid}"),
-        InlineKeyboardButton("🕊 ГЛОБАЛЬНЫЙ РАЗБАН", callback_data=f"adm_tg_unban_{uid}")
-    )
-    bot.send_message(message.chat.id, f"👤 **Пользователь {uid}**\nВыберите действие:", reply_markup=markup, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tg_'))
-def handle_quick_manage(call):
-    parts = call.data.split('_')
-    action = parts[2]
-    uid = int(parts[3])
-    
-    if action == "ban":
-        db['banned'].insert_one({"_id": uid, "reason": "Бан из Панели Скайнета"})
-        try: bot.edit_message_text(f"✅ Пользователь {uid} **ЗАБАНЕН**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        except: pass
-    elif action == "unban":
-        db['banned'].delete_one({"_id": uid})
-        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
-        try: bot.edit_message_text(f"✅ Пользователь {uid} **РАЗБАНЕН**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        except: pass
-
-def process_admin_give_points(message):
-    try:
-        parts = message.text.split()
-        uid = int(parts[0])
-        amount = int(parts[1])
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
-        bot.send_message(message.chat.id, f"✅ Выдано **{amount} очков** пользователю `{uid}`.", parse_mode="Markdown")
-        try: bot.send_message(uid, f"🎁 Администрация начислила вам **{amount} очков**!")
-        except: pass
-    except:
-        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА`")
-
-def process_admin_give_shards(message):
-    try:
-        parts = message.text.split()
-        uid = int(parts[0])
-        amount = int(parts[1])
-        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
-        bot.send_message(message.chat.id, f"✅ Выдано **{amount} осколков** пользователю `{uid}`.", parse_mode="Markdown")
-        try: bot.send_message(uid, f"🧩 Администрация выдала вам **{amount} осколков Джекпота**!")
-        except: pass
-    except:
-        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID КОЛИЧЕСТВО`")
-
-def process_admin_set_tag(message):
-    try:
-        parts = message.text.split(maxsplit=1)
-        uid = int(parts[0])
-        tag = parts[1][:15] # Ограничиваем длину тега до 15 символов
-        
-        # 👇 ИСПРАВЛЕНО: Теперь пишем в правильную коллекцию 'users' и в правильное поле 'custom_tag'
-        db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": tag}}, upsert=True)
-        
-        bot.send_message(message.chat.id, f"✅ Тег `{tag}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
-    except:
-        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ТЕГ`")
-
-def process_admin_mute(message):
-    try:
-        parts = message.text.split()
-        uid = int(parts[0])
-        hours = int(parts[1])
-        
-        # Передаем задачу Скайнету (он читает базу skynet_tasks)
-        db['skynet_tasks'].insert_one({
-            "uid": uid,
-            "action": "global_mute",
-            "duration": hours * 3600,
-            "timestamp": datetime.datetime.now()
-        })
-        bot.send_message(message.chat.id, f"✅ Приказ на выдачу мута пользователю `{uid}` на **{hours} ч.** успешно передан Скайнету.", parse_mode="Markdown")
-    except Exception:
-        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ЧАСЫ` (например: 123456 24)")
-
-def process_admin_set_city(message):
-    try:
-        parts = message.text.split(maxsplit=1)
-        uid = int(parts[0])
-        city = parts[1]
-        
-        db['users'].update_one({"_id": uid}, {"$set": {"main_city": city}}, upsert=True)
-        bot.send_message(message.chat.id, f"✅ Город `{city}` успешно установлен для пользователя `{uid}`.", parse_mode="Markdown")
-    except Exception:
-        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID ГОРОД` (например: 123456 Москва)")
-
-def process_admin_invoice(message):
-    try:
-        parts = message.text.split()
-        target_uid = int(parts[0])
-        amount = int(parts[1])
-        
-        user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
-        cb_balance = user_data_pay.get("cashback_balance", 0)
-        pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
-        
-        url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
-        url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
-        
-        markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton("🎫 У меня есть промокод", callback_data=f"checkout_promo_fine_{amount}"))
-        
-        if cb_balance >= cost_in_rub:
-            markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
-        elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
-            markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
-        else:
-            markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
-        
-        if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
-        if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
-
-        if pts_balance >= cost_pts: 
-            markup.add(InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}"))
-        else: 
-            markup.add(InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT"))
-
-        markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
-        markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
-            
-        bot.send_message(target_uid, f"🧾 **Администратор выставил вам счет.**\n\nСумма к оплате: **{amount}⭐️**\nПосле оплаты ограничения будут сняты автоматически.", reply_markup=markup, parse_mode="Markdown")
-        bot.send_message(message.chat.id, f"🟢 **Счет на {amount}⭐️ успешно отправлен пользователю `{target_uid}`!**", parse_mode="Markdown")
-        
-    except Exception:
-        bot.send_message(message.chat.id, "❌ Ошибка! Нужно писать так: `ID СУММА` (например: 123456 500)")
-
 # ================= АЛЬТЕРНАТИВНАЯ ОПЛАТА =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('req_manual_pay_'))
 def handle_req_manual_pay(call):
@@ -2774,131 +2186,102 @@ def handle_req_manual_pay(call):
             )
         except: pass
 
-@bot.message_handler(commands=['audit'])
-def handle_revenue_audit(message):
-    # Защита: только для владельца
-    if message.from_user.id != 479938867: 
+# ================= РУЧНАЯ ВЫДАЧА (АДМИН) =================
+@bot.message_handler(commands=['give'])
+def handle_give_cmd(message):
+    if str(message.chat.id) != str(STAFF_GROUP_ID): return
+        
+    args = message.text.split()
+    if len(args) != 4:
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
-    known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund']
-    
-    # Ищем все транзакции, тип которых НЕ входит в наш список
-    unknowns = list(db['daily_revenue'].aggregate([
-        {"$match": {"type": {"$nin": known_keys}}},
-        {"$group": {"_id": "$type", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
-    ]))
-    
-    if not unknowns:
-        bot.reply_to(message, "✅ **Всё чисто!** Неизвестных транзакций в базе нет.", parse_mode="Markdown")
-        return
+    try:
+        target_uid = int(args[1])
+        currency = args[2].lower()
+        amount = int(args[3])
         
-    text = "🔎 **НАЙДЕННЫЕ АНОМАЛИИ В БАЗЕ:**\n\n"
-    for item in unknowns:
-        # Выводим системное имя типа, общую сумму и количество чеков
-        text += f"Тип: `{item['_id']}`\nСумма: **{item['total']}⭐️** (Чеков: {item['count']})\n\n"
-        
-    bot.reply_to(message, text, parse_mode="Markdown")
+        if currency in ['points', 'очки']:
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+            bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        elif currency in ['shards', 'осколки']:
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": amount}}, upsert=True)
+            bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        else:
+            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
+    except ValueError:
+        try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
-
-# ================= СОЗДАНИЕ РОЗЫГРЫШЕЙ =================
-@bot.message_handler(commands=['new_gw', 'розыгрыш'])
-def create_giveaway_start(message):
-    # Проверка на админа
-    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
-        return
-        
-    msg = bot.send_message(message.chat.id, "🎉 **Создание нового розыгрыша (Web App)**\n\nВведите название приза (например: `Сертификат Озон на 1000₽`):", parse_mode="Markdown")
-    bot.register_next_step_handler(msg, process_gw_title)
-
-def process_gw_title(message):
-    if message.text.startswith('/'): return
-    title = message.text
-    
-    msg = bot.send_message(message.chat.id, f"Приз: **{title}**\n\nТеперь введите стоимость одного билета в Очках Бдительности (только цифру, например: `50`):", parse_mode="Markdown")
-    bot.register_next_step_handler(msg, process_gw_price, title=title)
-
-def process_gw_price(message, title):
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "❌ Нужно ввести число. Начните заново: /new_gw")
-        return
-    price = int(message.text)
-    
-    msg = bot.send_message(message.chat.id, f"Билет: **{price} очков**\n\nЧерез сколько ЧАСОВ подвести итоги? (Введите число, например: `24` для суток или `48` для двух дней):", parse_mode="Markdown")
-    bot.register_next_step_handler(msg, process_gw_hours, title=title, price=price)
-
-def process_gw_hours(message, title, price):
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "❌ Нужно ввести число. Начните заново: /new_gw")
-        return
-    hours = int(message.text)
-    
-    msg = bot.send_message(message.chat.id, f"Время: **{hours} часов**\n\nСколько будет победителей? (Введи число, например: `1`, `5` или `10`):", parse_mode="Markdown")
-    bot.register_next_step_handler(msg, process_gw_winners, title=title, price=price, hours=hours)
-
-def process_gw_winners(message, title, price, hours):
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "❌ Нужно ввести число. Начните заново: /new_gw")
-        return
-    winners_count = int(message.text)
-    if winners_count < 1: winners_count = 1
-    
-    import datetime
-    end_date = datetime.datetime.now() + datetime.timedelta(hours=hours)
-    gw_id = f"gw_{int(datetime.datetime.now().timestamp())}" 
-    
-    db['giveaways'].insert_one({
-        "_id": gw_id,
-        "title": title,
-        "ticket_price": price,
-        "last_ticket_num": 0,
-        "total_tickets": 0,
-        "winners_count": winners_count, # 🔥 Сохраняем кол-во победителей
-        "status": "active",
-        "end_date": end_date
-    })
-    
-    end_date_str = end_date.strftime("%d.%m.%Y в %H:%M")
-    bot.send_message(
-        message.chat.id, 
-        f"✅ **Розыгрыш успешно запущен!**\n\n"
-        f"🎁 Приз: **{title}**\n"
-        f"🎟 Цена билета: **{price} очк.**\n"
-        f"🏆 Победителей: **{winners_count} чел.**\n"
-        f"⏳ Итоги: **{end_date_str}**\n\n"
-        f"_Скайнет автоматически выберет победителей, когда время выйдет._",
-        parse_mode="Markdown"
-    )
-
-# ================= ПРЯМОЕ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ (РАЗДАЧА ПРИЗОВ) =================
 @bot.message_handler(commands=['send', 'msg', 'приз'])
 def handle_admin_send_msg(message):
     from config import STAFF_GROUP_ID, OWNER_ID
-    # 1. Защита: команду могут вызывать только в админке или лично владелец
     if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
         return
 
-    # 2. Делим сообщение строго на 3 части: команда, ID получателя и сам текст
     args = message.text.split(maxsplit=2)
     if len(args) < 3 or not args[1].isdigit():
-        try: 
-            bot.reply_to(
-                message, 
-                "❌ **Ошибка формата!**\nИспользуйте: `/send [ID] [Текст сообщения]`\n\n*Пример:* `/send 123456789 Ваш промокод Ozon: OZON-1000-WIN`", 
-                parse_mode="Markdown"
-            )
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/send [ID] [Текст сообщения]`\n\n*Пример:* `/send 123456789 Ваш промокод Ozon: OZON-1000-WIN`", parse_mode="Markdown")
         except: pass
         return
 
     target_uid = int(args[1])
     text_to_send = args[2]
 
-    # 3. Отправка сообщения напрямую пользователю в ЛС от лица бота
     try:
-        bot.send_message(
-            target_uid, 
-            f"🎁 **Сообщение от Администрации:**\n\n{text_to_send}", 
-            parse_mode="Markdown"
-        )
+        bot.send_message(target_uid, f"🎁 **Сообщение от Администрации:**\n\n{text_to_send}", parse_mode="Markdown")
         bot.reply_to(message, f"✅ Сообщение успешно доставлено пользователю `{target_uid}`!", parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Не удалось отправить (возможно, пользователь заблокировал бота): `{e}`", parse_mode="Markdown")
+
+# ================= ОБРАБОТКА ЗАЯВОК НА ВЫПЛАТУ (ИЗ WEB APP) =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('payout_'))
+def handle_payout_decisions(call):
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
+    try: bot.answer_callback_query(call.id)
+    except: pass
+    
+    parts = call.data.split('_')
+    action = parts[1] # "done" или "cancel"
+    target_uid = int(parts[2])
+    amount = int(parts[3])
+    
+    # Достаем последнюю активную заявку (pending)
+    withdrawal = db['withdrawals'].find_one({"user_id": target_uid, "amount": amount, "status": "pending"})
+    
+    if not withdrawal:
+        try: bot.edit_message_text(f"{call.message.text}\n\n⚠️ **ЗАЯВКА УЖЕ ОБРАБОТАНА ИЛИ ОТМЕНЕНА!**", call.message.chat.id, call.message.message_id)
+        except: pass
+        return
+
+    if action == "done":
+        # Ставим статус "оплачено" и триггерим демона в main.py на отправку ЛС
+        db['withdrawals'].update_one({"_id": withdrawal["_id"]}, {"$set": {"status": "paid", "notify_status": "pay"}})
+        
+        # Пишем в Z-отчет как расход (чтобы касса сходилась)
+        import time, datetime
+        db['daily_revenue'].insert_one({
+            "type": "payout",
+            "amount": -amount, # Отрицательная сумма
+            "timestamp": time.time(),
+            "date": datetime.datetime.now().strftime("%d.%m.%Y")
+        })
+        
+        try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ОДОБРЕНО И ВЫПЛАЧЕНО АДМИНОМ!**", call.message.chat.id, call.message.message_id)
+        except: pass
+
+    elif action == "cancel":
+        # Возвращаем деньги обратно на баланс юзера!
+        paid_collection.update_one({"uid": target_uid}, {"$inc": {"cashback_balance": amount}})
+        
+        # Ставим статус "отклонено" и триггерим демона в main.py
+        db['withdrawals'].update_one({"_id": withdrawal["_id"]}, {"$set": {"status": "rejected", "notify_status": "reject"}})
+        
+        try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО. ДЕНЬГИ ВОЗВРАЩЕНЫ НА БАЛАНС ЮЗЕРА.**", call.message.chat.id, call.message.message_id)
+        except: pass
