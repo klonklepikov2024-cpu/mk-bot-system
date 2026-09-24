@@ -1868,6 +1868,12 @@ def api_admin_user_action():
             tag = value[:15]
             db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag}}, upsert=True)
             return jsonify({"success": True, "msg": f"Тег {tag} установлен."})
+            
+        # 🔥 ВОТ ЭТОТ БЛОК НОВЫЙ 🔥
+        elif action == "city":
+            city = value.strip()
+            db['users'].update_one({"_id": target_uid}, {"$set": {"main_city": city}}, upsert=True)
+            return jsonify({"success": True, "msg": f"Город {city} успешно установлен."})
 
     except Exception as e:
         return jsonify({"error": f"Ошибка API: {str(e)}"}), 500
@@ -1925,28 +1931,140 @@ def api_admin_stats():
     stat_type = data.get('type')
     
     import datetime
-    if stat_type == "bank":
+    import time
+    
+    # === ГЛОБАЛЬНАЯ СВОДКА ===
+    if stat_type == "global":
+        total_users = db['users'].count_documents({})
+        total_banned = db['banned'].count_documents({})
+        
+        now_time = time.time()
+        webapp_total = db['users'].count_documents({"last_webapp_visit": {"$exists": True}})
+        webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now_time - 86400}})
+        active_plots = db['farm_plots'].count_documents({"status": "growing"})
+        
+        pipeline = [{"$group": {"_id": None, "total_points": {"$sum": "$bounty_points"}, "total_cb": {"$sum": "$cashback_balance"}}}]
+        wealth = list(paid_collection.aggregate(pipeline))
+        total_points = wealth[0]["total_points"] if wealth else 0
+        total_cb = wealth[0]["total_cb"] if wealth else 0
+        
+        active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
+        active_airdrops = db['active_airdrops'].count_documents({"claimed_count": {"$lt": 5}})
+        
+        text = (
+            f"📊 ГЛОБАЛЬНАЯ СВОДКА\n\n"
+            f"👥 Всего бот-юзеров: {total_users}\n"
+            f"🚷 В глобальном бане: {total_banned}\n\n"
+            f"📱 ИГРОВАЯ СТАТИСТИКА (WEB APP):\n"
+            f"🎮 Всего игроков: {webapp_total}\n"
+            f"🔥 Онлайн за 24 часа: {webapp_dau} чел.\n"
+            f"🌱 Растущих грядок: {active_plots} шт.\n\n"
+            f"💰 Очков на руках: {total_points} 💎\n"
+            f"💸 Кэшбека на руках: {total_cb} ₽\n\n"
+            f"🎟 Активных артефактов: {active_promos}\n"
+            f"📦 Аирдропов в чатах: {active_airdrops}"
+        )
+        return jsonify({"text": text})
+
+    # === БАНК КАЗИНО ===
+    elif stat_type == "bank":
         bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
         users_with_cb = list(paid_collection.find({"cashback_balance": {"$gt": 0}}))
         total_cb = sum(u.get("cashback_balance", 0) for u in users_with_cb)
-        text = f"🏦 БАНК КАЗИНО\nФонд Premium: {int(bank_data.get('balance', 0))} ⭐️\nКэшбэк у юзеров: {total_cb} ₽"
+        text = (
+            f"🏦 БАНК КАЗИНО\n\n"
+            f"💎 Фонд Premium: {int(bank_data.get('balance', 0))} ⭐️\n"
+            f"💸 На руках у юзеров (Кэшбэк): {total_cb} ₽\n\n"
+            f"Фонд пополняется на 20% от всех покупок в боте."
+        )
         return jsonify({"text": text})
         
+    # === CPA СТАТИСТИКА ===
     elif stat_type == "cpa":
         total = db['cpa_traffic'].count_documents({})
         approved = db['cpa_traffic'].count_documents({"status": "approved"})
-        text = f"🔗 CPA СТАТИСТИКА\nВсего кликов: {total}\nУспешных лидов: {approved}"
+        hold = db['cpa_traffic'].count_documents({"status": "hold"})
+        fraud = db['cpa_traffic'].count_documents({"status": "fraud"})
+        
+        pipeline = [
+            {"$match": {"status": "approved"}},
+            {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 3}
+        ]
+        top_agents = list(db['cpa_traffic'].aggregate(pipeline))
+        
+        text = (
+            f"🔗 CPA СТАТИСТИКА (ПАРТНЕРКА)\n\n"
+            f"👁 Всего заявок (кликов): {total}\n"
+            f"⏳ На проверке (Холд): {hold}\n"
+            f"🚫 Забраковано (Боты): {fraud}\n"
+            f"✅ ОДОБРЕНО (Лиды): {approved}\n\n"
+            f"🏆 ТОП-3 АГЕНТА:\n"
+        )
+        if top_agents:
+            medals = ["🥇", "🥈", "🥉"]
+            for i, agent in enumerate(top_agents):
+                agent_id = agent["_id"]
+                count = agent["count"]
+                text += f"{medals[i]} ID {agent_id} — {count} лидов\n"
+        else:
+            text += "Пока нет одобренных лидов."
+            
         return jsonify({"text": text})
         
+    # === Z-ОТЧЕТ ===
     elif stat_type == "zreport":
         today_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        
+        all_time_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
         today_raw = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
-        all_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
         
-        today_total = sum(i["total"] for i in today_raw)
-        all_total = sum(i["total"] for i in all_raw)
+        all_dict = {str(item["_id"]).lower() if item["_id"] else "unknown": item["total"] for item in all_time_raw}
+        today_dict = {str(item["_id"]).lower() if item["_id"] else "unknown": item["total"] for item in today_raw}
         
-        text = f"🧾 Z-ОТЧЕТ ({today_str})\nВыручка сегодня: {today_total} ⭐️\nВыручка за всё время: {all_total} ⭐️\n\n(Детальная разбивка работает)"
+        def format_money(d, key): return d.get(key, 0)
+        
+        known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund', 'city_access', 'ads_rub_balance', 'ads_points', 'payout', 'market_fee']
+        
+        today_other = sum(today_dict.values()) - sum(today_dict.get(k, 0) for k in known_keys)
+        all_other = sum(all_dict.values()) - sum(all_dict.get(k, 0) for k in known_keys)
+
+        today_ads = format_money(today_dict, 'ads') + format_money(today_dict, 'ads_rub_balance') + format_money(today_dict, 'ads_points')
+        all_ads = format_money(all_dict, 'ads') + format_money(all_dict, 'ads_rub_balance') + format_money(all_dict, 'ads_points')
+
+        today_fine = format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')
+        all_fine = format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')
+        
+        text = (
+            f"🧾 Z-ОТЧЕТ ({today_str})\n\n"
+            f"📅 СЕГОДНЯ:\n"
+            f"💰 Штрафы: {today_fine} ⭐️\n"
+            f"📢 Реклама: {today_ads} ⭐️\n"
+            f"👑 VIP-доступ: {format_money(today_dict, 'vip')} ⭐️\n"
+            f"🏳️‍🌈 BEYOND-чат: {format_money(today_dict, 'beyond')} ⭐️\n"
+            f"📜 Индульгенции: {format_money(today_dict, 'indulgence')} ⭐️\n"
+            f"🛒 Магазин очков: {format_money(today_dict, 'points_shop')} ⭐️\n"
+            f"⚖️ Ком-я рынка: {format_money(today_dict, 'market_fee')} ⭐️\n"
+            f"💸 Возвраты/Выплаты: {format_money(today_dict, 'refund') + format_money(today_dict, 'payout')} ⭐️\n"
+        )
+        if today_other != 0: text += f"📦 Прочее: {today_other} ⭐️\n"
+        text += f"🟢 ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())} ⭐️\n\n"
+        
+        text += (
+            f"🌍 ЗА ВСЁ ВРЕМЯ:\n"
+            f"💰 Штрафы: {all_fine} ⭐️\n"
+            f"📢 Реклама: {all_ads} ⭐️\n"
+            f"👑 VIP-доступ: {format_money(all_dict, 'vip')} ⭐️\n"
+            f"🏳️‍🌈 BEYOND-чат: {format_money(all_dict, 'beyond')} ⭐️\n"
+            f"📜 Индульгенции: {format_money(all_dict, 'indulgence')} ⭐️\n"
+            f"🛒 Магазин очков: {format_money(all_dict, 'points_shop')} ⭐️\n"
+            f"⚖️ Ком-я рынка: {format_money(all_dict, 'market_fee')} ⭐️\n"
+            f"💸 Возвраты/Выплаты: {format_money(all_dict, 'refund') + format_money(all_dict, 'payout')} ⭐️\n"
+        )
+        if all_other != 0: text += f"📦 Прочее: {all_other} ⭐️\n"
+        text += f"🏆 ОБЩАЯ КАССА: {sum(all_dict.values())} ⭐️"
+        
         return jsonify({"text": text})
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
