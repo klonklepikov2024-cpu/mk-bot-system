@@ -450,8 +450,9 @@
             <input type="number" id="adminTargetUid" placeholder="ID пользователя" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-gray-600 focus:border-blue-500">
             <input type="text" id="adminActionValue" placeholder="Сумма / Текст ЛС / Тег / Город / Часы мута" class="w-full text-white bg-black/50 rounded-lg p-3 mb-3 outline-none border border-gray-600 focus:border-blue-500">
             
-            <div class="grid grid-cols-2 gap-2 mb-2">
+            <div class="grid grid-cols-3 gap-3 mb-3">
                 <button onclick="adminUserAction('invoice')" class="bg-red-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-red-500/50">🧾 Штраф</button>
+                <button onclick="adminUserAction('statement')" class="bg-indigo-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-indigo-500/50">📜 Выписка</button>
                 <button onclick="adminUserAction('send_msg')" class="bg-green-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-green-500/50">✉️ Отправить ЛС</button>
                 <button onclick="adminUserAction('give_points')" class="bg-blue-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-blue-500/50">💎 Дать Очки</button>
                 <button onclick="adminUserAction('give_shards')" class="bg-purple-600/80 py-2 rounded-xl font-bold text-white text-xs active:scale-95 border border-purple-500/50">🧩 Дать Осколки</button>
@@ -1691,7 +1692,16 @@
             
             apiCall('/api/admin/user_action', { target_uid: targetUid, action: actionType, value: actionValue }).then(data => {
                 if (data.error) customAlert(data.error, "Ошибка", "❌");
-                else { customAlert(data.msg, "Успех!", "✅"); document.getElementById('adminActionValue').value = ''; }
+                else if (data.is_statement) {
+                    const box = document.getElementById('adminStatsResult');
+                    box.classList.remove('hidden');
+                    box.innerText = data.msg;
+                    box.scrollIntoView({behavior: "smooth"});
+                }
+                else { 
+                    customAlert(data.msg, "Успех!", "✅"); 
+                    document.getElementById('adminActionValue').value = ''; 
+                }
             });
         }
 

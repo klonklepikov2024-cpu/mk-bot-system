@@ -364,34 +364,39 @@ def api_buy_market():
     rec_price = int(real_value * 0.6)
     if rec_price < 10: rec_price = 10
     
-    # Адекватная ли цена? (Даем люфт +10 руб)
     is_adequate = original_rub <= (rec_price + 10)
-    
     gross_payout = original_rub
     subsidy_msg = ""
     
     if discount_pct > 0:
         if is_adequate:
             if discount_pct == 20:
-                gross_payout = int(original_rub * 0.90) # Теряет 10%, Скайнет платит 10%
-                subsidy_msg = "🔥 _Лот ушел со скидкой -20%. Так как ваша цена была честной, Скайнет компенсировал половину уценки из своих фондов!_"
+                gross_payout = int(original_rub * 0.90) 
+                subsidy_msg = "🔥 _Лот ушел со скидкой -20%. Скайнет компенсировал уценку из своих фондов!_"
             elif discount_pct == 50:
-                gross_payout = int(original_rub * 0.85) # Теряет 15%, Скайнет платит 35%
-                subsidy_msg = "🔥 _Лот ушел со скидкой -50%. Так как ваша цена была честной, Скайнет компенсировал 35% от уценки из своих фондов!_"
+                gross_payout = int(original_rub * 0.85) 
+                subsidy_msg = "🔥 _Лот ушел со скидкой -50%. Скайнет компенсировал уценку из своих фондов!_"
         else:
-            gross_payout = buyer_price_rub # Жадный продавец теряет всё
-            subsidy_msg = f"📉 _Лот продан со скидкой -{discount_pct}%. Цена была выше рекомендованной, поэтому субсидия от Скайнета не начислена._"
+            gross_payout = buyer_price_rub 
+            subsidy_msg = f"📉 _Лот продан со скидкой -{discount_pct}%. Цена была выше рекомендованной, субсидия не начислена._"
             
-    # Комиссия рынка
     has_rhodo = db['farm_plots'].find_one({"uid": lot['seller_uid'], "seed_type": "rhododendron", "status": "ready"})
     multiplier = 0.95 if has_rhodo else 0.90
-    seller_profit = int(gross_payout * multiplier)
     
-    paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
-    
+    # 🔥 ПАТЧ РЫНКА: Разделение валют 🔥
     if currency == "rub":
+        seller_profit = int(gross_payout * multiplier)
+        paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
         safe_commission = buyer_price_rub - seller_profit
         if safe_commission > 0: db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}}) 
+        db['ruble_ledger'].insert_one({"uid": lot['seller_uid'], "amount": seller_profit, "reason": f"Продажа лота {promo_id} на Рынке", "timestamp": time.time()}) 
+        currency_sym = "₽"
+    else:
+        # Покупали за очки -> Продавец получает ОЧКИ
+        seller_profit = int(buyer_price_pts * multiplier)
+        paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"bounty_points": seller_profit}})
+        currency_sym = "💎"
+        subsidy_msg = "" # Субсидия в рублях не платится, если сделка в очках
     
     promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
@@ -399,7 +404,7 @@ def api_buy_market():
     # === 3. УВЕДОМЛЕНИЕ ПРОДАВЦУ ===
     try:
         from core.bot import bot
-        msg_text = f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (комиссия рынка учтена)."
+        msg_text = f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}{currency_sym}** (комиссия рынка учтена)."
         if subsidy_msg: msg_text += f"\n\n{subsidy_msg}"
         bot.send_message(lot['seller_uid'], msg_text, parse_mode="Markdown")
     except: pass
@@ -788,7 +793,8 @@ def api_open_chest():
         return jsonify({"success": True, "msg": "🛡 ОТЛИЧНЫЙ ДРОП!\nВы нашли Щит Иммунитета!"})
     else:
         paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
-        return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ!!!\nСундук набит деньгами! +500 рублей кэшбэка!"})
+        import time
+        db['ruble_ledger'].insert_one({"uid": uid, "amount": 500, "reason": "Джекпот в Секретном Сундуке", "timestamp": time.time()})
 
 @app.route('/api/get_cpa', methods=['POST'])
 def api_get_cpa():
@@ -858,6 +864,8 @@ def api_exchange():
         {"$inc": {"cashback_balance": -cost, "bounty_points": reward}}
     )
     if not user_db: return jsonify({"error": "Недостаточно рублей!"}), 400
+    import time
+    db['ruble_ledger'].insert_one({"uid": uid, "amount": -cost, "reason": f"Обмен на {reward} очков", "timestamp": time.time()})
     return jsonify({"success": True, "msg": f"✅ Успешно обменяли {cost}₽ на {reward}💎!"})
 
 def get_daily_tasks_matrix(uid, today_str):
@@ -965,6 +973,7 @@ def api_payout():
     method = data.get('method')
     details = data.get('details')
     
+    if amount <= 0: return jsonify({"error": "Сумма должна быть больше нуля!"}), 400
     if amount < 500: return jsonify({"error": "Минимум 500₽ для вывода!"}), 400
     if method == "На карту" and amount < 3500: return jsonify({"error": "На карту минимум 3500₽!"}), 400
     if not details or len(details) < 5: return jsonify({"error": "Укажите корректные реквизиты!"}), 400
@@ -973,6 +982,7 @@ def api_payout():
     if user_db.get("cashback_balance", 0) < amount: return jsonify({"error": "Недостаточно средств!"}), 400
     
     paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -amount}})
+    db['ruble_ledger'].insert_one({"uid": uid, "amount": -amount, "reason": f"Заявка на вывод: {method}", "timestamp": time.time()})
     
     import time
     db['withdrawals'].insert_one({
@@ -1421,7 +1431,7 @@ def api_farm_action():
     elif action == 'harvest':
         if plot['status'] != 'ready': return jsonify({"error": "Урожай еще не созрел!"}), 400
         crop = CROPS.get(plot['seed_type'])
-        
+                       
         if crop.get('is_decor'): return jsonify({"error": "Декор нельзя собрать, он дает пассивный бонус!"}), 400
         
         import random
@@ -1441,6 +1451,7 @@ def api_farm_action():
         elif plot['seed_type'] == 'money_tree':
             reward_rub = random.randint(crop['reward_rub'][0], crop['reward_rub'][1])
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": reward_rub}})
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": reward_rub, "reason": "Урожай: Денежное Дерево", "timestamp": time.time()})
             
             # Магия цикличного созревания (Откатываем таймер, чтобы осталось 24 часа)
             new_planted_at = now - (crop['grow_time'] - 86400) 
@@ -1504,13 +1515,24 @@ def api_farm_action():
             return jsonify({"error": "Недостаточно очков для покупки нано-удобрения (50 💎)!"}), 400
         
         crop = CROPS.get(plot['seed_type'])
-        time_boost = crop['grow_time'] // 2
+        
+        # 🔥 ПРАВИЛЬНЫЙ ПАТЧ: Сокращаем ОСТАВШЕЕСЯ время в 2 раза 🔥
+        elapsed = now - plot.get('planted_at', now)
+        remaining_time = crop['grow_time'] - elapsed
+        
+        if remaining_time <= 0:
+            # Возвращаем 50 очков, если растение уже созрело, пока юзер жал кнопку
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cost}})
+            return jsonify({"error": "Растение уже почти созрело, удобрение не требуется!"}), 400
+            
+        time_boost = remaining_time // 2
+        
         db['farm_plots'].update_one({"_id": plot["_id"]}, {
             "$inc": {"planted_at": -time_boost},
             "$set": {"fertilized": True}
         })
         
-        return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nВремя созревания сокращено в 2 раза (использован лимит)."})
+        return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nОставшееся время до созревания сокращено в 2 раза."})
 
 # ================= 🗄 КИБЕР-СЕЙФЫ: БЭКЕНД =================
 
@@ -1608,6 +1630,8 @@ def api_crack_safe():
         else:
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": prize}})
             currency = "₽"
+            # 👇 ЛОГИРУЕМ ВЗЛОМ
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": prize, "reason": "Взлом Финансового Сейфа", "timestamp": time.time()})
             
         import random
         pin_len = 3 if safe_color == 'blue' else 4
@@ -1967,6 +1991,23 @@ def api_admin_user_action():
             hours = int(value)
             db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_mute", "duration": hours * 3600, "timestamp": time.time()})
             return jsonify({"success": True, "msg": f"Мут на {hours}ч. выдан."})
+
+        elif action == "statement":
+            logs = list(db['ruble_ledger'].find({"uid": target_uid}).sort("timestamp", -1).limit(40))
+            if not logs:
+                return jsonify({"success": True, "msg": f"🪹 У пользователя {target_uid} нет истории рублевых операций.", "is_statement": True})
+                
+            text = f"📜 ВЫПИСКА ЮЗЕРА {target_uid}\n\n"
+            total_earned = 0
+            for l in logs:
+                import datetime
+                dt = datetime.datetime.fromtimestamp(l['timestamp']).strftime('%d.%m %H:%M')
+                sign = "+" if l['amount'] > 0 else ""
+                if l['amount'] > 0: total_earned += l['amount']
+                text += f"• {dt} | {sign}{l['amount']}₽ | {l['reason']}\n"
+                
+            text += f"\n📊 Всего получено (последние 40 опер.): {total_earned} ₽"
+            return jsonify({"success": True, "msg": text, "is_statement": True})
             
         elif action == "tag":
             tag = value[:15]
