@@ -317,7 +317,7 @@ def handle_cashback_request(call):
     markup.add(
         InlineKeyboardButton("💳 На банковскую карту (от 3500₽)", callback_data=f"paymeth_card_{cb_balance}"),
         InlineKeyboardButton("📱 На баланс телефона (от 500₽)", callback_data=f"paymeth_phone_{cb_balance}"),
-        InlineKeyboardButton("💎 В крипте USDT (от 500₽)", callback_data=f"paymeth_crypto_{cb_balance}"),
+        InlineKeyboardButton("💎 В крипте (Выбор сети)", callback_data=f"paymeth_cryptomenu_{cb_balance}"),
         InlineKeyboardButton("🔙 Отмена", callback_data="btn_game_club")
     )
     
@@ -328,7 +328,27 @@ def handle_cashback_request(call):
         )
     except Exception as e: logger.warning(f"Ошибка меню кэшбэка: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('paymeth_'))
+# 👇 НОВОЕ: ПОДМЕНЮ ВЫБОРА СЕТИ 👇
+@bot.callback_query_handler(func=lambda call: call.data.startswith('paymeth_cryptomenu_'))
+def handle_crypto_menu(call):
+    cb_balance = int(call.data.split('_')[2])
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("🟢 USDT (Сеть TRC-20)", callback_data=f"paymeth_trc20_{cb_balance}"),
+        InlineKeyboardButton("🟡 USDT (Сеть BEP-20 / BSC)", callback_data=f"paymeth_bep20_{cb_balance}"),
+        InlineKeyboardButton("💎 TON (The Open Network)", callback_data=f"paymeth_ton_{cb_balance}"),
+        InlineKeyboardButton("🔙 Назад", callback_data="request_cashback_payout")
+    )
+    
+    try:
+        bot.edit_message_text(
+            "💎 **Вывод в Криптовалюте**\n\nВыберите сеть для перевода.\n⚠️ *Убедитесь, что ваш кошелек поддерживает выбранную сеть, иначе средства будут утеряны!*",
+            chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="Markdown"
+        )
+    except Exception as e: logger.warning(f"Ошибка меню выбора крипты: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('paymeth_') and 'cryptomenu' not in call.data)
 def handle_payout_method(call):
     parts = call.data.split('_')
     method = parts[1]
@@ -342,10 +362,13 @@ def handle_payout_method(call):
     try: bot.answer_callback_query(call.id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
+    # Обновленные подсказки для ввода
     prompts = {
         "card": "💳 **Вывод на карту**\n\nНапишите номер карты и название банка (например: `4276123456789012 Сбербанк`):",
         "phone": "📱 **Вывод на телефон**\n\nНапишите номер телефона и оператора (например: `+79001234567 МТС`):",
-        "crypto": "💎 **Вывод в крипте**\n\nНапишите ваш адрес USDT (сеть TRC20):"
+        "trc20": "🟢 **Вывод в USDT (TRC-20)**\n\nНапишите адрес вашего кошелька строго в сети **Tron (TRC-20)**:",
+        "bep20": "🟡 **Вывод в USDT (BEP-20)**\n\nНапишите адрес вашего кошелька строго в сети **BSC (BEP-20)**:",
+        "ton": "💎 **Вывод в TON**\n\nНапишите адрес вашего TON-кошелька.\n_⚠️ Если для перевода на вашу биржу нужен Memo/Comment, обязательно укажите его через пробел!_"
     }
 
     try: bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -373,11 +396,18 @@ def process_payout_details(message, cb_balance, method):
     # 1. Списываем баланс
     paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
     
-    method_names = {"card": "💳 На карту", "phone": "📱 На телефон", "crypto": "💎 USDT (TRC20)"}
+    # 👇 ФИКС: РАСШИРИЛИ СПИСОК СЕТЕЙ 👇
+    method_names = {
+        "card": "💳 На карту", 
+        "phone": "📱 На телефон", 
+        "trc20": "🟢 USDT (Сеть TRC-20)",
+        "bep20": "🟡 USDT (Сеть BEP-20 / BSC)",
+        "ton": "💎 TON (The Open Network)"
+    }
     method_str = method_names.get(method, method)
     
     import time
-    # 2. ИСПРАВЛЕНИЕ: Обязательно пишем в финансовый лог (ruble_ledger)
+    # 2. Обязательно пишем в финансовый лог
     db['ruble_ledger'].insert_one({
         "uid": uid, 
         "amount": -cb_balance, 
@@ -398,7 +428,6 @@ def process_payout_details(message, cb_balance, method):
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     safe_username = username.replace('_', '\\_') 
     
-    # ИСПРАВЛЕНИЕ: Экранируем реквизиты, чтобы крипто-кошелек не сломал разметку
     import html
     safe_details = html.escape(details)
     
@@ -409,13 +438,12 @@ def process_payout_details(message, cb_balance, method):
         InlineKeyboardButton("❌ Отклонить (Вернуть баланс)", callback_data=f"payout_cancel_{uid}_{cb_balance}")
     )
     
-    # 4. ИСПРАВЛЕНИЕ: Оборачиваем отправку админам в try-except
     try:
         bot.send_message(
             STAFF_GROUP_ID,
-            f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n👤 От: {safe_username} (`{uid}`)\n💵 Сумма к выдаче: **{cb_balance} руб.**\n🏦 Способ: **{method_str}**\n📝 Реквизиты юзера:\n<code>{safe_details}</code>\n\nСделайте перевод и нажмите кнопку подтверждения:",
+            f"💰 <b>ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА</b>\n\n👤 От: {safe_username} (<code>{uid}</code>)\n💵 Сумма к выдаче: <b>{cb_balance} руб.</b>\n🏦 Способ: <b>{method_str}</b>\n📝 Реквизиты юзера:\n<code>{safe_details}</code>\n\nСделайте перевод и нажмите кнопку подтверждения:",
             reply_markup=markup, 
-            parse_mode="HTML", # Заменили на HTML для безопасности реквизитов
+            parse_mode="HTML",
             message_thread_id=FINANCE_THREAD_ID 
         )
     except Exception as e:
