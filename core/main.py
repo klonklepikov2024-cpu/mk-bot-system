@@ -986,8 +986,11 @@ def api_open_task_case():
 @app.route('/api/payout', methods=['POST'])
 def api_payout():
     data = request.json
-    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     username = user_info.get('username', f"ID {uid}")
     
@@ -1001,12 +1004,21 @@ def api_payout():
     if not details or len(details) < 5: return jsonify({"error": "Укажите корректные реквизиты!"}), 400
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
-    if user_db.get("cashback_balance", 0) < amount: return jsonify({"error": "Недостаточно средств!"}), 400
+    if user_db.get("cashback_balance", 0) < amount: 
+        return jsonify({"error": "Недостаточно средств!"}), 400
     
+    # 1. Списываем баланс
     paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -amount}})
-    db['ruble_ledger'].insert_one({"uid": uid, "amount": -amount, "reason": f"Заявка на вывод: {method}", "timestamp": time.time()})
     
+    # 👇 ФИКС 1: ИМПОРТ ДО ИСПОЛЬЗОВАНИЯ ВРЕМЕНИ 👇
     import time
+    
+    # 2. Пишем в финансовый лог
+    db['ruble_ledger'].insert_one({
+        "uid": uid, "amount": -amount, "reason": f"Заявка на вывод: {method}", "timestamp": time.time()
+    })
+    
+    # 3. Пишем в базу ЦУПа
     db['withdrawals'].insert_one({
         "user_id": uid, "amount": amount, "method": method, "details": details, "status": "pending", "timestamp": time.time()
     })
@@ -1014,28 +1026,25 @@ def api_payout():
     from core.bot import bot
     from config import STAFF_GROUP_ID, FINANCE_THREAD_ID
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    import html # 👇 ФИКС 2: БЕЗОПАСНАЯ РАЗМЕТКА 👇
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
         InlineKeyboardButton("✅ Выплачено", callback_data=f"payout_done_{uid}_{amount}"),
         InlineKeyboardButton("❌ Отклонить", callback_data=f"payout_cancel_{uid}_{amount}")
     )
-    safe_username = username.replace('_', '\\_')
-    # Импортируем html для безопасной вставки реквизитов
-    import html
-    safe_details = html.escape(details)
+    
     safe_username_html = html.escape(username)
-
+    safe_details = html.escape(details)
+    
     try:
         bot.send_message(
             STAFF_GROUP_ID,
             f"💰 <b>ЗАЯВКА НА ВЫПЛАТУ (WEB APP)</b>\n\n👤 От: {safe_username_html} (<code>{uid}</code>)\n💵 Сумма: <b>{amount} руб.</b>\n🏦 Способ: <b>{method}</b>\n📝 Реквизиты:\n<code>{safe_details}</code>",
-            reply_markup=markup, 
-            parse_mode="HTML", # Используем безопасный HTML
-            message_thread_id=FINANCE_THREAD_ID
+            reply_markup=markup, parse_mode="HTML", message_thread_id=FINANCE_THREAD_ID
         )
     except Exception as e:
-        logger.error(f"Ошибка уведомления о выплате (Web App): {e}")
+        logger.error(f"Ошибка уведомления о выплате: {e}")
         
     return jsonify({"success": True, "msg": "Заявка отправлена в финотдел!"})
 
