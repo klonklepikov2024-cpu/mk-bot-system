@@ -357,7 +357,11 @@
             <div class="flex justify-between items-center mb-2">
                 <div class="flex items-center space-x-3">
                     <div class="text-4xl drop-shadow-[0_0_10px_rgba(180,83,9,0.5)]">🪵</div>
-                    <div><h3 class="font-bold text-amber-500">Деревянный Кейс</h3><p class="text-[10px] text-gray-400">Базовая награда</p></div>
+                    <div>
+    <h3 class="font-bold text-amber-500">Деревянный Кейс</h3>
+    <p class="text-[10px] text-gray-400">Базовая награда</p>
+    <p class="text-[9px] font-bold text-amber-500 animate-pulse mt-0.5">👑 VIP/BEYOND: лут x2</p>
+</div>
                 </div>
                 <button id="btnCase_wooden" onclick="openTaskCase('wooden')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/0</button>
             </div>
@@ -372,7 +376,11 @@
             <div class="flex justify-between items-center mb-2">
                 <div class="flex items-center space-x-3">
                     <div class="text-4xl drop-shadow-[0_0_10px_rgba(156,163,175,0.5)]">🥈</div>
-                    <div><h3 class="font-bold text-gray-300">Серебряный Кейс</h3><p class="text-[10px] text-gray-400">Продвинутая награда</p></div>
+                    <div>
+    <h3 class="font-bold text-gray-300">Серебряный Кейс</h3>
+    <p class="text-[10px] text-gray-400">Продвинутая награда</p>
+    <p class="text-[9px] font-bold text-gray-300 animate-pulse mt-0.5">👑 VIP/BEYOND: лут x2</p>
+</div>
                 </div>
                 <button id="btnCase_silver" onclick="openTaskCase('silver')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/0</button>
             </div>
@@ -387,13 +395,52 @@
             <div class="flex justify-between items-center mb-2">
                 <div class="flex items-center space-x-3">
                     <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]">🥇</div>
-                    <div><h3 class="font-bold text-yellow-500">Золотой Кейс</h3><p class="text-[10px] text-gray-400">Элитная награда</p></div>
+                    <div>
+    <h3 class="font-bold text-yellow-500">Золотой Кейс</h3>
+    <p class="text-[10px] text-gray-400">Элитная награда</p>
+    <p class="text-[9px] font-bold text-yellow-500 animate-pulse mt-0.5">👑 VIP/BEYOND: лут x2</p>
+</div>
                 </div>
                 <button id="btnCase_gold" onclick="openTaskCase('gold')" class="bg-gray-700 px-4 py-2 rounded-xl text-xs font-bold text-gray-400 cursor-not-allowed">0/0</button>
             </div>
             <div id="desc_gold" class="text-xs text-gray-300 mb-2">Загрузка...</div>
             <div class="w-full bg-black/50 rounded-full h-1.5 mt-2" id="progress_gold_container">
                 <div id="progress_gold" class="bg-yellow-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+        <!-- 🔥 ПАРТНЕРСКИЕ КВЕСТЫ 🔥 -->
+        <h2 class="font-bold text-2xl mt-8 mb-4">🤝 Партнерские Квесты</h2>
+        <div class="surface rounded-2xl p-4 shadow-lg border border-purple-500/50 relative overflow-hidden">
+            <div class="absolute -right-4 -top-4 text-6xl opacity-10">🛍</div>
+            <div class="relative z-10">
+                <div class="flex items-center space-x-2 mb-2">
+                    <span class="text-2xl">💊</span>
+                    <h3 class="font-bold text-lg text-purple-400">Попперсы ABC</h3>
+                </div>
+                <p class="text-xs text-gray-300 mb-3">Закажи любой товар в партнерском магазине, загрузи скриншот подтверждения заказа и забирай мощную награду!</p>
+                
+                <div class="mb-3">
+                    <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">Выберите награду за чек:</label>
+                    <select id="questReward" class="w-full text-white bg-black/50 rounded-lg p-3 outline-none border border-purple-500/50 focus:border-purple-400 text-sm">
+                        <option value="points">💎 Набор: 3000 Очков + 3 Щита</option>
+                        <option value="elite">👑 Элитный статус (VIP или BEYOND)</option>
+                        <option value="cash">💸 150 ₽ Кэшбэка на баланс</option>
+                    </select>
+                </div>
+                
+                <button onclick="tg.openLink('http://t.me/ABCpoppersbot?start=link_F8BzRR8RdFiNTz')" class="w-full bg-gray-700 py-2 rounded-xl text-sm font-bold text-white mb-3 active:scale-95 border border-gray-600">
+                    🔗 Перейти в магазин
+                </button>
+                
+                <div class="flex items-center space-x-2">
+                    <input type="file" id="questScreenshot" accept="image/*" class="hidden" onchange="updateFileName(this)">
+                    <label for="questScreenshot" id="questFileLabel" class="flex-1 bg-black/50 py-3 rounded-xl text-xs font-bold text-gray-400 text-center border border-dashed border-gray-500 cursor-pointer active:scale-95 truncate px-2 transition-colors">
+                        📸 Выбрать скриншот
+                    </label>
+                    <button id="questSubmitBtn" onclick="submitQuest()" class="bg-purple-600 px-5 py-3 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-transform disabled:opacity-50">
+                        Отправить
+                    </button>
+                </div>
             </div>
         </div>
     </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ЗАДАНИЙ 🔥 -->
@@ -1557,6 +1604,57 @@
             }).catch(() => {
                 btn.innerHTML = originalText; btn.disabled = false;
             });
+        }
+
+        // ================= ПАРТНЕРСКИЕ КВЕСТЫ =================
+        function updateFileName(input) {
+            const label = document.getElementById('questFileLabel');
+            if(input.files && input.files[0]) {
+                label.innerText = '✅ ' + input.files[0].name;
+                label.classList.add('text-green-400', 'border-green-500');
+                label.classList.remove('text-gray-400', 'border-gray-500');
+            } else {
+                label.innerText = '📸 Выбрать скриншот';
+                label.classList.remove('text-green-400', 'border-green-500');
+                label.classList.add('text-gray-400', 'border-gray-500');
+            }
+        }
+
+        async function submitQuest() {
+            const fileInput = document.getElementById('questScreenshot');
+            if(!fileInput.files || !fileInput.files[0]) {
+                customAlert("Сначала выберите скриншот чека!", "Внимание", "⚠️");
+                return;
+            }
+            
+            const btn = document.getElementById('questSubmitBtn');
+            btn.innerText = "⏳..."; btn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('initData', tg.initData);
+            formData.append('quest_id', 'abc_poppers');
+            formData.append('screenshot', fileInput.files[0]);
+            // 👇 ДОБАВЛЯЕМ ВОТ ЭТИ ДВЕ СТРОЧКИ 👇
+            const rewardType = document.getElementById('questReward').value;
+            formData.append('reward_type', rewardType);
+
+            try {
+                // Для файлов используем голый fetch без JSON-заголовков
+                const response = await fetch('/api/submit_quest', { method: 'POST', body: formData });
+                const data = await response.json();
+                
+                btn.innerText = "Отправить"; btn.disabled = false;
+                if(data.error) {
+                    customAlert(data.error, "Ошибка", "❌");
+                } else {
+                    customAlert(data.msg, "Заявка отправлена!", "✅");
+                    fileInput.value = '';
+                    updateFileName(fileInput);
+                }
+            } catch (e) {
+                btn.innerText = "Отправить"; btn.disabled = false;
+                customAlert("Ошибка при загрузке. Убедитесь, что размер фото не превышает 5 МБ.", "Сбой", "❌");
+            }
         }
 
         // ================= ЗАДАНИЯ И КЕЙСЫ (ДИНАМИКА) =================

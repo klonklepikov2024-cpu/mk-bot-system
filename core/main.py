@@ -743,12 +743,18 @@ def api_craft():
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -3000, "immunity": -2}})
         u_info = db['users'].find_one({"_id": uid}) or {}
         
+        import random
+        # 🔥 ПАТЧ: Выдаем КУПОНЫ вместо прямой записи в базу 🔥
         if not u_info.get("is_queer"):
-            db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
-            return jsonify({"success": True, "msg": "🏳️‍🌈 Выковано: Статус BEYOND!"})
+            code = f"BEYOND-{random.randint(1000, 9999)}"
+            db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            return jsonify({"success": True, "msg": f"🏳️‍🌈 Выкован 100% Купон на BEYOND!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
+            
         elif not u_info.get("is_vip"):
-            db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
-            return jsonify({"success": True, "msg": "👑 Выковано: Пожизненный VIP!"})
+            code = f"VIP-{random.randint(1000, 9999)}"
+            db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            return jsonify({"success": True, "msg": f"👑 Выкован 100% Купон на VIP!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
+            
         else:
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 1000}})
             return jsonify({"success": True, "msg": "💰 Макс. уровень! Ресурсы переплавлены в 1000₽ кэшбэка!"})
@@ -941,20 +947,36 @@ def api_open_task_case():
     
     if case_type in matrix["opened"]: return jsonify({"error": "Вы уже открывали этот кейс сегодня!"}), 400
     if not matrix[case_type]["ready"]: return jsonify({"error": "Условия задания еще не выполнены!"}), 400
+
+    # 🔥 ПРОВЕРКА VIP И BEYOND СТАТУСА (УМНОЖАЕМ НАГРАДЫ ЕЖЕДНЕВОК) 🔥
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    is_elite = u_info.get("is_vip") or u_info.get("is_queer")
+    multiplier = 2 if is_elite else 1
+    
+    # 👇 ИСПРАВЛЕНИЕ: Добавили BEYOND в текстовое уведомление! 👇
+    vip_msg = "👑 (VIP/BEYOND x2)" if is_elite else "\n_👑 Получи VIP или BEYOND, чтобы забирать х2 лута!_"
         
     update_query = {"$inc": {}}
     if case_type == 'wooden':
-        update_query["$inc"]["bounty_points"] = 50
-        update_query["$inc"]["jackpot_shards"] = 1
-        msg = "🪵 **Деревянный кейс открыт!**\nВы получили 50 💎 и 1 Осколок рулетки!"
+        pts = 50 * multiplier
+        shards = 1 * multiplier
+        update_query["$inc"]["bounty_points"] = pts
+        update_query["$inc"]["jackpot_shards"] = shards
+        msg = f"🪵 **Деревянный кейс открыт!** {vip_msg}\nВы получили {pts} 💎 и {shards} Осколок(ка)!"
+        
     elif case_type == 'silver':
-        update_query["$inc"]["bounty_points"] = 100
-        update_query["$inc"]["immunity"] = 1
-        msg = "🥈 **Серебряный кейс открыт!**\nВы получили 100 💎 и 1 Щит Иммунитета!"
+        pts = 100 * multiplier
+        shields = 1 * multiplier
+        update_query["$inc"]["bounty_points"] = pts
+        update_query["$inc"]["immunity"] = shields
+        msg = f"🥈 **Серебряный кейс открыт!** {vip_msg}\nВы получили {pts} 💎 и {shields} Щит(а) Иммунитета!"
+        
     elif case_type == 'gold':
-        update_query["$inc"]["bounty_points"] = 300
-        update_query["$inc"]["key_red"] = 1
-        msg = "🥇 **Золотой кейс открыт!**\nВы сорвали куш: 300 💎 и 🔑 Ключ от Финансового Сейфа!"
+        pts = 300 * multiplier
+        keys = 1 * multiplier
+        update_query["$inc"]["bounty_points"] = pts
+        update_query["$inc"]["key_red"] = keys
+        msg = f"🥇 **Золотой кейс открыт!** {vip_msg}\nВы сорвали куш: {pts} 💎 и {keys} 🔑 Ключ(а) от Сейфа!"
         
     paid_collection.update_one({"uid": uid}, update_query)
     db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$push": {"opened": case_type}}, upsert=True)
@@ -999,14 +1021,21 @@ def api_payout():
         InlineKeyboardButton("❌ Отклонить", callback_data=f"payout_cancel_{uid}_{amount}")
     )
     safe_username = username.replace('_', '\\_')
+    # Импортируем html для безопасной вставки реквизитов
+    import html
+    safe_details = html.escape(details)
+    safe_username_html = html.escape(username)
+
     try:
         bot.send_message(
             STAFF_GROUP_ID,
-            f"💰 **ЗАЯВКА НА ВЫПЛАТУ (WEB APP)**\n\n👤 От: @{safe_username} (`{uid}`)\n💵 Сумма: **{amount} руб.**\n🏦 Способ: **{method}**\n📝 Реквизиты:\n`{details}`",
-            reply_markup=markup, parse_mode="Markdown", message_thread_id=FINANCE_THREAD_ID
+            f"💰 <b>ЗАЯВКА НА ВЫПЛАТУ (WEB APP)</b>\n\n👤 От: {safe_username_html} (<code>{uid}</code>)\n💵 Сумма: <b>{amount} руб.</b>\n🏦 Способ: <b>{method}</b>\n📝 Реквизиты:\n<code>{safe_details}</code>",
+            reply_markup=markup, 
+            parse_mode="HTML", # Используем безопасный HTML
+            message_thread_id=FINANCE_THREAD_ID
         )
     except Exception as e:
-        logger.error(f"Ошибка уведомления о выплате: {e}")
+        logger.error(f"Ошибка уведомления о выплате (Web App): {e}")
         
     return jsonify({"success": True, "msg": "Заявка отправлена в финотдел!"})
 
@@ -1093,7 +1122,7 @@ def api_get_my_promos():
         else:
             val = p.get('value', 0)
             real_value = int(base_price * (val / 100))
-            t_name = "Штраф" if target_type == 'fine' else "Рекламу" if target_type == 'ads' else "VIP" if target_type == 'vip' else "Любую услугу"
+            t_name = "Штраф" if target_type == 'fine' else "Рекламу" if target_type == 'ads' else "VIP" if target_type == 'vip' else "BEYOND" if target_type == 'beyond' else "Любую услугу"
             name_str = f"Скидка {val}% на {t_name}"
 
         rec_price = int(real_value * 0.6)
@@ -2238,6 +2267,134 @@ def api_admin_stats():
         
         return jsonify({"text": text})
 
+@app.route('/api/submit_quest', methods=['POST'])
+def api_submit_quest():
+    init_data = request.form.get('initData')
+    quest_id = request.form.get('quest_id')
+    reward_type = request.form.get('reward_type', 'points') # Получаем выбор юзера
+    screenshot = request.files.get('screenshot')
+    
+    if not validate_webapp_data(init_data, BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    if not screenshot:
+        return jsonify({"error": "Файл скриншота не найден!"}), 400
+        
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(init_data).split("&"))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    username = user_info.get('username')
+    user_name_str = f"@{username}" if username else user_info.get('first_name', 'Аноним')
+    
+    # Анти-спам защита
+    last_quest = db['quests_history'].find_one({"uid": uid, "quest_id": quest_id, "status": "pending"})
+    if last_quest:
+        return jsonify({"error": "Ваша предыдущая заявка еще на проверке у админов!"}), 400
+
+    import time
+    # Сохраняем в базу, ЧТО именно он выбрал
+    db['quests_history'].insert_one({
+        "uid": uid, "quest_id": quest_id, "reward_type": reward_type, "status": "pending", "timestamp": time.time()
+    })
+    
+    # Перевод для админа
+    reward_text = "3000 💎 + 3 🛡"
+    if reward_type == 'elite': reward_text = "Статус VIP / BEYOND"
+    elif reward_type == 'cash': reward_text = "150 ₽"
+    
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("✅ Одобрить", callback_data=f"q_ok_{uid}_{quest_id}"),
+        InlineKeyboardButton("❌ Отклонить (Фейк)", callback_data=f"q_no_{uid}_{quest_id}")
+    )
+    
+    try:
+        safe_username = user_name_str.replace('_', '\\_')
+        bot.send_photo(
+            STAFF_GROUP_ID,
+            screenshot.read(),
+            caption=f"📸 **НОВАЯ ЗАЯВКА НА КВЕСТ**\n\n👤 Юзер: {safe_username} (`{uid}`)\n🛍 Партнер: **ABC Poppers**\n🎁 Хочет: **{reward_text}**\n\n_Проверьте скриншот. Если всё четко, жмите кнопку!_",
+            parse_mode="Markdown",
+            reply_markup=markup,
+            message_thread_id=PRIZES_THREAD_ID
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки квеста: {e}")
+        db['quests_history'].delete_one({"uid": uid, "quest_id": quest_id, "status": "pending"})
+        return jsonify({"error": "Не удалось загрузить фото. Попробуйте сжать скриншот."}), 500
+        
+    return jsonify({"success": True, "msg": "Скриншот успешно передан в Спецотдел Скайнета! Ожидайте начисления награды."})
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('q_ok_') or call.data.startswith('q_no_'))
+def handle_quest_resolution(call):
+    parts = call.data.split('_')
+    action = parts[1]  # 'ok' или 'no'
+    uid = int(parts[2])
+    quest_id = parts[3]
+    
+    quest = db['quests_history'].find_one_and_update(
+        {"uid": uid, "quest_id": quest_id, "status": "pending"},
+        {"$set": {"status": "resolved"}}
+    )
+    
+    if not quest:
+        bot.answer_callback_query(call.id, "Эта заявка уже обработана!", show_alert=True)
+        return
+
+    reward_type = quest.get('reward_type', 'points')
+
+    try:
+        if action == 'ok':
+            import time
+            import random
+            
+            if reward_type == 'cash':
+                paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 150}})
+                db['ruble_ledger'].insert_one({"uid": uid, "amount": 150, "reason": "Награда за Партнерский Квест", "timestamp": time.time()})
+                admin_msg = "Награда (150₽) выдана!"
+                user_msg = "🎉 **Партнерский Квест выполнен!**\nВаш чек прошел проверку. Вы получили: **150 ₽ кэшбэка**!"
+                
+            elif reward_type == 'elite':
+                u_info = db['users'].find_one({"_id": uid}) or {}
+                
+                # 🔥 ПАТЧ: Выдаем КУПОНЫ за квест 🔥
+                if not u_info.get("is_queer"):
+                    code = f"BEYOND-{random.randint(1000, 9999)}"
+                    db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    granted = f"Купон 100% на BEYOND 🏳️‍🌈 (Код: `{code}`)"
+                    
+                elif not u_info.get("is_vip"):
+                    code = f"VIP-{random.randint(1000, 9999)}"
+                    db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    granted = f"Купон 100% на VIP 👑 (Код: `{code}`)"
+                    
+                else:
+                    paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+                    db['ruble_ledger'].insert_one({"uid": uid, "amount": 500, "reason": "Квест (Компенсация за фулл-элиту)", "timestamp": time.time()})
+                    granted = "500 ₽ (т.к. все статусы уже есть)"
+                
+                admin_msg = f"Награда ({granted}) выдана!"
+                user_msg = f"🎉 **Партнерский Квест выполнен!**\nЧек проверен. Вы получили:\n**{granted}**!\n\n_Ищите купон в Рюкзаке или введите его при оплате в боте._"
+                
+            else:
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000, "immunity": 3}})
+                admin_msg = "Награда (3000💎 + 3🛡) выдана!"
+                user_msg = "🎉 **Партнерский Квест выполнен!**\nЧек проверен. Награда: **3000 💎 и 3 🛡 Щита**!"
+                
+            bot.edit_message_caption(f"✅ **ЗАЯВКА ОДОБРЕНА**\n{admin_msg}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            bot.send_message(uid, user_msg, parse_mode="Markdown")
+            
+        else:
+            bot.edit_message_caption("❌ **ЗАЯВКА ОТКЛОНЕНА**\nПричина: Чек недействителен.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            bot.send_message(uid, "❌ **Заявка на квест отклонена.**\nЧек недействителен, не читается или заказ отменен.", parse_mode="Markdown")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при обработке квеста: {e}")
+            
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db

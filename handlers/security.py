@@ -370,25 +370,37 @@ def process_payout_details(message, cb_balance, method):
         bot.send_message(message.chat.id, "❌ Ошибка: ваш баланс изменился. Попробуйте снова.")
         return
 
+    # 1. Списываем баланс
     paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
     
     method_names = {"card": "💳 На карту", "phone": "📱 На телефон", "crypto": "💎 USDT (TRC20)"}
+    method_str = method_names.get(method, method)
     
-    # 👇 ДОБАВЛЕНО: ОТПРАВЛЯЕМ ЗАЯВКУ НА САЙТ 👇
     import time
+    # 2. ИСПРАВЛЕНИЕ: Обязательно пишем в финансовый лог (ruble_ledger)
+    db['ruble_ledger'].insert_one({
+        "uid": uid, 
+        "amount": -cb_balance, 
+        "reason": f"Заявка на вывод: {method_str} (через бота)", 
+        "timestamp": time.time()
+    })
+    
+    # 3. Создаем заявку в базе для ЦУПа
     db['withdrawals'].insert_one({
         "user_id": uid,
         "amount": cb_balance,
-        "method": method_names.get(method, method),
+        "method": method_str,
         "details": details,
         "status": "pending",
         "timestamp": time.time()
     })
-    # 👆 =================================== 👆
     
-    # Защита от подчеркиваний в Markdown
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     safe_username = username.replace('_', '\\_') 
+    
+    # ИСПРАВЛЕНИЕ: Экранируем реквизиты, чтобы крипто-кошелек не сломал разметку
+    import html
+    safe_details = html.escape(details)
     
     from config import FINANCE_THREAD_ID
     markup = InlineKeyboardMarkup(row_width=1)
@@ -397,13 +409,18 @@ def process_payout_details(message, cb_balance, method):
         InlineKeyboardButton("❌ Отклонить (Вернуть баланс)", callback_data=f"payout_cancel_{uid}_{cb_balance}")
     )
     
-    bot.send_message(
-        STAFF_GROUP_ID,
-        f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n👤 От: {safe_username} (`{uid}`)\n💵 Сумма к выдаче: **{cb_balance} руб.**\n🏦 Способ: **{method_names[method]}**\n📝 Реквизиты юзера:\n`{details}`\n\nСделайте перевод и нажмите кнопку подтверждения:",
-        reply_markup=markup, 
-        parse_mode="Markdown",
-        message_thread_id=FINANCE_THREAD_ID # Отправляем в папку финансов
-    )
+    # 4. ИСПРАВЛЕНИЕ: Оборачиваем отправку админам в try-except
+    try:
+        bot.send_message(
+            STAFF_GROUP_ID,
+            f"💰 **ЗАЯВКА НА ВЫПЛАТУ КЭШБЕКА**\n\n👤 От: {safe_username} (`{uid}`)\n💵 Сумма к выдаче: **{cb_balance} руб.**\n🏦 Способ: **{method_str}**\n📝 Реквизиты юзера:\n<code>{safe_details}</code>\n\nСделайте перевод и нажмите кнопку подтверждения:",
+            reply_markup=markup, 
+            parse_mode="HTML", # Заменили на HTML для безопасности реквизитов
+            message_thread_id=FINANCE_THREAD_ID 
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки уведомления о выводе в админку: {e}")
+        
     bot.send_message(message.chat.id, "✅ **Заявка на выплату успешно создана!**\nСумма списана с баланса. Ожидайте поступления средств на указанные реквизиты.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('payout_'))
