@@ -195,10 +195,11 @@
 
         <h3 class="font-bold text-lg mb-2 mt-6">🔗 CPA-Партнерка (Генератор)</h3>
         <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-gray-700/50">
-            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Одобрено (Лиды):</span> <span class="font-bold text-green-400" id="cpaApproved">0</span></div>
-            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">В холде (48ч):</span> <span class="font-bold text-yellow-400" id="cpaHold">0</span></div>
-            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">Фрод / Боты:</span> <span class="font-bold text-red-400" id="cpaFraud">0</span></div>
-            <div class="flex justify-between mb-4"><span class="text-gray-400 text-sm">Дубликаты:</span> <span class="font-bold text-gray-500" id="cpaDupes">0</span></div>
+            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">✅ Одобрено (Лиды):</span> <span class="font-bold text-green-400" id="cpaApproved">0</span></div>
+            <div class="flex justify-between mb-2"><span class="text-gray-400 text-sm">⏳ В холде (14 дней):</span> <span class="font-bold text-yellow-400" id="cpaHold">0</span></div>
+            <div class="flex justify-between mb-1"><span class="text-gray-400 text-xs">♻️ Дубликаты (Уже были):</span> <span class="font-bold text-gray-500 text-xs" id="cpaDupes">0</span></div>
+            <div class="flex justify-between mb-1"><span class="text-red-400/70 text-xs">🏃‍♂️ Вышли из чата досрочно:</span> <span class="font-bold text-red-400 text-xs" id="cpaFraudLeft">0</span></div>
+            <div class="flex justify-between mb-4"><span class="text-red-500 text-xs">🔨 Забанены Скайнетом:</span> <span class="font-bold text-red-500 text-xs" id="cpaFraudBanned">0</span></div>
             
             <div class="bg-black/30 p-3 rounded-xl border border-gray-700 mb-2">
                 <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">1. Выберите сеть</label>
@@ -222,6 +223,20 @@
                 <button onclick="copyCpaLink()" class="bg-gray-700 w-full py-2 rounded-lg text-sm font-bold active:scale-95 transition-transform flex items-center justify-center gap-2">
                     📋 Скопировать
                 </button>
+            </div>
+        </div>
+
+        <!-- 🔥 ЛИДЕРБОРД CPA 🔥 -->
+        <h3 class="font-bold text-lg mb-2 mt-6">🏆 Топ Агентов (Конкурс Месяца)</h3>
+        <div class="surface rounded-2xl p-4 mb-6 shadow-lg border border-yellow-500/30">
+            <p class="text-[10px] text-gray-400 mb-3 leading-tight">Приведи <b class="text-white">минимум 50 человек</b> за месяц, чтобы войти в Топ-5 и забрать Сертификаты до 2000₽ или тысячи Очков Бдительности!</p>
+            
+            <div id="cpaLeaderboardBox" class="space-y-2">
+                <p class="text-xs text-center text-gray-500 py-2">⏳ Загрузка таблицы...</p>
+            </div>
+            
+            <div class="mt-3 pt-3 border-t border-gray-700/50">
+                <p class="text-[9px] text-yellow-500/80 font-bold uppercase tracking-widest text-center">Итоги автоматически 1-го числа</p>
             </div>
         </div>
 
@@ -426,7 +441,6 @@
                     <select id="questReward" class="w-full text-white bg-black/50 rounded-lg p-3 outline-none border border-purple-500/50 focus:border-purple-400 text-sm">
                         <option value="points">💎 Набор: 3000 Очков + 3 Щита</option>
                         <option value="elite">👑 Элитный статус (VIP или BEYOND)</option>
-                        <option value="cash">💸 150 ₽ Кэшбэка на баланс</option>
                     </select>
                 </div>
                 
@@ -1309,20 +1323,54 @@
         let cpaNetworksData = {};
 
         function loadCpa() {
-            // 1. Грузим статистику
             apiCall('/api/get_cpa').then(data => {
                 if(!data.error) {
                     document.getElementById('cpaApproved').innerText = data.approved || 0;
                     document.getElementById('cpaHold').innerText = data.hold || 0;
-                    document.getElementById('cpaFraud').innerText = data.fraud || 0;
                     document.getElementById('cpaDupes').innerText = data.duplicates || 0;
+                    
+                    const totalBanned = (data.fraud_banned || 0) + (data.fraud_old || 0);
+                    document.getElementById('cpaFraudBanned').innerText = totalBanned;
+                    document.getElementById('cpaFraudLeft').innerText = data.fraud_left || 0;
+                    
                     if(document.getElementById('agentCasesCount')) {
                         document.getElementById('agentCasesCount').innerText = data.cases || 0;
+                    }
+
+                    // Отрисовка Лидерборда
+                    const lbBox = document.getElementById('cpaLeaderboardBox');
+                    if (data.leaderboard && data.leaderboard.length > 0) {
+                        let lbHtml = '';
+                        data.leaderboard.forEach(agent => {
+                            const textStyle = agent.is_me ? 'text-green-400 font-black' : 'text-gray-200 font-bold';
+                            const bgStyle = agent.is_me ? 'bg-green-900/20 border-green-700/50' : 'bg-black/30 border-gray-700';
+                            
+                            let prizeHint = '';
+                            if(agent.medal === '🥇') prizeHint = 'Серт. 2000₽';
+                            else if(agent.medal === '🥈') prizeHint = 'Серт. 1500₽';
+                            else if(agent.medal === '🥉') prizeHint = 'Серт. 1000₽';
+                            else if(agent.medal === '4️⃣') prizeHint = '3000 💎';
+                            else if(agent.medal === '5️⃣') prizeHint = '1500 💎';
+
+                            lbHtml += `
+                            <div class="flex items-center justify-between p-2 rounded-lg border ${bgStyle}">
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-lg">${agent.medal}</span>
+                                    <span class="${textStyle} text-xs truncate max-w-[100px]">${agent.name}</span>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-sm font-black text-white">${agent.count} <span class="text-[9px] text-gray-500 font-normal">чел</span></div>
+                                    <div class="text-[8px] text-yellow-500 uppercase tracking-widest">${prizeHint}</div>
+                                </div>
+                            </div>`;
+                        });
+                        lbBox.innerHTML = lbHtml;
+                    } else {
+                        lbBox.innerHTML = `<div class="bg-black/30 p-4 rounded-lg border border-gray-700 text-center"><span class="text-2xl mb-1 block">🪹</span><span class="text-xs font-bold text-gray-400">В этом месяце еще никто не налил трафик. Будьте первым!</span></div>`;
                     }
                 }
             });
 
-            // 2. Грузим сети и города
             apiCall('/api/get_cpa_networks').then(data => {
                 if(!data.error && data.networks) {
                     cpaNetworksData = data.networks;

@@ -808,14 +808,60 @@ def api_get_cpa():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     
+    # 1. Личная стата агента за ВСЁ ВРЕМЯ
     hold = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "hold"})
     approved = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "approved"})
-    fraud = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
+    fraud_banned = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud_banned"})
+    fraud_left = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud_left"})
+    fraud_old = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
+    
     user_data = paid_collection.find_one({"uid": uid}) or {}
     dupes = user_data.get("cpa_duplicates", 0)
     cases = user_data.get("agent_cases", 0) 
     
-    return jsonify({"hold": hold, "approved": approved, "fraud": fraud, "duplicates": dupes, "cases": cases})
+    # 2. 🔥 ФОРМИРУЕМ ЛИДЕРБОРД ТЕКУЩЕГО МЕСЯЦА 🔥
+    import datetime
+    current_month_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m")
+    
+    pipeline = [
+        {"$match": {"status": "approved", "approved_month": current_month_str}},
+        {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 5}
+    ]
+    top_agents_raw = list(db['cpa_traffic'].aggregate(pipeline))
+    
+    top_agents = []
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    for idx, agent in enumerate(top_agents_raw):
+        # Чтобы не палить реальные ID или полные имена в аппке всем подряд, 
+        # сделаем анонимизацию (Например: ID 123*** или "Александр С.")
+        u_info = db['users'].find_one({"_id": agent["_id"]}) or {}
+        first_name = u_info.get("first_name", "Аноним")
+        # Берем только первую букву фамилии/имени для приватности
+        safe_name = f"{first_name[:6]}***" 
+        
+        is_me = (agent["_id"] == uid)
+        display_name = "Вы (Лидер!)" if is_me else safe_name
+        
+        top_agents.append({
+            "medal": medals[idx],
+            "name": display_name,
+            "count": agent["count"],
+            "is_me": is_me
+        })
+    
+    return jsonify({
+        "hold": hold, 
+        "approved": approved, 
+        "fraud_banned": fraud_banned, 
+        "fraud_left": fraud_left,
+        "fraud_old": fraud_old,
+        "duplicates": dupes, 
+        "cases": cases,
+        "leaderboard": top_agents,
+        "current_month": current_month_str
+    })
 
 @app.route('/api/get_cpa_networks', methods=['POST'])
 def api_get_cpa_networks():
@@ -2306,10 +2352,9 @@ def api_submit_quest():
         "uid": uid, "quest_id": quest_id, "reward_type": reward_type, "status": "pending", "timestamp": time.time()
     })
     
-    # Перевод для админа
+    # Перевод для админа (Рубли убрали)
     reward_text = "3000 💎 + 3 🛡"
     if reward_type == 'elite': reward_text = "Статус VIP / BEYOND"
-    elif reward_type == 'cash': reward_text = "150 ₽"
     
     from core.bot import bot
     from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
@@ -2357,20 +2402,17 @@ def handle_quest_resolution(call):
     reward_type = quest.get('reward_type', 'points')
 
     try:
+        # 🔥 БРОНЕБОЙНЫЙ ФИКС: Сначала принудительно стираем кнопки отдельным запросом! 🔥
+        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+        except: pass
+
         if action == 'ok':
             import time
             import random
-            
-            if reward_type == 'cash':
-                paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 150}})
-                db['ruble_ledger'].insert_one({"uid": uid, "amount": 150, "reason": "Награда за Партнерский Квест", "timestamp": time.time()})
-                admin_msg = "Награда (150₽) выдана!"
-                user_msg = "🎉 **Партнерский Квест выполнен!**\nВаш чек прошел проверку. Вы получили: **150 ₽ кэшбэка**!"
                 
-            elif reward_type == 'elite':
+            if reward_type == 'elite':
                 u_info = db['users'].find_one({"_id": uid}) or {}
                 
-                # 🔥 ПАТЧ: Выдаем КУПОНЫ за квест 🔥
                 if not u_info.get("is_queer"):
                     code = f"BEYOND-{random.randint(1000, 9999)}"
                     db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
@@ -2398,7 +2440,7 @@ def handle_quest_resolution(call):
             bot.send_message(uid, user_msg, parse_mode="Markdown")
             
         else:
-            bot.edit_message_caption("❌ **ЗАЯВКА ОТКЛОНЕНА**\nПричина: Чек недействителен.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            bot.edit_message_caption("❌ **ЗАЯВКА ОТКЛОНЕНА**\nПричина: Фейк / Чек недействителен.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
             bot.send_message(uid, "❌ **Заявка на квест отклонена.**\nЧек недействителен, не читается или заказ отменен.", parse_mode="Markdown")
             
     except Exception as e:
