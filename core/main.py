@@ -2485,4 +2485,8 @@ if not is_setup_done:
 # ===============================
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=PORT)
+    # Получаем порт напрямую от серверов Render (если его нет - берем 5000 для локальных тестов)
+    render_port = int(os.environ.get("PORT", 5000))
+    
+    # Запускаем Flask строго на порту Render'а
+    app.run(host="0.0.0.0", port=render_port)
