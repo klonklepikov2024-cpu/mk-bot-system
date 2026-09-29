@@ -570,6 +570,8 @@ def api_spin_roulette():
         if bank_data.get("balance", 0) >= cost_in_stars:
             db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
+            import time
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": win_rub, "reason": "Выигрыш в Гача-Рулетку", "timestamp": time.time()})
             prize_msg = f"✨ ДЕНЕЖНЫЙ КУПОН! ✨\nВы выиграли {win_rub} руб. на счет!"
             prize_id, prize_name = "rubles", f"{win_rub} ₽"
         else:
@@ -757,6 +759,8 @@ def api_craft():
             
         else:
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 1000}})
+            import time
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": 1000, "reason": "Крафт (Компенсация за макс. статус)", "timestamp": time.time()})
             return jsonify({"success": True, "msg": "💰 Макс. уровень! Ресурсы переплавлены в 1000₽ кэшбэка!"})
 
 @app.route('/api/open_chest', methods=['POST'])
@@ -2236,35 +2240,53 @@ def api_admin_stats():
         
     # === CPA СТАТИСТИКА ===
     elif stat_type == "cpa":
+        import datetime
+        # Берем текущий месяц для ТОП-5
+        current_month_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m")
+        
         total = db['cpa_traffic'].count_documents({})
         approved = db['cpa_traffic'].count_documents({"status": "approved"})
         hold = db['cpa_traffic'].count_documents({"status": "hold"})
-        fraud = db['cpa_traffic'].count_documents({"status": "fraud"})
         
+        # Считаем все виды отказов
+        fraud_banned = db['cpa_traffic'].count_documents({"status": "fraud_banned"})
+        fraud_left = db['cpa_traffic'].count_documents({"status": "fraud_left"})
+        fraud_old = db['cpa_traffic'].count_documents({"status": "fraud"})
+        total_fraud = fraud_banned + fraud_left + fraud_old
+        
+        # ТОП-5 АГЕНТОВ ТЕКУЩЕГО МЕСЯЦА
         pipeline = [
-            {"$match": {"status": "approved"}},
+            {"$match": {"status": "approved", "approved_month": current_month_str}},
             {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
-            {"$limit": 3}
+            {"$limit": 5}
         ]
         top_agents = list(db['cpa_traffic'].aggregate(pipeline))
         
         text = (
-            f"🔗 CPA СТАТИСТИКА (ПАРТНЕРКА)\n\n"
+            f"🔗 CPA СТАТИСТИКА (ГЛОБАЛЬНАЯ)\n\n"
             f"👁 Всего заявок (кликов): {total}\n"
-            f"⏳ На проверке (Холд): {hold}\n"
-            f"🚫 Забраковано (Боты): {fraud}\n"
-            f"✅ ОДОБРЕНО (Лиды): {approved}\n\n"
-            f"🏆 ТОП-3 АГЕНТА:\n"
+            f"⏳ На проверке (Холд 14 дней): {hold}\n"
+            f"🚫 Забраковано всего: {total_fraud}\n"
+            f"   ├ Сбежали из чата: {fraud_left}\n"
+            f"   └ Забанены за спам: {fraud_banned}\n"
+            f"✅ ОДОБРЕНО (Лиды за всё время): {approved}\n\n"
+            f"🏆 ТОП-5 АГЕНТОВ ({current_month_str}):\n"
         )
+        
         if top_agents:
-            medals = ["🥇", "🥈", "🥉"]
+            medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
             for i, agent in enumerate(top_agents):
                 agent_id = agent["_id"]
                 count = agent["count"]
-                text += f"{medals[i]} ID {agent_id} — {count} лидов\n"
+                
+                # Достаем имя агента для красоты
+                u_info = db['users'].find_one({"_id": agent_id}) or {}
+                agent_name = u_info.get("first_name", "Аноним")
+                
+                text += f"{medals[i]} {agent_name} (ID {agent_id}) — {count} лидов\n"
         else:
-            text += "Пока нет одобренных лидов."
+            text += "В этом месяце пока нет одобренных лидов."
             
         return jsonify({"text": text})
         
