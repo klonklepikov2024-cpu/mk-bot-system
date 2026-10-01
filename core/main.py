@@ -1338,6 +1338,65 @@ def api_inventory_action():
         except Exception as e: logger.error(f"Ошибка ордера: {e}")
         return jsonify({"success": True, "msg": "🚓 Заявка на арест передана Спецназу Скайнета!"})
 
+    elif action == 'hack':
+        target_uid = data.get('target_info')
+        if not target_uid.isdigit(): return jsonify({"error": "ID жертвы должен быть числом!"}), 400
+        target_uid = int(target_uid)
+        
+        if target_uid == uid: return jsonify({"error": "Нельзя взломать самого себя!"}), 400
+        
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        
+        # 🔥 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА (1 час) 🔥
+        import time
+        now = time.time()
+        last_hack = user_data.get("last_hack_time", 0)
+        if now - last_hack < 3600:
+            left_mins = int((3600 - (now - last_hack)) / 60)
+            return jsonify({"error": f"Ваш вирус еще компилируется! Ждите {left_mins} мин."}), 400
+            
+        if user_data.get("bounty_points", 0) < 200:
+            return jsonify({"error": "У вас нет 200 💎 для запуска вируса!"}), 400
+            
+        target_data = paid_collection.find_one({"uid": target_uid})
+        if not target_data or target_data.get("bounty_points", 0) < 100:
+            return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
+            
+        # 🔥 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ (4 часа) 🔥
+        last_hacked = target_data.get("last_hacked_time", 0)
+        if now - last_hacked < 14400: # 4 часа = 14400 сек
+            return jsonify({"error": "Сервер жертвы сейчас под защитой федералов! Попробуйте позже."}), 400
+            
+        # Списываем 200 очков за попытку и ставим Кулдаун хакеру
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}})
+        from core.bot import bot
+        
+        # 1. Пробиваем Щит
+        if target_data.get("immunity", 0) > 0:
+            # Списываем щит и даем жертве иммунитет на 4 часа
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}})
+            try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `ID {uid}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
+            except: pass
+            return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
+            
+        # 2. Если щита нет - бросаем кубик 30%
+        import random
+        if random.randint(1, 100) <= 30:
+            steal_pct = random.uniform(0.05, 0.15) # Крадем от 5% до 15%
+            stolen = int(target_data.get("bounty_points", 0) * steal_pct)
+            if stolen < 10: stolen = 10
+            
+            # Крадем очки и вешаем иммунитет жертве
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": -stolen}, "$set": {"last_hacked_time": now}})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": stolen}})
+            
+            try: bot.send_message(target_uid, f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `ID {uid}` пробил вашу защиту и украл **{stolen} 💎**!\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._", parse_mode="Markdown")
+            except: pass
+            
+            return jsonify({"success": True, "msg": f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {stolen} 💎 у жертвы!"})
+        else:
+            return jsonify({"success": True, "msg": "📉 Атака провалилась. Брандмауэр жертвы выстоял, вирус стерт. Вы потеряли 200 💎."})
+
 # ================= 🚜 КИБЕР-ФЕРМА: БЭКЕНД =================
 
 CROPS = {
@@ -2497,6 +2556,47 @@ def handle_quest_resolution(call):
             
     except Exception as e:
         logger.error(f"Ошибка при обработке квеста: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('defuse_'))
+def handle_defuse(call):
+    parts = call.data.split('_')
+    bomb_id = f"{parts[1]}_{parts[2]}"
+    color = parts[3]
+    
+    # Пытаемся захватить бомбу (чтобы 2 человека не нажали одновременно)
+    bomb = db['active_bombs'].find_one_and_update(
+        {"_id": bomb_id, "status": "active"},
+        {"$set": {"status": "defused", "defuser_id": call.from_user.id}}
+    )
+    
+    if not bomb:
+        bot.answer_callback_query(call.id, "Слишком поздно! Бомба уже взорвалась или обезврежена!", show_alert=True)
+        return
+        
+    uid = call.from_user.id
+    user_name = call.from_user.first_name
+    
+    # Рандомим правильный провод на лету
+    import random
+    correct_wire = random.choice(['red', 'blue', 'green'])
+    color_emoji = {"red": "🔴 Красный", "blue": "🔵 Синий", "green": "🟢 Зеленый"}[color]
+    
+    if color == correct_wire:
+        # УГАДАЛ!
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}}, upsert=True)
+        text = f"✅ **БОМБА ОБЕЗВРЕЖЕНА!**\n\nГерой [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель и сорвал куш в **1000 💎**!\n\n_Чат спасен._"
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    else:
+        # БАБАХ!
+        text = f"💥 **БАБАХ!** 💥\n\nХакер [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель... ОШИБКА!\n\nЕму оторвало руки, он отправляется в реанимацию (Мут на 15 минут)."
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        
+        # Выдаем физический мут
+        import time
+        until = int(time.time()) + (15 * 60)
+        try:
+            bot.restrict_chat_member(call.message.chat.id, uid, until_date=until, can_send_messages=False)
+        except: pass
             
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():

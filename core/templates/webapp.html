@@ -118,16 +118,21 @@
             <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
         </div>
 
-        <div class="grid grid-cols-2 gap-2 mb-6">
+        <div class="grid grid-cols-3 gap-2 mb-6">
             <button onclick="openModal('angel')" class="surface p-3 rounded-xl border border-yellow-500/30 active:scale-95 transition-transform shadow-md">
                 <div class="text-2xl mb-1">👼</div>
-                <div class="font-bold text-sm text-yellow-500">Призвать Ангела</div>
-                <div class="text-[9px] text-gray-400">Сжечь 1 щит (Разбан друга)</div>
+                <div class="font-bold text-sm text-yellow-500">Ангел</div>
+                <div class="text-[9px] text-gray-400">Сжечь 1 щит</div>
             </button>
             <button onclick="openModal('arrest')" class="surface p-3 rounded-xl border border-red-500/30 active:scale-95 transition-transform shadow-md">
                 <div class="text-2xl mb-1">🚓</div>
-                <div class="font-bold text-sm text-red-500">Ордер на Арест</div>
-                <div class="text-[9px] text-gray-400">Мут на 1 час (Указать цель)</div>
+                <div class="font-bold text-sm text-red-500">Ордер</div>
+                <div class="text-[9px] text-gray-400">Мут на 1 час</div>
+            </button>
+            <button onclick="openModal('hack')" class="surface p-3 rounded-xl border border-blue-500/30 active:scale-95 transition-transform shadow-md bg-blue-900/10">
+                <div class="text-2xl mb-1">💻</div>
+                <div class="font-bold text-sm text-blue-500">Взлом</div>
+                <div class="text-[9px] text-gray-400">Украсть очки</div>
             </button>
         </div>
 
@@ -1237,8 +1242,20 @@
             const input = document.getElementById('modalInput');
             const submitBtn = document.getElementById('modalSubmitBtn');
             input.value = ''; modal.classList.remove('hidden');
-            if(type === 'angel') { title.innerText = "👼 Призвать Ангела"; desc.innerText = "Введите ID пользователя, которого хотите разбанить за счет вашего щита:"; input.placeholder = "Например: 123456789"; submitBtn.onclick = () => submitModalAction('angel', input.value); } 
-            else { title.innerText = "🚓 Выписать Ордер"; desc.innerText = "Укажите @username (или ID) нарушителя и кратко опишите причину:"; input.placeholder = "Например: @spammer реклама казино"; submitBtn.onclick = () => submitModalAction('arrest', input.value); }
+            
+            if(type === 'angel') { 
+                title.innerText = "👼 Призвать Ангела"; desc.innerText = "Введите ID пользователя, которого хотите разбанить за счет вашего щита:"; input.placeholder = "Например: 123456789"; submitBtn.onclick = () => submitModalAction('angel', input.value); 
+            } 
+            else if(type === 'arrest') { 
+                title.innerText = "🚓 Выписать Ордер"; desc.innerText = "Укажите @username (или ID) нарушителя и кратко опишите причину:"; input.placeholder = "Например: @spammer реклама казино"; submitBtn.onclick = () => submitModalAction('arrest', input.value); 
+            }
+            // 👇 ДОБАВЛЯЕМ ВЗЛОМ 👇
+            else if(type === 'hack') {
+                title.innerText = "💻 Кибер-Атака"; 
+                desc.innerText = "Укажите ID жертвы. Цена: 200 💎. Шанс: 30%.\n⚠️ ВНИМАНИЕ: Если у жертвы есть Щит, он сожжет ваш вирус!"; 
+                input.placeholder = "ID жертвы"; 
+                submitBtn.onclick = () => submitModalAction('hack', input.value);
+            }
         }
         function submitModalAction(actType, val) {
             if(!val) { customAlert("Заполните поле!", "Внимание", "⚠️"); return; }

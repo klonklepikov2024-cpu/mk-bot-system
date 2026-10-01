@@ -529,6 +529,41 @@ def holiday_contest_scout():
     except Exception as e:
         pass
 
+def drop_cyber_bomb():
+    """Сбрасывает кибер-бомбу в рандомный чат"""
+    from core.bot import bot
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+    
+    all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+    unique_chats = list(set(all_chats))
+    
+    if not unique_chats: return
+    
+    target_chat = random.choice(unique_chats)
+    bomb_id = f"bomb_{int(time.time())}"
+    
+    # Записываем активную бомбу в базу
+    db['active_bombs'].insert_one({"_id": bomb_id, "status": "active", "timestamp": time.time()})
+    
+    markup = InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        InlineKeyboardButton("🔴 Красный", callback_data=f"defuse_{bomb_id}_red"),
+        InlineKeyboardButton("🔵 Синий", callback_data=f"defuse_{bomb_id}_blue"),
+        InlineKeyboardButton("🟢 Зеленый", callback_data=f"defuse_{bomb_id}_green")
+    )
+    
+    msg_text = (
+        "🚨 **ОБНАРУЖЕНА КИБЕР-БОМБА!** 🚨\n\n"
+        "Скайнет сбросил кейс с сюрпризом. Какой кабель перерезать?\n\n"
+        "🎁 **Угадаешь** = 1000 💎\n"
+        "💥 **Ошибешься** = Оторвет руки (Мут на 15 минут)\n\n"
+        "_Решайся быстрее, пока это не сделал кто-то другой!_"
+    )
+    
+    try: bot.send_message(target_chat, msg_text, parse_mode="Markdown", reply_markup=markup)
+    except: pass
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
@@ -551,6 +586,9 @@ def start_scheduler():
         
         # 🔥 НОВОЕ: Разведчик конкурсов (Каждое утро в 10:00) 🔥
         scheduler.add_job(holiday_contest_scout, 'cron', hour=10, minute=0, id='holiday_scout', replace_existing=True)
+
+        # 🔥 Бомба в чаты (каждые 2 часа)
+        scheduler.add_job(drop_cyber_bomb, 'interval', minutes=120, id='bomb_drop', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш)!")
