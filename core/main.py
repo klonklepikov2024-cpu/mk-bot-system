@@ -2398,35 +2398,8 @@ def api_admin_stats():
     
     if uid not in ADMIN_CHAT_IDS and uid != OWNER_ID:
         return jsonify({"error": "Доступ запрещен."}), 403
-        
-    # 🔥 ПРАВДОПОДОБНОЕ ОТРИЦАНИЕ: Скрываем финансы от модераторов 🔥
-    if stat_type in ["zreport", "bank", "global", "cpa"] and uid != OWNER_ID:
-        return jsonify({"text": "🛠 **Ошибка синхронизации кластера.**\n\nФинансовые шарды базы данных временно отключены сервером для создания бэкапа. Попробуйте запросить аналитику позже."})
 
-    # === ТОП 30 БОГАЧЕЙ (ОЧКИ 💎) ===
-    if stat_type == "top30_pts":
-        # Исключаем тестовые счета админов из топа
-        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
-        top_pts = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "bounty_points": {"$gt": 0}}).sort("bounty_points", -1).limit(30))
-        
-        text = "🏆 **ТОП 30 БОГАЧЕЙ (ОЧКИ 💎)**\n\n"
-        for i, u in enumerate(top_pts, 1):
-            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
-            text += f"{i}. {name} — {int(u.get('bounty_points', 0))} 💎\n"
-        return jsonify({"text": text})
-
-    # === ТОП 30 ОЛИГАРХОВ (РУБЛИ) ===
-    elif stat_type == "top30_rub":
-        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
-        top_rub = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "cashback_balance": {"$gt": 0}}).sort("cashback_balance", -1).limit(30))
-        
-        text = "💸 **ТОП 30 ОЛИГАРХОВ (РУБЛИ ₽)**\n\n"
-        for i, u in enumerate(top_rub, 1):
-            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
-            text += f"{i}. {name} — {int(u.get('cashback_balance', 0))} ₽\n"
-        return jsonify({"text": text})
-
-    # 🔥 ИДЕАЛЬНЫЙ ЦЕНТР ПОДСЧЕТА (Игнорирует минуса и тестовые счета админов) 🔥
+    # 🔥 ВЫНОСИМ ФУНКЦИЮ В САМОЕ НАЧАЛО, ЧТОБЫ НЕ ЛОМАТЬ ЦЕПОЧКУ IF-ELIF 🔥
     def get_real_wealth():
         pts_res = list(paid_collection.aggregate([
             {"$match": {
@@ -2448,6 +2421,32 @@ def api_admin_stats():
             pts_res[0]["total"] if pts_res else 0,
             cb_res[0]["total"] if cb_res else 0
         )
+
+    # 🔥 ПРАВДОПОДОБНОЕ ОТРИЦАНИЕ: Скрываем финансы от модераторов 🔥
+    if stat_type in ["zreport", "bank", "global", "cpa"] and uid != OWNER_ID:
+        return jsonify({"text": "🛠 **Ошибка синхронизации кластера.**\n\nФинансовые шарды базы данных временно отключены сервером для создания бэкапа. Попробуйте запросить аналитику позже."})
+
+    # === ТОП 30 БОГАЧЕЙ (ОЧКИ 💎) ===
+    if stat_type == "top30_pts":
+        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
+        top_pts = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "bounty_points": {"$gt": 0}}).sort("bounty_points", -1).limit(30))
+        
+        text = "🏆 **ТОП 30 БОГАЧЕЙ (ОЧКИ 💎)**\n\n"
+        for i, u in enumerate(top_pts, 1):
+            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
+            text += f"{i}. {name} — {int(u.get('bounty_points', 0))} 💎\n"
+        return jsonify({"text": text})
+
+    # === ТОП 30 ОЛИГАРХОВ (РУБЛИ) ===
+    elif stat_type == "top30_rub":
+        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
+        top_rub = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "cashback_balance": {"$gt": 0}}).sort("cashback_balance", -1).limit(30))
+        
+        text = "💸 **ТОП 30 ОЛИГАРХОВ (РУБЛИ ₽)**\n\n"
+        for i, u in enumerate(top_rub, 1):
+            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
+            text += f"{i}. {name} — {int(u.get('cashback_balance', 0))} ₽\n"
+        return jsonify({"text": text})
 
     # === ГЛОБАЛЬНАЯ СВОДКА ===
     elif stat_type == "global":
@@ -2586,7 +2585,7 @@ def api_admin_stats():
             f"📅 СЕГОДНЯ:\n"
             f"💰 Штрафы: {today_fine} ⭐️\n"
             f"📢 Реклама: {today_ads} ⭐️\n"
-            f"👑 VIP-доступ: {format_money(today_dict, 'vip')} ⭐️️\n"
+            f"👑 VIP-доступ: {format_money(today_dict, 'vip')} ⭐\n"
             f"🏳️‍🌈 BEYOND-чат: {format_money(today_dict, 'beyond')} ⭐️\n"
             f"📜 Индульгенции: {format_money(today_dict, 'indulgence')} ⭐️\n"
             f"🛒 Магазин очков: {format_money(today_dict, 'points_shop')} ⭐️\n"
@@ -2601,7 +2600,7 @@ def api_admin_stats():
             f"💰 Штрафы: {all_fine} ⭐️\n"
             f"📢 Реклама: {all_ads} ⭐️\n"
             f"👑 VIP-доступ: {format_money(all_dict, 'vip')} ⭐️\n"
-            f"🏳️️‍🌈 BEYOND-чат: {format_money(all_dict, 'beyond')} ⭐️\n"
+            f"🏳‍🌈 BEYOND-чат: {format_money(all_dict, 'beyond')} ⭐️\n"
             f"📜 Индульгенции: {format_money(all_dict, 'indulgence')} ⭐️\n"
             f"🛒 Магазин очков: {format_money(all_dict, 'points_shop')} ⭐️\n"
             f"⚖️ Ком-я рынка: {format_money(all_dict, 'market_fee')} ⭐️\n"
