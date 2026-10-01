@@ -114,13 +114,25 @@ def get_profile():
     uid = user_info['id']
     
     import time
-    # 🔥 Радар Скайнета: Запоминаем, что юзер зашел в Web App именно сейчас
     db['users'].update_one({"_id": uid}, {"$set": {"last_webapp_visit": time.time()}}, upsert=True)
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
+    
+    # --- СОБИРАЕМ ИНФУ О СЕМЬЕ ДЛЯ WEB APP ---
+    partner_id = user_db.get("partner_id")
+    partner_name = None
+    if partner_id:
+        p_stat = db['chat_stats'].find_one({"uid": partner_id}) or {}
+        partner_name = p_stat.get("name", f"ID {partner_id}")
+        
+    children_count = len(user_db.get("children", []))
+    
     return jsonify({
         "points": user_db.get("bounty_points", 0),
-        "rubles": user_db.get("cashback_balance", 0)
+        "rubles": user_db.get("cashback_balance", 0),
+        "karma": user_db.get("social_rating", 0),
+        "partner": partner_name,       # Передаем имя супруга
+        "kids": children_count         # Передаем количество детей
     })
 
 @app.route('/api/buy_ticket', methods=['POST'])
@@ -1263,6 +1275,20 @@ def api_add_market_lot():
     
     return jsonify({"success": True, "msg": f"Лот успешно выставлен за {price}₽!"})
 
+action = data.get('action')
+    
+    # Секретный переводчик @username -> ID
+    def resolve_uid(target_info):
+        t_info = str(target_info).strip()
+        if t_info.isdigit(): return int(t_info)
+        if t_info.startswith('@'):
+            uname = t_info.replace('@', '').lower()
+            u = db['users'].find_one({"username": uname})
+            if u: return u['_id']
+            cs = db['chat_stats'].find_one({"username": uname})
+            if cs: return cs['uid']
+        return None
+
 @app.route('/api/inventory_action', methods=['POST'])
 def api_inventory_action():
     data = request.json
@@ -1296,9 +1322,8 @@ def api_inventory_action():
         return jsonify({"success": True, "msg": f"♻️ Артефакт уничтожен!\nВы получили: +{shards_reward} Осколков рулетки 🧩."})
         
     elif action == 'angel':
-        target_uid = data.get('target_id')
-        if not target_uid.isdigit(): return jsonify({"error": "ID должен быть числом!"}), 400
-        target_uid = int(target_uid)
+        target_uid = resolve_uid(data.get('target_info'))
+        if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
         
         user_data = paid_collection.find_one({"uid": uid}) or {}
         if user_data.get("immunity", 0) < 1: return jsonify({"error": "Нет активных Щитов!"}), 400
@@ -1339,9 +1364,8 @@ def api_inventory_action():
         return jsonify({"success": True, "msg": "🚓 Заявка на арест передана Спецназу Скайнета!"})
 
     elif action == 'hack':
-        target_uid = data.get('target_info')
-        if not target_uid.isdigit(): return jsonify({"error": "ID жертвы должен быть числом!"}), 400
-        target_uid = int(target_uid)
+        target_uid = resolve_uid(data.get('target_info'))
+        if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
         
         if target_uid == uid: return jsonify({"error": "Нельзя взломать самого себя!"}), 400
         
@@ -2597,6 +2621,747 @@ def handle_defuse(call):
         try:
             bot.restrict_chat_member(call.message.chat.id, uid, until_date=until, can_send_messages=False)
         except: pass
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 1: РОЛПЛЕЙ И РАЗДАЧИ) =================
+
+# 1. Интерактивные RP-команды (РАСШИРЕННЫЙ АРСЕНАЛ)
+RP_COMMANDS = {
+    # Добрые / Дружеские
+    "обнять": "🤗 [{name1}](tg://user?id={id1}) тепло обнял(а) [{name2}](tg://user?id={id2})",
+    "поцеловать": "💋 [{name1}](tg://user?id={id1}) страстно поцеловал(а) [{name2}](tg://user?id={id2})",
+    "погладить": "🐈 [{name1}](tg://user?id={id1}) ласково погладил(а) [{name2}](tg://user?id={id2})",
+    "дать пять": "✋ [{name1}](tg://user?id={id1}) дал(а) пять [{name2}](tg://user?id={id2}). Красава!",
+    "пожать": "🤝 [{name1}](tg://user?id={id1}) с уважением пожал(а) руку [{name2}](tg://user?id={id2})",
+    "укрыть": "🛌 [{name1}](tg://user?id={id1}) заботливо укрыл(а) пледом [{name2}](tg://user?id={id2})",
+
+    # Агрессивные / Смешные
+    "укусить": "🧛‍♂️ [{name1}](tg://user?id={id1}) кусьнул(а) [{name2}](tg://user?id={id2}) за бочок",
+    "ударить": "🥊 [{name1}](tg://user?id={id1}) прописал(а) мощный хук [{name2}](tg://user?id={id2})",
+    "лещ": "🐟 [{name1}](tg://user?id={id1}) отвесил(а) звонкого леща [{name2}](tg://user?id={id2})",
+    "пнуть": "🥾 [{name1}](tg://user?id={id1}) дал(а) смачного пинка [{name2}](tg://user?id={id2})",
+    "задушить": "🤲 [{name1}](tg://user?id={id1}) начал(а) безжалостно душить [{name2}](tg://user?id={id2})",
+    "расстрелять": "🔫 [{name1}](tg://user?id={id1}) выпустил(а) обойму в [{name2}](tg://user?id={id2}). F.",
+    "отравить": "🧪 [{name1}](tg://user?id={id1}) подсыпал(а) яд в бокал [{name2}](tg://user?id={id2})",
+    "послать": "🖕 [{name1}](tg://user?id={id1}) послал(а) [{name2}](tg://user?id={id2}) куда подальше",
+
+    # Пошловатые / 18+
+    "отшлепать": "🍑 [{name1}](tg://user?id={id1}) жестко отшлепал(а) [{name2}](tg://user?id={id2})",
+    "связать": "🪢 [{name1}](tg://user?id={id1}) крепко связал(а) [{name2}](tg://user?id={id2})",
+    "наказать": "😈 [{name1}](tg://user?id={id1}) жестоко наказал(а) [{name2}](tg://user?id={id2})",
+    "лизнуть": "👅 [{name1}](tg://user?id={id1}) облизал(а) [{name2}](tg://user?id={id2})",
+    "потрогать": "👉 [{name1}](tg://user?id={id1}) бесстыдно потрогал(а) [{name2}](tg://user?id={id2})",
+    "раздеть": "👕 [{name1}](tg://user?id={id1}) стянул(а) одежду с [{name2}](tg://user?id={id2})",
+
+    # Бар / Взаимодействия
+    "выпить": "🍻 [{name1}](tg://user?id={id1}) чокнулся(лась) бокалами с [{name2}](tg://user?id={id2}). За здоровье!",
+    "напоить": "🥃 [{name1}](tg://user?id={id1}) угостил(а) [{name2}](tg://user?id={id2}) элитным коньяком",
+    "накормить": "🍔 [{name1}](tg://user?id={id1}) накормил(а) [{name2}](tg://user?id={id2}) шаурмой",
+    "украсть": "🥷 [{name1}](tg://user?id={id1}) украл(а) сердечко у [{name2}](tg://user?id={id2})",
+    "понюхать": "👃 [{name1}](tg://user?id={id1}) подозрительно обнюхал(а) [{name2}](tg://user?id={id2})"
+}
+
+# Ловим команды (умный поиск, чтобы работало "дать пять" и игнорировался текст после команды)
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and any(m.text.strip().lower().startswith(k) for k in RP_COMMANDS.keys()))
+def handle_rp_commands(message):
+    text_lower = message.text.strip().lower()
+    
+    # Ищем команду. Сортируем по длине (reverse=True), чтобы "дать пять" сработало раньше, чем просто "дать"
+    cmd = None
+    for k in sorted(RP_COMMANDS.keys(), key=len, reverse=True):
+        if text_lower.startswith(k):
+            cmd = k
+            break
+            
+    if not cmd: return
+    text_template = RP_COMMANDS[cmd]
+    
+    name1 = message.from_user.first_name
+    id1 = message.from_user.id
+    name2 = message.reply_to_message.from_user.first_name
+    id2 = message.reply_to_message.from_user.id
+    
+    if id1 == id2:
+        bot.reply_to(message, "🤡 Одиночество — это когда ты пытаешься сделать это с самим собой.")
+        return
+        
+    bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2), parse_mode="Markdown")
+
+# 1.5 СПРАВОЧНИК КОМАНД ДЛЯ ИГРОКОВ
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!рп', 'рп', '/rp'])
+def show_rp_list(message):
+    text = "🎭 **ДОСТУПНЫЕ RP-КОМАНДЫ СКАЙНЕТА** 🎭\n_Отправьте любое из этих слов в ответ (реплай) на сообщение другого человека:_\n\n"
+    text += "🤗 **Добрые:** `обнять`, `поцеловать`, `погладить`, `дать пять`, `пожать`, `укрыть`\n"
+    text += "🤬 **Агрессивные:** `ударить`, `пнуть`, `лещ`, `задушить`, `расстрелять`, `отравить`, `послать`\n"
+    text += "🔞 **Горячие:** `отшлепать`, `связать`, `наказать`, `лизнуть`, `потрогать`, `раздеть`\n"
+    text += "🍻 **Взаимодействие:** `выпить`, `напоить`, `накормить`, `украсть`, `понюхать`, `укусить`\n\n"
+    text += "💡 _Подсказка: Вы можете добавлять текст после команды. Например: «Обнять очень крепко!»._"
+    
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 2: КИБЕР-БРАКИ И СИНДИКАТЫ) =================
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!свадьба', '!брак')))
+def propose_marriage(message):
+    initiator_id = message.from_user.id
+    initiator_name = message.from_user.first_name
+    partner_id = message.reply_to_message.from_user.id
+    partner_name = message.reply_to_message.from_user.first_name
+    
+    if initiator_id == partner_id:
+        bot.reply_to(message, "🤡 Скайнет не регистрирует браки с самим собой. Найдите кого-нибудь живого!")
+        return
+        
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 Любовь к машинам — это похвально, но незаконно.")
+        return
+        
+    init_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    part_data = paid_collection.find_one({"uid": partner_id}) or {}
+    
+    if init_data.get("partner_id"):
+        bot.reply_to(message, "💍 Вы уже состоите в Кибер-Браке! Сначала оформите `!развод`.")
+        return
+        
+    if part_data.get("partner_id"):
+        bot.reply_to(message, f"💍 [{partner_name}](tg://user?id={partner_id}) уже состоит в браке! Отбивать чужих партнеров нельзя.", parse_mode="Markdown")
+        return
+        
+    PRICE = 500
+    if init_data.get("bounty_points", 0) < PRICE:
+        bot.reply_to(message, f"💸 Регистрация Синдиката стоит {PRICE} 💎! У вас недостаточно средств.")
+        return
+        
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("💖 Согласиться", callback_data=f"marry_yes_{initiator_id}_{partner_id}"),
+        InlineKeyboardButton("💔 Отказать", callback_data=f"marry_no_{initiator_id}_{partner_id}")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        f"💍 **ПРЕДЛОЖЕНИЕ О КИБЕР-БРАКЕ!**\n\n[{initiator_name}](tg://user?id={initiator_id}) предлагает [{partner_name}](tg://user?id={partner_id}) объединить капиталы и создать Синдикат.\n\n_Пошлина ({PRICE} 💎) будет списана с инициатора._\n\n[{partner_name}](tg://user?id={partner_id}), ваш ответ?",
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('marry_'))
+def handle_marriage_response(call):
+    parts = call.data.split('_')
+    action = parts[1]
+    initiator_id = int(parts[2])
+    partner_id = int(parts[3])
+    
+    if call.from_user.id != partner_id:
+        bot.answer_callback_query(call.id, "Эй! Предложение сделали не вам!", show_alert=True)
+        return
+        
+    PRICE = 500
+    init_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    
+    if init_data.get("partner_id") or (paid_collection.find_one({"uid": partner_id}) or {}).get("partner_id"):
+        bot.edit_message_text("❌ Предложение отменено: кто-то из вас уже успел вступить в брак!", call.message.chat.id, call.message.message_id)
+        return
+        
+    if action == 'no':
+        bot.edit_message_text(f"💔 **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={partner_id}) отверг(ла) предложение. Капиталы остаются раздельными.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        return
+        
+    if init_data.get("bounty_points", 0) < PRICE:
+        bot.edit_message_text("❌ Свадьба отменяется: у инициатора закончились деньги на оплату пошлины!", call.message.chat.id, call.message.message_id)
+        return
+        
+    # Списываем деньги и женим!
+    paid_collection.update_one({"uid": initiator_id}, {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id}})
+    paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id}})
+    
+    bot.edit_message_text(f"🎊 **НОВЫЙ СИНДИКАТ ЗАРЕГИСТРИРОВАН!** 🎊\n\nСкайнет официально объявляет вас Кибер-Партнерами!\n\n_Пошлина {PRICE} 💎 уплачена. Теперь вы одна семья!_", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!развод')
+def divorce(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    partner_id = user_data.get("partner_id")
+    
+    if not partner_id:
+        bot.reply_to(message, "🤷‍♂️ Вы не состоите в браке. Разводиться не с кем!")
+        return
+        
+    PENALTY = 1000
+    
+    # Разводим в базе
+    paid_collection.update_one({"uid": uid}, {"$unset": {"partner_id": ""}, "$inc": {"bounty_points": -PENALTY}})
+    paid_collection.update_one({"uid": partner_id}, {"$unset": {"partner_id": ""}})
+    
+    bot.reply_to(message, f"💔 **СИНДИКАТ РАСПАЛСЯ!**\n\nВы расторгли Кибер-Брак с [{partner_id}](tg://user?id={partner_id}).\n_За развод в одностороннем порядке с вас удержан штраф в размере {PENALTY} 💎._", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!брак', '!свадьба'])
+def empty_marriage(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "💍 Чтобы сделать предложение, отправьте `!свадьба` в ответ (реплай) на сообщение вашего избранника!")
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 3: ТОПЫ И АЗАРТ) =================
+
+# 1. РУССКАЯ РУЛЕТКА (Вирусный PvP-азарт)
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!рулетка', 'рулетка', '/рулетка'])
+def russian_roulette(message):
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    import random, time
+    
+    if random.randint(1, 6) == 1:
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        if user_data.get("immunity", 0) > 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+            bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "💥 **БАБАХ!**\nВы словили пулю. Скайнет отправляет вас в реанимацию на 1 час.\n_F._", parse_mode="Markdown")
+            try: bot.restrict_chat_member(message.chat.id, uid, until_date=int(time.time()) + 3600, can_send_messages=False)
+            except: pass
+    else:
+        reward = random.randint(5, 15)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}}, upsert=True)
+        bot.reply_to(message, f"😅 *Щелк...* Осечка!\n[{name}](tg://user?id={uid}) выживает и получает **+{reward} 💎**.", parse_mode="Markdown")
+
+# 2. РЕЙТИНГ АКТИВНОСТИ ЧАТА
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!топ', 'топ чата', '/top'])
+def chat_top_activity(message):
+    top_users = list(db['chat_stats'].find({"chat_id": message.chat.id}).sort("msgs", -1).limit(10))
+    if not top_users: return bot.reply_to(message, "🪹 В этом чате еще никто ничего не писал.")
+        
+    text = f"🏆 **ТОП БОЛТУНОВ ЧАТА** 🏆\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, u in enumerate(top_users):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        text += f"{medal} **{u.get('name', 'Аноним')}** — {u.get('msgs', 0)} сообщ.\n"
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# 3. ТЕКСТОВЫЙ ПРОФИЛЬ (Теперь работает и на чужие профили!)
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!профиль', 'профиль', '/profile'])
+def text_profile(message):
+    # Если это реплай - показываем профиль того, на кого ответили. Иначе свой.
+    target_user = message.reply_to_message.from_user if message.reply_to_message else message.from_user
+    uid = target_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    msgs = (db['chat_stats'].find_one({"chat_id": message.chat.id, "uid": uid}) or {}).get("msgs", 0)
+    
+    pts, rub, karma = user_data.get("bounty_points", 0), user_data.get("cashback_balance", 0), user_data.get("social_rating", 0)
+    partner_id = user_data.get("partner_id")
+    partner_text = f"В браке с ID {partner_id}" if partner_id else "Одинок(а)"
+    title = "👑 VIP-Персона" if user_data.get("is_vip") else "🔴 Гражданин Империи"
+    
+    text = (
+        f"👤 **ДОСЬЕ СКАЙНЕТА: {target_user.first_name}**\n"
+        f"🔑 **ID:** `{uid}` _(Нажмите, чтобы скопировать)_\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🎖 **Статус:** {title}\n💰 **Счет:** {pts} 💎 | {rub} ₽\n🎭 **Карма:** {karma}\n"
+        f"💬 **Написано тут:** {msgs} сообщений\n💍 **Семья:** {partner_text}\n━━━━━━━━━━━━━━━━━━\n"
+        f"🎮 _Полный инвентарь — в Web App_"
+    )
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ (С сохранением @username)
+@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
+def track_global_activity(message):
+    if message.text and message.text.startswith(('!', '/')): return
+    
+    set_fields = {"name": message.from_user.first_name}
+    if message.from_user.username:
+        # Сохраняем юзернейм в нижнем регистре для удобного поиска
+        set_fields["username"] = message.from_user.username.lower()
+        db['users'].update_one({"_id": message.from_user.id}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
+        
+    db['chat_stats'].update_one(
+        {"chat_id": message.chat.id, "uid": message.from_user.id}, 
+        {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True
+    )
+
+# 5. КИБЕР-ДУЭЛИ (PvP на ставки)
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!дуэль', 'дуэль', '/duel')))
+def challenge_duel(message):
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.reply_to(message, "⚠️ **Формат:** `!дуэль [ставка]` в ответ на сообщение противника.\n_Пример:_ `!дуэль 100`")
+        return
+        
+    bet = int(parts[1])
+    if bet < 10:
+        bot.reply_to(message, "📉 Минимальная ставка: 10 💎")
+        return
+        
+    challenger_id = message.from_user.id
+    challenger_name = message.from_user.first_name
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if challenger_id == target_id:
+        bot.reply_to(message, "🤡 Вызывать на дуэль самого себя — признак шизофрении.")
+        return
+        
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 Терминаторы не играют в кости.")
+        return
+        
+    # Проверяем баланс вызывающего
+    ch_data = paid_collection.find_one({"uid": challenger_id}) or {}
+    if ch_data.get("bounty_points", 0) < bet:
+        bot.reply_to(message, f"💸 У вас нет {bet} 💎 для такой ставки!")
+        return
+        
+    # Проверяем баланс цели (чтобы не спамили бедняков)
+    tg_data = paid_collection.find_one({"uid": target_id}) or {}
+    if tg_data.get("bounty_points", 0) < bet:
+        bot.reply_to(message, f"📉 У противника нет {bet} 💎. Ищите кого-то побогаче!")
+        return
+        
+    import time
+    duel_id = f"duel_{int(time.time())}_{challenger_id}_{target_id}"
+    
+    # Записываем дуэль в базу (ожидание)
+    db['active_duels'].insert_one({
+        "_id": duel_id,
+        "challenger_id": challenger_id,
+        "challenger_name": challenger_name,
+        "target_id": target_id,
+        "target_name": target_name,
+        "bet": bet,
+        "status": "pending"
+    })
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("⚔️ Принять вызов", callback_data=f"duel_accept_{duel_id}"),
+        InlineKeyboardButton("🏃‍♂️ Струсить", callback_data=f"duel_decline_{duel_id}")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        f"⚔️ **ДУЭЛЬ!**\n\n[{challenger_name}](tg://user?id={challenger_id}) бросает вызов [{target_name}](tg://user?id={target_id})!\n💰 **Ставка:** {bet} 💎\n\n_Победитель забирает всё (комиссия арены 5%)._",
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('duel_'))
+def handle_duel_response(call):
+    parts = call.data.split('_')
+    action = parts[1]
+    duel_id = f"{parts[0]}_{parts[2]}_{parts[3]}_{parts[4]}"
+    
+    duel = db['active_duels'].find_one({"_id": duel_id, "status": "pending"})
+    if not duel:
+        bot.answer_callback_query(call.id, "Дуэль уже завершена или отменена!", show_alert=True)
+        return
+        
+    target_id = duel['target_id']
+    challenger_id = duel['challenger_id']
+    
+    if call.from_user.id != target_id and call.from_user.id != challenger_id:
+        bot.answer_callback_query(call.id, "Это не ваша дуэль! Проходите мимо.", show_alert=True)
+        return
+        
+    if action == "decline":
+        if call.from_user.id == target_id:
+            db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "declined"}})
+            bot.edit_message_text(f"🏃‍♂️ [{duel['target_name']}](tg://user?id={target_id}) испугался(лась) и сбежал(а) с арены. Дуэль отменена.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        elif call.from_user.id == challenger_id:
+            db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "cancelled"}})
+            bot.edit_message_text(f"🏳️ [{duel['challenger_name']}](tg://user?id={challenger_id}) отозвал(а) свой вызов.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        return
+        
+    if action == "accept" and call.from_user.id != target_id:
+        bot.answer_callback_query(call.id, "Только вызванный игрок может принять дуэль!", show_alert=True)
+        return
+        
+    # === НАЧАЛО БОЯ ===
+    bet = duel['bet']
+    
+    # Финальная проверка балансов перед боем
+    ch_data = paid_collection.find_one({"uid": challenger_id}) or {}
+    tg_data = paid_collection.find_one({"uid": target_id}) or {}
+    
+    if ch_data.get("bounty_points", 0) < bet or tg_data.get("bounty_points", 0) < bet:
+        db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "error"}})
+        bot.edit_message_text("❌ У кого-то из участников не хватает очков для ставки! Дуэль аннулирована.", call.message.chat.id, call.message.message_id)
+        return
+        
+    # Бросаем кубики
+    import random
+    ch_roll = random.randint(1, 100)
+    tg_roll = random.randint(1, 100)
+    
+    # Если ничья - перебрасываем, чтобы был явный победитель
+    while ch_roll == tg_roll:
+        tg_roll = random.randint(1, 100)
+        
+    # Определяем победителя
+    if ch_roll > tg_roll:
+        winner_id, loser_id = challenger_id, target_id
+        winner_name, loser_name = duel['challenger_name'], duel['target_name']
+        win_roll, lose_roll = ch_roll, tg_roll
+    else:
+        winner_id, loser_id = target_id, challenger_id
+        winner_name, loser_name = duel['target_name'], duel['challenger_name']
+        win_roll, lose_roll = tg_roll, ch_roll
+        
+    # Расчет банка (комиссия 5% сгорает из экономики или уходит в синий сейф)
+    commission = int((bet * 2) * 0.05)
+    if commission < 1: commission = 1
+    prize = (bet * 2) - commission
+    
+    # Транзакции
+    paid_collection.update_one({"uid": loser_id}, {"$inc": {"bounty_points": -bet}})
+    paid_collection.update_one({"uid": winner_id}, {"$inc": {"bounty_points": (prize - bet)}}) # -bet потому что свою ставку он как бы возвращает
+    
+    # Комиссию кидаем в Синий Сейф, чтобы он рос быстрее!
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": commission}})
+    db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "completed"}})
+    
+    result_text = (
+        f"⚔️ **ДУЭЛЬ ЗАВЕРШЕНА!** ⚔️\n\n"
+        f"🎲 [{duel['challenger_name']}](tg://user?id={challenger_id}) выбросил(а): **{ch_roll}**\n"
+        f"🎲 [{duel['target_name']}](tg://user?id={target_id}) выбросил(а): **{tg_roll}**\n\n"
+        f"🏆 **ПОБЕДИТЕЛЬ:** [{winner_name}](tg://user?id={winner_id})!\n"
+        f"💰 Забрал(а) куш: **{prize} 💎** _(Комиссия: {commission} 💎)_"
+    )
+    
+    bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+
+
+# 2. Пользовательские Аирдропы (Замена Мешкам Ириса)
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!раздача', '/раздача', 'раздача')))
+def handle_user_airdrop(message):
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "⚠️ **Формат:** `!раздача [сумма] [кол-во людей]`\n_Пример:_ `!раздача 1000 5` (1000 очков разделят 5 человек)", parse_mode="Markdown")
+        return
+        
+    try:
+        total_amount = int(parts[1])
+        max_users = int(parts[2])
+    except ValueError:
+        bot.reply_to(message, "⚠️️ Сумма и количество должны быть числами!")
+        return
+        
+    if total_amount < 50 or max_users < 2 or max_users > 50:
+        bot.reply_to(message, "⚠️ Минимум 50 💎, от 2 до 50 человек!")
+        return
+        
+    uid = message.from_user.id
+    user_name = message.from_user.first_name
+    
+    # Списываем очки со счета создателя мешка
+    updated = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": total_amount}},
+        {"$inc": {"bounty_points": -total_amount}}
+    )
+    
+    if not updated:
+        bot.reply_to(message, "❌ У вас недостаточно Очков Бдительности для такой раздачи! Проверьте баланс в Кабинете.")
+        return
+        
+    import time
+    piece = total_amount // max_users
+    drop_id = f"userdrop_{int(time.time())}_{uid}"
+    
+    db['active_airdrops'].insert_one({
+        "_id": drop_id,
+        "sponsor_id": uid,
+        "sponsor_name": user_name,
+        "total": total_amount,
+        "piece": piece,
+        "max_users": max_users,
+        "claimed_by": []
+    })
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"🎁 Забрать {piece} 💎", callback_data=f"claim_udrop_{drop_id}"))
+    
+    bot.send_message(
+        message.chat.id, 
+        f"👑 **КИТ В ЧАТЕ!**\n\n[{user_name}](tg://user?id={uid}) скинул мешок с Очками!\n💰 **Фонд:** {total_amount} 💎\n👥 **Хватит на:** {max_users} чел.\n\n_Жми кнопку, пока не разобрали!_", 
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('claim_udrop_'))
+def handle_claim_userdrop(call):
+    drop_id = call.data.replace('claim_udrop_', '')
+    uid = call.from_user.id
+    
+    # Блокируем доступ для Ириса и других ботов
+    if call.from_user.is_bot: return
+    
+    drop = db['active_airdrops'].find_one({"_id": drop_id})
+    if not drop:
+        bot.answer_callback_query(call.id, "Мешок уже пуст или исчез!", show_alert=True)
+        return
+        
+    if uid in drop['claimed_by']:
+        bot.answer_callback_query(call.id, "Вы уже взяли свою долю из этого мешка!", show_alert=True)
+        return
+        
+    if len(drop['claimed_by']) >= drop['max_users']:
+        bot.answer_callback_query(call.id, "Слишком поздно! Мешок уже расхватали.", show_alert=True)
+        return
+        
+    # Выдаем награду нажавшему
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": drop['piece']}}, upsert=True)
+    
+    # Обновляем базу мешка
+    db['active_airdrops'].update_one(
+        {"_id": drop_id},
+        {"$push": {"claimed_by": uid}}
+    )
+    
+    bot.answer_callback_query(call.id, f"✅ Вы урвали {drop['piece']} 💎!", show_alert=True)
+    
+    # Если мешок опустел - меняем сообщение в чате
+    if len(drop['claimed_by']) + 1 >= drop['max_users']:
+        bot.edit_message_text(
+            f"🎒 **МЕШОК ПУСТ!**\n\n[{drop['sponsor_name']}](tg://user?id={drop['sponsor_id']}) раздал {drop['total']} 💎!\nВсе {drop['max_users']} долей успешно разобраны.",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown"
+        )
+        db['active_airdrops'].delete_one({"_id": drop_id})
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 4: СЕМЬИ И КЛАНЫ) =================
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!усыновить', '!удочерить')))
+def adopt_child(message):
+    parent_id = message.from_user.id
+    parent_name = message.from_user.first_name
+    child_id = message.reply_to_message.from_user.id
+    child_name = message.reply_to_message.from_user.first_name
+    
+    if parent_id == child_id: return bot.reply_to(message, "🤡 Вы не бактерия, чтобы размножаться делением.")
+    if message.reply_to_message.from_user.is_bot: return bot.reply_to(message, "🤖 Терминаторы не подлежат усыновлению.")
+        
+    child_data = paid_collection.find_one({"uid": child_id}) or {}
+    if child_data.get("parent_id"):
+        return bot.reply_to(message, f"👶 [{child_name}](tg://user?id={child_id}) уже находится под опекой другого человека!", parse_mode="Markdown")
+        
+    parent_data = paid_collection.find_one({"uid": parent_id}) or {}
+    children = parent_data.get("children", [])
+    if len(children) >= 3:
+        return bot.reply_to(message, "🚫 Лимит: максимум 3 ребенка на одного опекуна! Частный детдом закрыт.")
+        
+    PRICE = 1000
+    if parent_data.get("bounty_points", 0) < PRICE:
+        return bot.reply_to(message, f"💸 Оформление документов стоит {PRICE} 💎! У вас нет денег на содержание ребенка.")
+        
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🍼 Войти в семью", callback_data=f"adopt_yes_{parent_id}_{child_id}"),
+        InlineKeyboardButton("🏃‍♂️ Убежать", callback_data=f"adopt_no_{parent_id}_{child_id}")
+    )
+    bot.send_message(message.chat.id, f"🍼 **ПРОЦЕДУРА УСЫНОВЛЕНИЯ!**\n\n[{parent_name}](tg://user?id={parent_id}) хочет официально усыновить [{child_name}](tg://user?id={child_id}).\n\n_Пошлина ({PRICE} 💎) будет списана с опекуна._\n\n[{child_name}](tg://user?id={child_id}), вы согласны?", parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adopt_'))
+def handle_adopt_response(call):
+    parts = call.data.split('_')
+    action, parent_id, child_id = parts[1], int(parts[2]), int(parts[3])
+    
+    if call.from_user.id != child_id:
+        return bot.answer_callback_query(call.id, "Вас не пытаются усыновить! Отойдите.", show_alert=True)
+        
+    if action == 'no':
+        return bot.edit_message_text(f"🏃‍♂️ **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={child_id}) сбежал(а) из детдома. Усыновление отменено.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        
+    PRICE = 1000
+    parent_data = paid_collection.find_one({"uid": parent_id}) or {}
+    if parent_data.get("bounty_points", 0) < PRICE:
+        return bot.edit_message_text("❌ У опекуна кончились деньги! Усыновление отменено.", call.message.chat.id, call.message.message_id)
+        
+    # Проверяем, не усыновили ли ребенка пока он думал
+    if (paid_collection.find_one({"uid": child_id}) or {}).get("parent_id"):
+        return bot.edit_message_text("❌ Ребенка уже забрала другая семья!", call.message.chat.id, call.message.message_id)
+        
+    # Жесткая запись в базу: списываем деньги, ставим parent_id ребенку, добавляем child_id в массив родителя
+    paid_collection.update_one({"uid": parent_id}, {"$inc": {"bounty_points": -PRICE}, "$push": {"children": child_id}})
+    paid_collection.update_one({"uid": child_id}, {"$set": {"parent_id": parent_id}})
+    
+    bot.edit_message_text(f"🎊 **НОВАЯ КИБЕР-СЕМЬЯ!** 🎊\n\nСкайнет официально поздравляет!\n[{call.from_user.first_name}](tg://user?id={child_id}) теперь является наследником.\n\n_Напишите `!семья`, чтобы посмотреть ваше древо._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!семья', 'моя семья', '/family'])
+def my_family_tree(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    partner_id = user_data.get("partner_id")
+    parent_id = user_data.get("parent_id")
+    children = user_data.get("children", [])
+    
+    if not partner_id and not parent_id and not children:
+        return bot.reply_to(message, "🕸 Вы сирота и одиночка. Ни мужа/жены, ни родителей, ни детей.\n\n_Напишите `!свадьба` в ответ кому-нибудь или `!усыновить`._", parse_mode="Markdown")
+        
+    text = f"🌳 **ГЕНЕАЛОГИЧЕСКОЕ ДРЕВО** 🌳\n\n👤 **Вы:** [{message.from_user.first_name}](tg://user?id={uid})\n"
+    
+    if parent_id:
+        p_name = (db['chat_stats'].find_one({"uid": parent_id}) or {}).get("name", "Опекун")
+        text += f"👑 **Родитель:** [{p_name}](tg://user?id={parent_id})\n"
+        
+    if partner_id:
+        part_name = (db['chat_stats'].find_one({"uid": partner_id}) or {}).get("name", "Супруг(а)")
+        text += f"💍 **В браке с:** [{part_name}](tg://user?id={partner_id})\n"
+        
+    if children:
+        text += f"👶 **Наследники ({len(children)}/3):**\n"
+        for child_id in children:
+            c_name = (db['chat_stats'].find_one({"uid": child_id}) or {}).get("name", "Ребенок")
+            text += f" ├─ [{c_name}](tg://user?id={child_id})\n"
+            
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# ================= НАРОДНЫЙ СУД (СБОР НА КИЛЛЕРА) =================
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!суд', 'суд')))
+def public_court(message):
+    initiator_id = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if initiator_id == target_id:
+        return bot.reply_to(message, "🤡 Вызывать полицию на самого себя? Оригинально.")
+    if message.reply_to_message.from_user.is_bot:
+        return bot.reply_to(message, "🤖 Скайнет не подсуден человеческим законам.")
+        
+    user_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    if user_data.get("bounty_points", 0) < 100:
+        return bot.reply_to(message, "💸 У вас нет стартовых 100 💎 для открытия дела!")
+        
+    # Списываем 100 💎 у инициатора
+    paid_collection.update_one({"uid": initiator_id}, {"$inc": {"bounty_points": -100}})
+    
+    import time
+    court_id = f"court_{int(time.time())}_{target_id}"
+    GOAL = 1000
+    
+    db['active_courts'].insert_one({
+        "_id": court_id,
+        "target_id": target_id,
+        "target_name": target_name,
+        "collected": 100,
+        "goal": GOAL,
+        "investors": [initiator_id]
+    })
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"⚖️ Докинуть 100 💎 (Собрано: 100/{GOAL})", callback_data=f"court_fund_{court_id}"))
+    
+    bot.send_message(
+        message.chat.id, 
+        f"🚨 **НАРОДНЫЙ СУД ОТКРЫТ!** 🚨\n\n[{message.from_user.first_name}](tg://user?id={initiator_id}) требует забанить [{target_name}](tg://user?id={target_id}) на 1 час!\n\n💰 Цель сбора: **{GOAL} 💎** для подкупа Скайнета.\n_Жмите кнопку, чтобы пожертвовать 100 очков на правосудие._", 
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('court_fund_'))
+def handle_court_funding(call):
+    court_id = call.data.replace('court_fund_', '')
+    uid = call.from_user.id
+    
+    court = db['active_courts'].find_one({"_id": court_id})
+    if not court:
+        return bot.answer_callback_query(call.id, "Дело уже закрыто!", show_alert=True)
+        
+    if uid == court['target_id']:
+        return bot.answer_callback_query(call.id, "Подсудимый не имеет права финансировать свой арест!", show_alert=True)
+        
+    if uid in court['investors']:
+        return bot.answer_callback_query(call.id, "Вы уже внесли свою долю! Ждите других.", show_alert=True)
+        
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("bounty_points", 0) < 100:
+        return bot.answer_callback_query(call.id, "Не хватает 100 💎 на балансе!", show_alert=True)
+        
+    # Списываем бабки и плюсуем в котел
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -100}})
+    new_collected = court['collected'] + 100
+    db['active_courts'].update_one({"_id": court_id}, {"$set": {"collected": new_collected}, "$push": {"investors": uid}})
+    
+    if new_collected >= court['goal']:
+        # ПРИГОВОР ИСПОЛНЕН! Выдаем мут на 1 час
+        db['active_courts'].delete_one({"_id": court_id})
+        
+        # Сжигаем собранную сумму в экономике (или кидаем в синий сейф)
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": new_collected}})
+        
+        bot.edit_message_text(f"⚖️ **СУД ВЕРШИЛСЯ!**\n\nНеобходимая сумма в **{court['goal']} 💎** собрана!\n[{court['target_name']}](tg://user?id={court['target_id']}) признан виновным народным голосованием и отправляется за решетку на 1 час.\n\n_Правосудие восторжествовало. Деньги переведены в Сейф Скайнета._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        
+        import time
+        try: bot.restrict_chat_member(call.message.chat.id, court['target_id'], until_date=int(time.time()) + 3600, can_send_messages=False)
+        except: pass
+    else:
+        # Обновляем кнопку
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"⚖️ Докинуть 100 💎 (Собрано: {new_collected}/{court['goal']})", callback_data=f"court_fund_{court_id}"))
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.answer_callback_query(call.id, "Ваши 100 💎 приняты в фонд правосудия!", show_alert=True)
+
+# 6. ГЛАВНОЕ МЕНЮ КОМАНД СКАЙНЕТА
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!команды', '/help', 'помощь', 'команды', '!help'])
+def help_commands(message):
+    text = (
+        "🤖 **БАЗА ДАННЫХ СКАЙНЕТА (КОМАНДЫ)** 🤖\n\n"
+        "💍 **КИБЕР-СЕМЬЯ:**\n"
+        "• `!свадьба` *(в ответ)* — сделать предложение\n"
+        "• `!развод` — расторгнуть брак (штраф 1000 💎)\n"
+        "• `!усыновить` *(в ответ)* — взять ребенка в семью\n"
+        "• `!семья` — посмотреть генеалогическое древо\n\n"
+        "🎲 **АЗАРТ И ЭКОНОМИКА:**\n"
+        "• `!дуэль [ставка]` *(в ответ)* — битва на Очки\n"
+        "• `!раздача [сумма] [кол-во]` — скинуть мешок с 💎 в чат\n"
+        "• `!рулетка` — выжить или словить мут (награда 5-15 💎)\n\n"
+        "⚖️ **ПРАВОСУДИЕ:**\n"
+        "• `!суд` *(в ответ)* — начать сбор на арест (мут) юзера\n"
+        "• `+` или `-` *(в ответ)* — повысить/понизить Карму\n\n"
+        "👤 **ПРОФИЛЬ И ОБЩЕНИЕ:**\n"
+        "• `!профиль` *(можно в ответ)* — досье и балансы\n"
+        "• `!топ` — топ болтунов текущего чата\n"
+        "• `!рп` — список интерактивных ролплей-действий\n\n"
+        "🎮 **ИГРОВОЙ КАБИНЕТ:**\n"
+        "Напишите `/start` в личку боту, чтобы открыть Web App (Ферму, Рынок, Сейфы и Сундуки)!"
+    )
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🎮 Открыть Кабинет", url=f"https://t.me/{bot.get_me().username}?start=app_profile")
+    )
+    
+    bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+
+# ================= СОЦИАЛЬНЫЙ КРЕДИТ И КАРМА =================
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.strip().lower() in ['+', '-', '👍', '👎', 'лайк', 'дизлайк'])
+def handle_karma_vote(message):
+    vote = message.text.strip().lower()
+    voter_id = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if voter_id == target_id:
+        return bot.reply_to(message, "🚫 Скайнет запрещает накручивать рейтинг самому себе!")
+    if message.reply_to_message.from_user.is_bot:
+        return bot.reply_to(message, "🤖 У программного кода нет социальных прав!")
+        
+    import time
+    now = time.time()
+    vote_key = f"karma_{voter_id}_{target_id}"
+    last_vote = db['settings'].find_one({"_id": vote_key})
+    
+    # Антиспам (1 голос за конкретного человека раз в час)
+    if last_vote and (now - last_vote.get('time', 0) < 3600):
+        left_mins = int((3600 - (now - last_vote['time'])) / 60)
+        return bot.reply_to(message, f"⏳ Вы уже оценивали этого гражданина! Система примет ваш следующий голос через {left_mins} мин.")
+        
+    db['settings'].update_one({"_id": vote_key}, {"$set": {"time": now}}, upsert=True)
+    
+    if vote in ['+', '👍', 'лайк']:
+        paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": 1}}, upsert=True)
+        new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
+        bot.reply_to(message, f"📈 **Социальный Кредит повышен!**\nГражданин [{target_name}](tg://user?id={target_id}) получает +1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
+    else:
+        paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": -1}}, upsert=True)
+        new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
+        bot.reply_to(message, f"📉 **Внимание, нарушение!**\nГражданин [{target_name}](tg://user?id={target_id}) получает -1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
+
+# ==============================================================================
             
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():

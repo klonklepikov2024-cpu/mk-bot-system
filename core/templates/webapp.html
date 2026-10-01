@@ -35,7 +35,10 @@
         <div class="flex items-center space-x-3 mb-6">
             <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden">👤</div>
             <div>
-                <h1 class="font-bold text-lg leading-tight" id="userName">Скайнет</h1>
+                <div class="flex items-center">
+                    <h1 class="font-bold text-lg leading-tight" id="userName">Скайнет</h1>
+                    <span id="karmaBadge" class="ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm">Карма: 0</span>
+                </div>
                 <p class="text-xs text-gray-400" id="userId">ID: ...</p>
             </div>
         </div>
@@ -51,6 +54,24 @@
                     <p class="text-2xl font-black"><span id="ptsBalance">0</span><span class="text-sm text-gray-400 ml-1">💎</span></p>
                 </div>
             </div>
+        </div>
+
+        <!-- 🔥 БЛОК СИНДИКАТА (СЕМЬИ) 🔥 -->
+        <div id="familyBlock" class="hidden surface rounded-2xl p-4 mb-6 shadow-lg border border-pink-500/30 relative overflow-hidden">
+            <div class="absolute -right-4 -top-4 text-6xl opacity-10">💍</div>
+            <h3 class="font-bold text-lg mb-2 text-pink-400 flex items-center gap-2 relative z-10">💍 Ваш Синдикат</h3>
+            
+            <div class="flex justify-between items-center mb-2 relative z-10 bg-black/20 p-2 rounded-lg border border-gray-700/50">
+                <span class="text-xs text-gray-400">Партнер:</span>
+                <span class="font-bold text-white text-sm" id="uiPartnerName">...</span>
+            </div>
+            
+            <div class="flex justify-between items-center relative z-10 bg-black/20 p-2 rounded-lg border border-gray-700/50">
+                <span class="text-xs text-gray-400">Наследники:</span>
+                <span class="font-bold text-white"><span id="uiKidsCount" class="text-pink-400">0</span>/3</span>
+            </div>
+            
+            <p class="text-[9px] text-gray-500 mt-2 text-center leading-tight">Ваши грядки на ферме теперь общие!<br>Счет "Семейной Копилки" в разработке...</p>
         </div>
 
         <div class="surface rounded-2xl p-4 mb-4 text-center">
@@ -789,6 +810,25 @@
             apiCall('/api/profile').then(data => {
                 document.getElementById('ptsBalance').innerText = data.points || 0;
                 document.getElementById('rubBalance').innerText = data.rubles || 0;
+                
+                // --- ДИНАМИЧЕСКАЯ КАРМА СКАЙНЕТА ---
+                if (data.karma !== undefined) {
+                    const karmaEl = document.getElementById('karmaBadge');
+                    karmaEl.innerText = `Карма: ${data.karma}`;
+                    if(data.karma > 0) karmaEl.className = "ml-2 bg-green-900/50 text-green-400 text-[10px] px-2 py-0.5 rounded border border-green-700/50 font-bold shadow-sm";
+                    else if(data.karma < 0) karmaEl.className = "ml-2 bg-red-900/50 text-red-400 text-[10px] px-2 py-0.5 rounded border border-red-700/50 font-bold shadow-sm";
+                    else karmaEl.className = "ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm";
+                }
+                
+                // --- ОТОБРАЖЕНИЕ СЕМЬИ ---
+                const famBlock = document.getElementById('familyBlock');
+                if (data.partner || data.kids > 0) {
+                    famBlock.classList.remove('hidden');
+                    document.getElementById('uiPartnerName').innerText = data.partner || "Одинок(а)";
+                    document.getElementById('uiKidsCount').innerText = data.kids || "0";
+                } else {
+                    famBlock.classList.add('hidden'); // Прячем, если семьи нет
+                }
             });
         }
 
@@ -1244,16 +1284,21 @@
             input.value = ''; modal.classList.remove('hidden');
             
             if(type === 'angel') { 
-                title.innerText = "👼 Призвать Ангела"; desc.innerText = "Введите ID пользователя, которого хотите разбанить за счет вашего щита:"; input.placeholder = "Например: 123456789"; submitBtn.onclick = () => submitModalAction('angel', input.value); 
+                title.innerText = "👼 Призвать Ангела"; 
+                desc.innerText = "Введите @username или ID пользователя, которого хотите разбанить за счет вашего щита:"; 
+                input.placeholder = "Например: @spammer или 123456"; 
+                submitBtn.onclick = () => submitModalAction('angel', input.value); 
             } 
             else if(type === 'arrest') { 
-                title.innerText = "🚓 Выписать Ордер"; desc.innerText = "Укажите @username (или ID) нарушителя и кратко опишите причину:"; input.placeholder = "Например: @spammer реклама казино"; submitBtn.onclick = () => submitModalAction('arrest', input.value); 
+                title.innerText = "🚓 Выписать Ордер"; 
+                desc.innerText = "Укажите @username (или ID) нарушителя и кратко опишите причину:"; 
+                input.placeholder = "Например: @spammer реклама казино"; 
+                submitBtn.onclick = () => submitModalAction('arrest', input.value); 
             }
-            // 👇 ДОБАВЛЯЕМ ВЗЛОМ 👇
             else if(type === 'hack') {
                 title.innerText = "💻 Кибер-Атака"; 
-                desc.innerText = "Укажите ID жертвы. Цена: 200 💎. Шанс: 30%.\n⚠️ ВНИМАНИЕ: Если у жертвы есть Щит, он сожжет ваш вирус!"; 
-                input.placeholder = "ID жертвы"; 
+                desc.innerText = "Укажите @username или ID жертвы. Цена: 200 💎. Шанс: 30%.\n⚠️ ВНИМАНИЕ: Если у жертвы есть Щит, он сожжет ваш вирус!"; 
+                input.placeholder = "@username или ID"; 
                 submitBtn.onclick = () => submitModalAction('hack', input.value);
             }
         }
