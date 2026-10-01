@@ -36,10 +36,12 @@
             <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden">👤</div>
             <div>
                 <div class="flex items-center">
-                    <h1 class="font-bold text-lg leading-tight" id="userName">Скайнет</h1>
+                    <h1 class="font-bold text-lg leading-tight transition-colors duration-500" id="userName">Скайнет</h1>
                     <span id="karmaBadge" class="ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm">Карма: 0</span>
                 </div>
                 <p class="text-xs text-gray-400" id="userId">ID: ...</p>
+                <!-- Контейнер для медалей -->
+                <div id="medalsContainer" class="flex flex-wrap gap-1 mt-1.5 min-h-[28px]"></div>
             </div>
         </div>
 
@@ -127,6 +129,19 @@
         </div>
 
         <div id="market-container" class="space-y-4"></div>
+    </div>
+
+    <!-- ================= ВКЛАДКА 3.5: АУКЦИОН ================= -->
+    <div id="tab-auction" class="tab-content">
+        <div class="flex justify-between items-center mb-2">
+            <h2 class="font-black text-2xl tracking-widest uppercase text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-red-500 drop-shadow-lg">Теневой Аукцион</h2>
+            <button onclick="loadAuction()" class="bg-gray-800 px-3 py-1 rounded-lg text-sm active:scale-90 transition-transform border border-purple-500/50">🔄</button>
+        </div>
+        <p class="text-[10px] text-gray-400 mb-4 uppercase tracking-widest">Уникальные артефакты. Ставки в Очках.</p>
+
+        <div id="auction-container" class="space-y-4 pb-4">
+            <!-- Лоты будут загружаться сюда -->
+        </div>
     </div>
 
     <!-- ================= ВКЛАДКА 4: ИНВЕНТАРЬ ================= -->
@@ -699,6 +714,9 @@
         <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">⚖️</span><span class="text-[8px] font-bold">Рынок</span>
         </button>
+        <button onclick="switchTab('auction', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
+            <span class="text-2xl mb-1">🕷</span><span class="text-[8px] font-bold">Аукцион</span>
+        </button>
         <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">🎒</span><span class="text-[8px] font-bold">Рюкзак</span>
         </button>
@@ -801,7 +819,8 @@
             if(tabId === 'giveaways') loadGiveaways();
             if(tabId === 'market') loadMarket(); 
             if(tabId === 'inventory') loadInventory();
-            if(tabId === 'tasks') loadTasks(); 
+            if(tabId === 'tasks') loadTasks();
+            if(tabId === 'auction') loadAuction(); 
             if(tabId === 'finance') { loadProfile(); loadCpa(); }
             if(tabId === 'farm') { safeHaptic('impact', 'medium'); loadFarm(); loadSafes(); }
         }
@@ -828,6 +847,26 @@
                     document.getElementById('uiKidsCount').innerText = data.kids || "0";
                 } else {
                     famBlock.classList.add('hidden'); // Прячем, если семьи нет
+                }
+                // --- ЗОЛОТАЯ РАМКА ---
+                const profileTab = document.getElementById('tab-profile');
+                const userNameEl = document.getElementById('userName');
+                if (data.golden_frame) {
+                    profileTab.classList.add('bg-gradient-to-b', 'from-yellow-900/40', 'to-transparent', 'border', 'border-yellow-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(234,179,8,0.15)]', 'p-4', '-m-4', 'mb-4');
+                    userNameEl.classList.add('text-yellow-400', 'drop-shadow-[0_0_8px_rgba(234,179,8,0.8)]');
+                }
+
+                // --- ЗАЛ СЛАВЫ (АЧИВКИ) ---
+                const achMap = { "schizo": "🤡", "black_streak": "🎰", "gladiator": "⚔️", "santa": "🎅", "safecracker": "🏦", "patriarch": "👨‍👩‍👧‍👦", "drought": "💩", "rat": "🔪", "cuckold": "🦌", "bankrupt": "📉" };
+                const medalsBox = document.getElementById('medalsContainer');
+                if (data.achievements && data.achievements.length > 0) {
+                    let mHtml = '';
+                    data.achievements.forEach(a => {
+                        if (achMap[a]) mHtml += `<span class="bg-black/50 text-lg w-7 h-7 flex items-center justify-center rounded border border-gray-700 shadow-inner">${achMap[a]}</span>`;
+                    });
+                    medalsBox.innerHTML = mHtml;
+                } else {
+                    medalsBox.innerHTML = '<span class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Нет наград</span>';
                 }
             });
         }
@@ -1950,6 +1989,76 @@
             apiCall('/api/admin/stats', { type: type }).then(data => {
                 if (data.error) box.innerText = "❌ Ошибка: " + data.error;
                 else box.innerText = data.text;
+            });
+        }
+
+        // ================= ТЕНЕВОЙ АУКЦИОН =================
+        function loadAuction() {
+            const container = document.getElementById('auction-container');
+            container.innerHTML = '<p class="text-gray-500 text-sm text-center py-10 animate-pulse">🕷 Подключение к теневой сети...</p>';
+            
+            apiCall('/api/get_auction').then(data => {
+                if (data.error || data.length === 0) {
+                    container.innerHTML = `<div class="bg-black/30 rounded-2xl p-6 text-center text-gray-500 border border-gray-800"><div class="text-4xl mb-2 opacity-50">🕸</div>Торги закрыты. Ожидайте новых поставок.</div>`;
+                    return;
+                }
+                
+                let html = '';
+                data.forEach(lot => {
+                    let minBid = lot.current_bid + 100;
+                    let isLeading = (lot.leader_name !== "Нет ставок");
+                    let leaderHtml = isLeading ? `<span class="text-purple-400 font-bold">${lot.leader_name}</span>` : `<span class="text-gray-500">Нет ставок</span>`;
+                    
+                    let timeColor = lot.time_left.includes("м") ? "text-red-400 animate-pulse" : "text-gray-300";
+
+                    html += `
+                    <div class="surface rounded-2xl p-4 shadow-[0_0_15px_rgba(168,85,247,0.1)] border border-purple-900/50 relative overflow-hidden">
+                        <div class="absolute top-0 right-0 bg-purple-900/80 text-white text-[9px] font-black px-3 py-1 rounded-bl-lg tracking-widest border-b border-l border-purple-500/50 shadow-md">ОСТАЛОСЬ: <span class="${timeColor}">${lot.time_left}</span></div>
+                        
+                        <div class="flex space-x-3 mb-3 mt-1">
+                            <div class="text-5xl drop-shadow-lg filter bg-black/40 rounded-xl w-16 h-16 flex items-center justify-center border border-gray-700 shrink-0">${lot.icon}</div>
+                            <div>
+                                <h3 class="font-bold text-lg text-purple-300 leading-tight mb-1">${lot.name}</h3>
+                                <p class="text-[10px] text-gray-400 leading-snug">${lot.desc}</p>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-black/40 rounded-xl p-3 border border-gray-800 mb-3 flex justify-between items-center">
+                            <div>
+                                <p class="text-[8px] text-gray-500 uppercase tracking-widest font-bold mb-0.5">Лидер торгов</p>
+                                <p class="text-sm truncate max-w-[120px]">${leaderHtml}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-[8px] text-gray-500 uppercase tracking-widest font-bold mb-0.5">Текущая ставка</p>
+                                <p class="text-lg font-black text-white">${lot.current_bid} <span class="text-[10px] text-blue-400">💎</span></p>
+                            </div>
+                        </div>
+                        
+                        <button onclick="placeBid('${lot.id}', ${minBid}, '${lot.name}')" class="w-full bg-gradient-to-r from-purple-700 to-red-800 py-3 rounded-xl font-black text-white shadow-md active:scale-95 transition-transform border border-purple-500/50 flex justify-between px-4">
+                            <span>Перебить ставку</span>
+                            <span>${minBid} 💎</span>
+                        </button>
+                    </div>`;
+                });
+                container.innerHTML = html;
+            });
+        }
+
+        function placeBid(lotId, minBid, lotName) {
+            customConfirm(`Сделать ставку ${minBid} 💎 на «${lotName}»?\n\nОчки будут заморожены. Если вас перебьют, они вернутся на баланс.`, function(c) {
+                if(c) {
+                    safeHaptic('impact', 'medium');
+                    apiCall('/api/place_bid', {lot_id: lotId, bid: minBid}).then(data => {
+                        if(data.error) { 
+                            customAlert(data.error, "Торги", "⚠️"); 
+                        } else { 
+                            safeHaptic('notify', 'success');
+                            customAlert(data.msg, "Ставка принята!", "🔨"); 
+                        }
+                        loadAuction(); 
+                        loadProfile();
+                    });
+                }
             });
         }
 

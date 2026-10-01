@@ -131,8 +131,10 @@ def get_profile():
         "points": user_db.get("bounty_points", 0),
         "rubles": user_db.get("cashback_balance", 0),
         "karma": user_db.get("social_rating", 0),
-        "partner": partner_name,       # Передаем имя супруга
-        "kids": children_count         # Передаем количество детей
+        "partner": partner_name,
+        "kids": children_count,
+        "golden_frame": user_db.get("golden_frame", False),
+        "achievements": user_db.get("achievements", [])
     })
 
 @app.route('/api/buy_ticket', methods=['POST'])
@@ -327,6 +329,10 @@ def api_buy_market():
     from bson.objectid import ObjectId
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
+    import time
+    if user_db.get("bankrupt_until", 0) > time.time():
+        return jsonify({"error": "📉 Ваш статус «Банкрот» блокирует доступ к Черному Рынку! Ограничение длится 24 часа."}), 400
+        
     lot = db['market_orders'].find_one({"_id": ObjectId(lot_id), "status": "active"})
     
     if not lot: return jsonify({"error": "Упс! Лот уже продан или снят с продажи!"}), 400
@@ -395,6 +401,11 @@ def api_buy_market():
     has_rhodo = db['farm_plots'].find_one({"uid": lot['seller_uid'], "seed_type": "rhododendron", "status": "ready"})
     multiplier = 0.95 if has_rhodo else 0.90
     
+    # ОФШОР: Проверяем, есть ли активный офшор
+    seller_data = paid_collection.find_one({"uid": lot['seller_uid']}) or {}
+    if seller_data.get("offshore_until", 0) > time.time(): 
+        multiplier = 1.0 # 0% комиссии
+    
     # 🔥 ПАТЧ РЫНКА: Разделение валют 🔥
     if currency == "rub":
         seller_profit = int(gross_payout * multiplier)
@@ -442,6 +453,7 @@ def api_spin_roulette():
         {"uid": uid, "bounty_points": {"$gte": SPIN_PRICE}},
         {"$inc": {"bounty_points": -SPIN_PRICE}}
     )
+    pay_casino_owner(5)
 
     # 🔥 ТРЕКЕР ДЛЯ ЗОЛОТОГО КЕЙСА 🔥
     import datetime
@@ -453,6 +465,12 @@ def api_spin_roulette():
 
     import random
     val = random.randint(1, 64)
+    
+    # БАФФ САНТЫ (Используем updated_user вместо user_data)
+    if "santa" in updated_user.get("achievements", []):
+        if val != 64 and random.randint(1, 100) <= 5:
+            val = 64
+            
     prize_msg = ""
     prize_id = ""
     prize_name = ""
@@ -1233,6 +1251,11 @@ def api_add_market_lot():
     promo_id = data.get('promo_id')
     price = int(data.get('price', 0))
     
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    import time
+    if user_db.get("bankrupt_until", 0) > time.time():
+        return jsonify({"error": "📉 Ваш статус «Банкрот» блокирует доступ к Черному Рынку! Ограничение длится 24 часа."}), 400
+        
     promo = db['promocodes'].find_one({"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0})
     if not promo: 
         return jsonify({"error": "Артефакт не найден или уже продан!"}), 400
@@ -1274,6 +1297,95 @@ def api_add_market_lot():
     })
     
     return jsonify({"success": True, "msg": f"Лот успешно выставлен за {price}₽!"})
+
+@app.route('/api/get_auction', methods=['POST'])
+def api_get_auction():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    # Тянем активные лоты теневого аукциона
+    lots = list(db['auction_lots'].find({"status": "active"}).sort("end_time", 1))
+    
+    import time
+    now = int(time.time())
+    result = []
+    for lot in lots:
+        time_left = lot['end_time'] - now
+        if time_left < 0: time_left = 0
+        
+        hrs = time_left // 3600
+        mins = (time_left % 3600) // 60
+        time_str = f"{hrs}ч {mins}м" if time_left > 0 else "Завершается..."
+        
+        result.append({
+            "id": str(lot["_id"]),
+            "name": lot["name"],
+            "desc": lot["desc"],
+            "icon": lot["icon"],
+            "current_bid": lot["current_bid"],
+            "leader_name": lot.get("leader_name", "Нет ставок"),
+            "time_left": time_str
+        })
+    return jsonify(result)
+
+@app.route('/api/place_bid', methods=['POST'])
+def api_place_bid():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    lot_id = data.get('lot_id')
+    bid_amount = int(data.get('bid', 0))
+    
+    from bson.objectid import ObjectId
+    import time
+    
+    lot = db['auction_lots'].find_one({"_id": ObjectId(lot_id), "status": "active"})
+    if not lot: return jsonify({"error": "Лот уже продан или не существует!"}), 400
+    
+    if lot['end_time'] <= int(time.time()):
+        return jsonify({"error": "Торги по этому лоту уже завершены!"}), 400
+        
+    min_bid = lot['current_bid'] + 100 # Минимальный шаг 100 очков
+    if bid_amount < min_bid:
+        return jsonify({"error": f"Ставка перебита! Минимальная ставка сейчас: {min_bid} 💎"}), 400
+        
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    if user_db.get("bounty_points", 0) < bid_amount:
+        return jsonify({"error": "Недостаточно очков для такой ставки!"}), 400
+        
+    # Возвращаем очки предыдущему лидеру (если он был)
+    prev_leader = lot.get("leader_uid")
+    prev_bid = lot.get("current_bid", 0)
+    if prev_leader and prev_bid > 0:
+        paid_collection.update_one({"uid": prev_leader}, {"$inc": {"bounty_points": prev_bid}})
+        try:
+            from core.bot import bot
+            bot.send_message(prev_leader, f"⚠️ <b>АУКЦИОН:</b> Вашу ставку на лот «{lot['name']}» перебили! Ваши {prev_bid} 💎 возвращены на баланс.", parse_mode="HTML")
+        except: pass
+        
+    # Списываем очки у нового лидера
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -bid_amount}})
+    
+    # Обновляем лот (Анти-снайпер: если до конца < 5 минут, продлеваем на 5 минут)
+    end_time = lot['end_time']
+    if end_time - int(time.time()) < 300:
+        end_time += 300 
+        
+    db['auction_lots'].update_one({"_id": ObjectId(lot_id)}, {
+        "$set": {
+            "current_bid": bid_amount,
+            "leader_uid": uid,
+            "leader_name": first_name,
+            "end_time": end_time
+        }
+    })
+    
+    return jsonify({"success": True, "msg": f"Ваша ставка {bid_amount} 💎 принята!"})
 
 @app.route('/api/inventory_action', methods=['POST'])
 def api_inventory_action():
@@ -1401,9 +1513,12 @@ def api_inventory_action():
             except: pass
             return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
             
-        # 2. Если щита нет - бросаем кубик 30%
+        # 2. Если щита нет - бросаем кубик
         import random
-        if random.randint(1, 100) <= 30:
+        target_achievements = target_data.get("achievements", [])
+        hack_chance = 40 if "rat" in target_achievements else 30
+        
+        if random.randint(1, 100) <= hack_chance:
             steal_pct = random.uniform(0.05, 0.15) # Крадем от 5% до 15%
             stolen = int(target_data.get("bounty_points", 0) * steal_pct)
             if stolen < 10: stolen = 10
@@ -1558,6 +1673,11 @@ def api_farm_action():
         )
         if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
         
+        # БАФФ ПАТРИАРХА
+        grow_time = CROPS[seed_type]['grow_time']
+        if "patriarch" in (paid_collection.find_one({"uid": uid}) or {}).get("achievements", []):
+            now -= int(grow_time * 0.1)
+            
         db['farm_plots'].update_one({"_id": plot["_id"]}, {
             "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now, "fertilized": False}
         })
@@ -1790,8 +1910,13 @@ def api_crack_safe():
     if is_new_day:
         current_cracks = 0
         
+    # === ИЗМЕНИТЬ ВОТ ТАК ===
     chestnuts_count = db['farm_plots'].count_documents({"uid": uid, "seed_type": "chestnut", "status": "ready"})
     max_cracks = 3 + chestnuts_count
+    
+    # БАФФ МЕДВЕЖАТНИКА
+    if "safecracker" in user_db.get("achievements", []):
+        max_cracks += 1
     
     if current_cracks >= max_cracks:
         return jsonify({"error": f"Лимит взломов на сегодня исчерпан ({current_cracks}/{max_cracks})!\nПриходите завтра или посадите больше Каштанов."}), 400
@@ -1814,6 +1939,7 @@ def api_crack_safe():
     prize = safe['balance']
     
     if guess_pin == real_pin:
+        grant_achievement(uid, "safecracker", "Медвежатник", "🏦", None)
         if safe_color == 'blue':
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": prize}})
             currency = "💎"
@@ -2680,8 +2806,17 @@ def handle_rp_commands(message):
             cmd = k
             break
             
-    if not cmd: return
-    text_template = RP_COMMANDS[cmd]
+    text_template = None
+    if cmd:
+        text_template = RP_COMMANDS[cmd]
+    else:
+        # Проверяем личных NPC (Аукцион)
+        for npc in db['custom_rp'].find({"uid": message.from_user.id}):
+            if text_lower.startswith(f"!{npc['cmd']}") or text_lower.startswith(npc['cmd']):
+                text_template = npc['text']
+                break
+                
+    if not text_template: return
     
     name1 = message.from_user.first_name
     id1 = message.from_user.id
@@ -2690,6 +2825,7 @@ def handle_rp_commands(message):
     
     if id1 == id2:
         bot.reply_to(message, "🤡 Одиночество — это когда ты пытаешься сделать это с самим собой.")
+        grant_achievement(id1, "schizo", "Шизофреник", "🤡", message.chat.id) # Выдаем ачивку!
         return
         
     bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2), parse_mode="Markdown")
@@ -2809,15 +2945,20 @@ def empty_marriage(message):
 
 # ================= УБИЙЦА ИРИСА (МОДУЛЬ 3: ТОПЫ И АЗАРТ) =================
 
-# 1. РУССКАЯ РУЛЕТКА (Вирусный PvP-азарт)
+# 1. РУССКАЯ РУЛЕТКА (Вирусный PvP-азарт + Трекер Ачивок)
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!рулетка', 'рулетка', '/рулетка'])
 def russian_roulette(message):
     uid = message.from_user.id
     name = message.from_user.first_name
     import random, time
     
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
     if random.randint(1, 6) == 1:
-        user_data = paid_collection.find_one({"uid": uid}) or {}
+        # УВЕЛИЧИВАЕМ СЧЕТЧИК СМЕРТЕЙ
+        paid_collection.update_one({"uid": uid}, {"$inc": {"roulette_deaths_streak": 1}})
+        new_data = paid_collection.find_one({"uid": uid})
+        
         if user_data.get("immunity", 0) > 0:
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
             bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
@@ -2825,9 +2966,18 @@ def russian_roulette(message):
             bot.reply_to(message, "💥 **БАБАХ!**\nВы словили пулю. Скайнет отправляет вас в реанимацию на 1 час.\n_F._", parse_mode="Markdown")
             try: bot.restrict_chat_member(message.chat.id, uid, until_date=int(time.time()) + 3600, can_send_messages=False)
             except: pass
+            
+        # ПРОВЕРЯЕМ АЧИВКУ (3 смерти подряд)
+        if new_data.get("roulette_deaths_streak", 0) == 3:
+            granted = grant_achievement(uid, "black_streak", "Черная полоса", "🎰", message.chat.id)
+            if granted:
+                paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+                bot.send_message(message.chat.id, "🎁 Скайнет сжалился над вашим невезением и выдал **1 🛡 Щит Иммунитета** в качестве утешения!", parse_mode="Markdown")
+
     else:
+        # ВЫЖИЛ - ОБНУЛЯЕМ СЧЕТЧИК СМЕРТЕЙ
         reward = random.randint(5, 15)
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}}, upsert=True)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}, "$set": {"roulette_deaths_streak": 0}}, upsert=True)
         bot.reply_to(message, f"😅 *Щелк...* Осечка!\n[{name}](tg://user?id={uid}) выживает и получает **+{reward} 💎**.", parse_mode="Markdown")
 
 # 2. РЕЙТИНГ АКТИВНОСТИ ЧАТА
@@ -2843,10 +2993,23 @@ def chat_top_activity(message):
         text += f"{medal} **{u.get('name', 'Аноним')}** — {u.get('msgs', 0)} сообщ.\n"
     bot.reply_to(message, text, parse_mode="Markdown")
 
-# 3. ТЕКСТОВЫЙ ПРОФИЛЬ (Теперь работает и на чужие профили!)
+# --- СЕКРЕТНЫЙ РАЗДАВАТЕЛЬ АЧИВОК ---
+def grant_achievement(uid, ach_id, ach_name, ach_icon, chat_id):
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    achievements = user_data.get("achievements", [])
+    
+    if ach_id not in achievements:
+        paid_collection.update_one({"uid": uid}, {"$push": {"achievements": ach_id}})
+        try:
+            from core.bot import bot
+            bot.send_message(chat_id, f"🏆 **ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!**\nВы получили значок: {ach_icon} **«{ach_name}»**!", parse_mode="Markdown")
+        except: pass
+        return True
+    return False
+
+# 3. ТЕКСТОВЫЙ ПРОФИЛЬ (Теперь с медалями!)
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!профиль', 'профиль', '/profile'])
 def text_profile(message):
-    # Если это реплай - показываем профиль того, на кого ответили. Иначе свой.
     target_user = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     uid = target_user.id
     
@@ -2858,12 +3021,29 @@ def text_profile(message):
     partner_text = f"В браке с ID {partner_id}" if partner_id else "Одинок(а)"
     title = "👑 VIP-Персона" if user_data.get("is_vip") else "🔴 Гражданин Империи"
     
+    # Сборка ачивок
+    ach_map = {
+        "schizo": "🤡", "black_streak": "🎰", "gladiator": "⚔️", 
+        "santa": "🎅", "safecracker": "🏦", "patriarch": "👨‍👩‍👧‍👦",
+        "drought": "💩", "rat": "🔪", "cuckold": "🦌", "bankrupt": "📉"
+    }
+    achievements = user_data.get("achievements", [])
+    ach_text = " ".join([ach_map.get(a, "") for a in achievements if a in ach_map])
+    if not ach_text: ach_text = "Нет наград"
+    
+    gold_status = "⚜️ [ВЛАДЕЛЕЦ ЗОЛОТА]\n" if user_data.get("golden_frame") else ""
+    
     text = (
         f"👤 **ДОСЬЕ СКАЙНЕТА: {target_user.first_name}**\n"
-        f"🔑 **ID:** `{uid}` _(Нажмите, чтобы скопировать)_\n"
+        f"{gold_status}🔑 **ID:** `{uid}`\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🎖 **Статус:** {title}\n💰 **Счет:** {pts} 💎 | {rub} ₽\n🎭 **Карма:** {karma}\n"
-        f"💬 **Написано тут:** {msgs} сообщений\n💍 **Семья:** {partner_text}\n━━━━━━━━━━━━━━━━━━\n"
+        f"🎖 **Статус:** {title}\n"
+        f"💰 **Счет:** {pts} 💎 | {rub} ₽\n"
+        f"🎭 **Карма:** {karma}\n"
+        f"💬 **Написано тут:** {msgs} сообщений\n"
+        f"💍 **Семья:** {partner_text}\n"
+        f"🏆 **Зал Славы:** {ach_text}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
         f"🎮 _Полный инвентарь — в Web App_"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
@@ -3012,13 +3192,35 @@ def handle_duel_response(call):
         win_roll, lose_roll = tg_roll, ch_roll
         
     # Расчет банка (комиссия 5% сгорает из экономики или уходит в синий сейф)
+    # Расчет банка (комиссия 5% сгорает из экономики или уходит в синий сейф)
     commission = int((bet * 2) * 0.05)
     if commission < 1: commission = 1
     prize = (bet * 2) - commission
+    pay_casino_owner(int(bet * 0.10))
     
-    # Транзакции
-    paid_collection.update_one({"uid": loser_id}, {"$inc": {"bounty_points": -bet}})
-    paid_collection.update_one({"uid": winner_id}, {"$inc": {"bounty_points": (prize - bet)}}) # -bet потому что свою ставку он как бы возвращает
+    # Транзакции и ТРЕКЕРЫ
+    import datetime, time
+    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    paid_collection.update_one({"uid": winner_id}, {
+        "$inc": {"bounty_points": (prize - bet), "duel_win_streak": 1},
+        "$set": {"daily_duel_date": now_date}
+    })
+    
+    l_data = paid_collection.find_one({"uid": loser_id}) or {}
+    if l_data.get("daily_duel_date") != now_date:
+        paid_collection.update_one({"uid": loser_id}, {"$set": {"daily_duel_losses": bet, "daily_duel_date": now_date, "duel_win_streak": 0}, "$inc": {"bounty_points": -bet}})
+    else:
+        paid_collection.update_one({"uid": loser_id}, {"$inc": {"bounty_points": -bet, "daily_duel_losses": bet}, "$set": {"duel_win_streak": 0}})
+
+    w_data = paid_collection.find_one({"uid": winner_id})
+    if w_data.get("duel_win_streak", 0) == 10:
+        grant_achievement(winner_id, "gladiator", "Гладиатор", "⚔️", call.message.chat.id)
+        
+    l_data = paid_collection.find_one({"uid": loser_id})
+    if l_data.get("daily_duel_losses", 0) >= 10000:
+        grant_achievement(loser_id, "bankrupt", "Банкрот", "📉", call.message.chat.id)
+        paid_collection.update_one({"uid": loser_id}, {"$set": {"bankrupt_until": time.time() + 86400}})
     
     # Комиссию кидаем в Синий Сейф, чтобы он рос быстрее!
     db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": commission}})
@@ -3058,15 +3260,15 @@ def handle_user_airdrop(message):
     uid = message.from_user.id
     user_name = message.from_user.first_name
     
-    # Списываем очки со счета создателя мешка
-    updated = paid_collection.find_one_and_update(
-        {"uid": uid, "bounty_points": {"$gte": total_amount}},
-        {"$inc": {"bounty_points": -total_amount}}
-    )
-    
     if not updated:
         bot.reply_to(message, "❌ У вас недостаточно Очков Бдительности для такой раздачи! Проверьте баланс в Кабинете.")
         return
+        
+    # ТРЕКЕР: Санта-Клаус
+    paid_collection.update_one({"uid": uid}, {"$inc": {"total_airdrop_given": total_amount}})
+    new_data = paid_collection.find_one({"uid": uid})
+    if new_data.get("total_airdrop_given", 0) >= 50000:
+        grant_achievement(uid, "santa", "Санта-Клаус", "🎅", message.chat.id)
         
     import time
     piece = total_amount // max_users
@@ -3187,6 +3389,12 @@ def handle_adopt_response(call):
     paid_collection.update_one({"uid": parent_id}, {"$inc": {"bounty_points": -PRICE}, "$push": {"children": child_id}})
     paid_collection.update_one({"uid": child_id}, {"$set": {"parent_id": parent_id}})
     
+    # ТРЕКЕР: Патриарх
+    p_data = paid_collection.find_one({"uid": parent_id}) or {}
+    if p_data.get("partner_id") and len(p_data.get("children", [])) >= 3:
+        grant_achievement(parent_id, "patriarch", "Патриарх семьи", "👨‍👩‍👧‍👦", call.message.chat.id)
+        grant_achievement(p_data["partner_id"], "patriarch", "Патриарх семьи", "👨‍👩‍‍👧‍👦", call.message.chat.id)
+
     bot.edit_message_text(f"🎊 **НОВАЯ КИБЕР-СЕМЬЯ!** 🎊\n\nСкайнет официально поздравляет!\n[{call.from_user.first_name}](tg://user?id={child_id}) теперь является наследником.\n\n_Напишите `!семья`, чтобы посмотреть ваше древо._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!семья', 'моя семья', '/family'])
@@ -3237,6 +3445,12 @@ def public_court(message):
         
     # Списываем 100 💎 у инициатора
     paid_collection.update_one({"uid": initiator_id}, {"$inc": {"bounty_points": -100}})
+
+    # ТРЕКЕР: Крыса
+    paid_collection.update_one({"uid": initiator_id}, {"$addToSet": {"sued_users": target_id}})
+    u_data = paid_collection.find_one({"uid": initiator_id})
+    if len(u_data.get("sued_users", [])) >= 5:
+        grant_achievement(initiator_id, "rat", "Крыса", "🔪", message.chat.id)
     
     import time
     court_id = f"court_{int(time.time())}_{target_id}"
@@ -3302,6 +3516,230 @@ def handle_court_funding(call):
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"⚖️ Докинуть 100 💎 (Собрано: {new_collected}/{court['goal']})", callback_data=f"court_fund_{court_id}"))
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
         bot.answer_callback_query(call.id, "Ваши 100 💎 приняты в фонд правосудия!", show_alert=True)
+
+# === ВСТАВИТЬ МЕЖДУ НИМИ ВОТ ЭТОТ БЛОК ===
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.answer_callback_query(call.id, "Ваши 100 💎 приняты в фонд правосудия!", show_alert=True)
+
+# ================= ТЕНЕВЫЕ АРТЕФАКТЫ (ХАОС) =================
+
+def resolve_target_uid(target_info):
+    """Секретный локатор: преобразует @username или ID в чистый UID"""
+    t_info = str(target_info).strip()
+    if t_info.isdigit(): return int(t_info)
+    if t_info.startswith('@'):
+        uname = t_info.replace('@', '').lower()
+        u = db['users'].find_one({"username": uname})
+        if u: return u['_id']
+        cs = db['chat_stats'].find_one({"username": uname})
+        if cs: return cs['uid']
+    return None
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!щелчок')
+def use_thanos_glove(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if "thanos_glove" not in user_data.get("elite_items", []):
+        return # Молчим, если артефакта нет в инвентаре
+        
+    # Забираем перчатку
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "thanos_glove"}})
+    
+    active_users = list(db['chat_stats'].find({"chat_id": message.chat.id}).sort("msgs", -1).limit(30))
+    if len(active_users) < 4:
+        bot.reply_to(message, "🕸 В этом чате слишком мало людей для щелчка. Перчатка сгорела впустую.")
+        return
+        
+    def execute_snap():
+        import time, random
+        targets = random.sample(active_users, k=len(active_users)//2)
+        muted_names = []
+        until = int(time.time()) + (15 * 60)
+        
+        bot.send_message(message.chat.id, f"🧤 <b>{message.from_user.first_name} надевает Перчатку Бесконечности...</b>", parse_mode="HTML")
+        time.sleep(3)
+        bot.send_message(message.chat.id, "🫰 <i>*ЩЕЛК*</i>", parse_mode="HTML")
+        time.sleep(2)
+        
+        for t in targets:
+            # Защита от мута админов (Telegram API само выдаст ошибку, мы ее гасим)
+            if t['uid'] == uid: continue
+            try:
+                bot.restrict_chat_member(message.chat.id, t['uid'], until_date=until, can_send_messages=False)
+                muted_names.append(t.get('name', 'Аноним'))
+            except: pass
+            
+        if muted_names:
+            bot.send_message(message.chat.id, "💨 <b>Половина активных участников рассыпалась в прах (Мут 15 минут):</b>\n" + ", ".join(muted_names), parse_mode="HTML")
+        else:
+            bot.send_message(message.chat.id, "🛡 У Скайнета слишком сильная защита в этом чате. Никто не рассыпался.")
+            
+    import threading
+    threading.Thread(target=execute_snap, daemon=True).start()
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!развести'))
+def homewrecker_action(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if "homewrecker" not in user_data.get("elite_items", []):
+        return
+        
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Укажите цель: `!развести @username`", parse_mode="Markdown")
+        
+    target_info = parts[1]
+    target_id = resolve_target_uid(target_info)
+    
+    if not target_id:
+        return bot.reply_to(message, "❌ Пользователь не найден в базе!")
+        
+    target_data = paid_collection.find_one({"uid": target_id}) or {}
+    partner_id = target_data.get("partner_id")
+    
+    if not partner_id:
+        return bot.reply_to(message, "🤡 Этот пользователь и так одинок. Разводить некого.")
+        
+    # Забираем артефакт
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "homewrecker"}})
+    
+    # Принудительный развод
+    paid_collection.update_one({"uid": target_id}, {"$unset": {"partner_id": ""}})
+    paid_collection.update_one({"uid": partner_id}, {"$unset": {"partner_id": ""}})
+    
+    # Вешаем клеймо Рогоносца на 7 дней
+    import time
+    paid_collection.update_one({"uid": target_id}, {
+        "$set": {"cuckold_until": time.time() + (7 * 86400)},
+        "$push": {"achievements": "cuckold"}
+    })
+    
+    bot.send_message(message.chat.id, f"💔 <b>АРТЕФАКТ ПРИМЕНЕН!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) использовал <b>«Разлучник»</b> на {target_info}!\n\nСиндикат разрушен. Брак аннулирован без согласия сторон.\n🦌 <i>Жертве выдан позорный статус «Рогоносец» на 7 дней.</i>", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!рейд'))
+def raider_takeover(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if "raider" not in user_data.get("elite_items", []):
+        return
+        
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Укажите цель: `!рейд @username`", parse_mode="Markdown")
+        
+    target_id = resolve_target_uid(parts[1])
+    if not target_id:
+        return bot.reply_to(message, "❌ Цель не найдена!")
+        
+    if target_id == uid:
+        return bot.reply_to(message, "🤡 Вы не можете ограбить самого себя.")
+        
+    ready_plots = list(db['farm_plots'].find({"uid": target_id, "status": "ready"}))
+    if not ready_plots:
+        # Сжигаем артефакт впустую
+        paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "raider"}})
+        return bot.reply_to(message, "🪹 <b>ПРОВАЛ!</b> У жертвы нет созревшего урожая. Рейдеры ушли ни с чем, а артефакт сгорел.", parse_mode="HTML")
+        
+    # Собираем урожай
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "raider"}})
+    total_pts = 0
+    
+    for plot in ready_plots:
+        seed = plot['seed_type']
+        # Пропускаем декор (каштаны, кактусы), воруем только то, что приносит очки!
+        if seed in CROPS and not CROPS[seed].get('is_decor'):
+            import random
+            pts = random.randint(CROPS[seed]['reward_pts'][0], CROPS[seed]['reward_pts'][1])
+            total_pts += pts
+        
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "fertilized": False}})
+        
+    if total_pts > 0:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": total_pts}})
+        bot.send_message(message.chat.id, f"🧲 <b>РЕЙДЕРСКИЙ ЗАХВАТ!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) ворвался на ферму {parts[1]} пока тот спал!\n🚜 <b>Украдено грядок:</b> {len(ready_plots)}\n💰 <b>Награбленное:</b> {total_pts} 💎", parse_mode="HTML")
+    else:
+        bot.send_message(message.chat.id, f"🧲 <b>РЕЙДЕРСКИЙ ЗАХВАТ!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) ворвался на ферму {parts[1]}, но там росли только кактусы да каштаны. Очков не заработано, но грядки разорены!", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!глас '))
+def gods_voice(message):
+    uid = message.from_user.id
+    if "gods_voice" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): return
+    text = message.text[6:].strip()
+    if not text: return
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "gods_voice"}})
+    
+    def broadcast():
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+        import time
+        all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
+        msg_text = f"👑 <b>Глобальное послание от {message.from_user.first_name}:</b>\n\n{html.escape(text)}"
+        for cid in all_chats:
+            try: bot.send_message(cid, msg_text, parse_mode="HTML"); time.sleep(0.3)
+            except: pass
+        bot.send_message(message.chat.id, "✅ Глас Бога услышан во всех чатах!")
+    import threading
+    threading.Thread(target=broadcast, daemon=True).start()
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!гуантанамо'))
+def guantanamo_order(message):
+    uid = message.from_user.id
+    if "guantanamo" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): return
+    parts = message.text.split()
+    if len(parts) < 2: return bot.reply_to(message, "Укажите цель: !гуантанамо @username")
+    target_id = resolve_target_uid(parts[1])
+    if not target_id: return bot.reply_to(message, "❌ Пользователь не найден!")
+    
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "guantanamo"}})
+    import time
+    until = int(time.time()) + 86400
+    # Флаг, блокирующий снятие Ангелом
+    paid_collection.update_one({"uid": target_id}, {"$set": {"guantanamo_until": until}})
+    try: bot.restrict_chat_member(message.chat.id, target_id, until_date=until, can_send_messages=False)
+    except: pass
+    bot.send_message(message.chat.id, f"🚷 <b>Ордер Гуантанамо применен!</b>\n\n{parts[1]} отправлен в изолятор на 24 часа. Ангелы и Индульгенции бессильны.", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!вскрыть'))
+def master_key_safe(message):
+    uid = message.from_user.id
+    if "master_key" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): return
+    parts = message.text.lower().split()
+    if len(parts) < 2 or parts[1] not in ["синий", "красный"]:
+        return bot.reply_to(message, "Формат: !вскрыть синий (или красный)")
+    
+    safe_color = "blue" if parts[1] == "синий" else "red"
+    safe_id = f"safe_{safe_color}"
+    safe = db['safes_state'].find_one({"_id": safe_id})
+    prize = safe['balance']
+    
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "master_key"}})
+    
+    if safe_color == 'blue':
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": prize}})
+        currency = "💎"
+    else:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": prize}})
+        currency = "₽"
+        
+    import random
+    pin_len = 3 if safe_color == 'blue' else 4
+    new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
+    db['safes_state'].update_one({"_id": safe_id}, {"$set": {"pin_code": new_pin, "balance": 10000 if safe_color == 'blue' else 500, "logs": []}})
+    
+    bot.send_message(message.chat.id, f"🗝 <b>Мастер-Ключ провернулся... ЩЕЛК!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) вскрыл {parts[1]} сейф без пин-кода и забрал <b>{prize} {currency}</b>!", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!создать_нпс'))
+def create_personal_npc(message):
+    uid = message.from_user.id
+    if "personal_npc" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): return
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3: return bot.reply_to(message, "Формат: !создать_нпс [слово] [текст]\nПример: !создать_нпс леха [{name1}] позвал Леху, и тот налил [{name2}] пива")
+    
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "personal_npc"}})
+    db['custom_rp'].insert_one({"uid": uid, "cmd": parts[1].lower(), "text": parts[2]})
+    bot.reply_to(message, f"🤖 Ваш личный NPC создан! Теперь вы можете писать `!{parts[1].lower()}` в ответ на сообщения.")
 
 # 6. ГЛАВНОЕ МЕНЮ КОМАНД СКАЙНЕТА
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!команды', '/help', 'помощь', 'команды', '!help'])
@@ -3418,7 +3856,46 @@ def family_piggy_bank(message):
         bot.reply_to(message, f"🏦 Вы положили **{amount} 💎** в семейный фонд!\n_Всего накоплено: {current_bank + amount} 💎_", parse_mode="Markdown")
 
 # ==============================================================================
-            
+@bot.message_handler(commands=['spawn_lot'])
+def spawn_auction_lot(message):
+    from config import STAFF_GROUP_ID, OWNER_ID
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID: return
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "Формат: /spawn_lot [thanos|homewrecker|raider]")
+        return
+        
+    lot_type = parts[1].strip()
+    import time
+    end_time = int(time.time()) + (24 * 3600) # Аукцион на 24 часа
+    
+    if lot_type == "thanos": name, desc, icon = "Перчатка Таноса", "Замутить половину чата на 15 мин (!щелчок).", "🧤"
+    elif lot_type == "homewrecker": name, desc, icon = "Разлучник", "Расторгнуть чужой брак (!развести @user).", "💔"
+    elif lot_type == "raider": name, desc, icon = "Рейдерский Захват", "Украсть урожай с чужой фермы (!рейд @user).", "🧲"
+    elif lot_type == "gods_voice": name, desc, icon = "Глас Бога", "Сообщение во все чаты сети (!глас текст).", "📢"
+    elif lot_type == "guantanamo": name, desc, icon = "Ордер Гуантанамо", "Неснимаемый мут на 24ч (!гуантанамо @user).", "🚷"
+    elif lot_type == "casino_owner": name, desc, icon = "Владелец Казино", "3 дня: 10% с рулетки и дуэлей идут вам.", "🎰"
+    elif lot_type == "offshore": name, desc, icon = "Офшорный Счет", "Неделя без комиссий на Черном Рынке.", "🏦"
+    elif lot_type == "master_key": name, desc, icon = "Мастер-Ключ", "100% вскрытие сейфа (!вскрыть синий/красный).", "🗝"
+    elif lot_type == "golden_frame": name, desc, icon = "Золотая Рамка", "Элитный статус в профиле навсегда.", "⚜️"
+    elif lot_type == "personal_npc": name, desc, icon = "Личный NPC", "Создать свою RP-команду (!создать_нпс).", "🤖"
+    else:
+        bot.reply_to(message, "Неизвестный тип лота.")
+        return
+        
+    db['auction_lots'].insert_one({
+        "type_id": lot_type,
+        "name": name,
+        "desc": desc,
+        "icon": icon,
+        "current_bid": 1000, # Стартовая цена
+        "leader_uid": None,
+        "end_time": end_time,
+        "status": "active"
+    })
+    bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
+
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
     from database.mongo import db
@@ -3429,6 +3906,13 @@ def heartbeat_sec():
         time.sleep(60)
 
 threading.Thread(target=heartbeat_sec, daemon=True).start()
+
+def pay_casino_owner(amount):
+    """Пассивный доход Владельца Казино (10% от слива)"""
+    import time
+    owner = paid_collection.find_one({"casino_owner_until": {"$gt": int(time.time())}})
+    if owner:
+        paid_collection.update_one({"uid": owner["uid"]}, {"$inc": {"bounty_points": amount}})
 
 if not is_setup_done:
     threading.Thread(target=setup, daemon=True).start()

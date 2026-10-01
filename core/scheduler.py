@@ -128,6 +128,103 @@ def tick_blue_safe():
     """Каждую минуту добавляем 5 очков в Сейф Данных"""
     db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 5}})
 
+def check_auctions_task():
+    """Проверяет и завершает лоты Теневого Аукциона"""
+    import time
+    now = int(time.time())
+    ended_lots = list(db['auction_lots'].find({"status": "active", "end_time": {"$lte": now}}))
+    
+    for lot in ended_lots:
+        leader_uid = lot.get("leader_uid")
+        
+        if not leader_uid:
+            # Никто не сделал ставку, лот сгорает
+            db['auction_lots'].update_one({"_id": lot["_id"]}, {"$set": {"status": "unsold"}})
+            continue
+            
+        # Выдаем предмет победителю
+        item_id = lot["type_id"]
+        if item_id == "casino_owner":
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"casino_owner_until": int(now) + (3 * 86400)}})
+        elif item_id == "offshore":
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"offshore_until": int(now) + (7 * 86400)}})
+        elif item_id == "golden_frame":
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"golden_frame": True}})
+        else:
+            paid_collection.update_one({"uid": leader_uid}, {"$push": {"elite_items": item_id}})
+            
+        db['auction_lots'].update_one({"_id": lot["_id"]}, {"$set": {"status": "sold"}})
+        
+        # Сжигаем потраченные очки победителя навсегда, чтобы выкачать их из экономики!
+        # (Они были списаны в момент ставки)
+        
+        # Уведомляем победителя
+        from core.bot import bot
+        try:
+            bot.send_message(leader_uid, f"🔨 <b>ПРОДАНО!</b>\n\nПоздравляем! Ваша ставка в <b>{lot['current_bid']} 💎</b> сыграла.\nВы получили артефакт <b>{lot['icon']} «{lot['name']}»</b>!\n\n<i>Он добавлен в вашу базу Скайнета и готов к использованию в чатах.</i>", parse_mode="HTML")
+        except: pass
+
+def auto_spawn_auction_lot():
+    """Скайнет автоматически выставляет случайный элитный лот на аукцион"""
+    import time
+    import random
+    from database.mongo import db
+    from core.bot import bot
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    # Защита: не выставляем новый лот, если старый еще не продан (чтобы не сбивать фокус)
+    if db['auction_lots'].count_documents({"status": "active"}) > 0:
+        return
+
+    lots_pool = [
+        {"id": "thanos", "name": "Перчатка Таноса", "desc": "Замутить половину чата на 15 мин (!щелчок).", "icon": "🧤"},
+        {"id": "homewrecker", "name": "Разлучник", "desc": "Расторгнуть чужой брак (!развести @user).", "icon": "💔"},
+        {"id": "raider", "name": "Рейдерский Захват", "desc": "Украсть урожай с чужой фермы (!рейд @user).", "icon": "🧲"},
+        {"id": "gods_voice", "name": "Глас Бога", "desc": "Сообщение во все чаты сети (!глас текст).", "icon": "📢"},
+        {"id": "guantanamo", "name": "Ордер Гуантанамо", "desc": "Неснимаемый мут на 24ч (!гуантанамо @user).", "icon": "🚷"},
+        {"id": "casino_owner", "name": "Владелец Казино", "desc": "3 дня: 10% с рулетки и дуэлей идут вам.", "icon": "🎰"},
+        {"id": "offshore", "name": "Офшорный Счет", "desc": "Неделя без комиссий на Черном Рынке.", "icon": "🏦"},
+        {"id": "master_key", "name": "Мастер-Ключ", "desc": "100% вскрытие сейфа (!вскрыть синий/красный).", "icon": "🗝"},
+        {"id": "golden_frame", "name": "Золотая Рамка", "desc": "Элитный статус в профиле навсегда.", "icon": "⚜️"},
+        {"id": "personal_npc", "name": "Личный NPC", "desc": "Создать свою RP-команду (!создать_нпс).", "icon": "🤖"}
+    ]
+    
+    lot = random.choice(lots_pool)
+    end_time = int(time.time()) + (48 * 3600) # Даем 48 часов на торги (выходные)
+    
+    # Вкидываем в базу
+    db['auction_lots'].insert_one({
+        "type_id": lot["id"],
+        "name": lot["name"],
+        "desc": lot["desc"],
+        "icon": lot["icon"],
+        "current_bid": 1000, 
+        "leader_uid": None,
+        "end_time": end_time,
+        "status": "active"
+    })
+    
+    # Громогласный анонс на всю сеть
+    all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
+    
+    msg_text = (
+        f"🕷 <b>ОТКРЫТ ТЕНЕВОЙ АУКЦИОН!</b> 🕷\n\n"
+        f"Скайнет выставил на торги уникальный лот:\n"
+        f"<b>{lot['icon']} {lot['name']}</b>\n\n"
+        f"<i>{lot['desc']}</i>\n\n"
+        f"Торги продлятся ровно 48 часов. Перебейте ставку конкурентов в Игровом Кабинете, чтобы забрать артефакт себе!"
+    )
+    
+    try:
+        bot_username = bot.get_me().username
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🕷 Перейти к торгам", url=f"https://t.me/{bot_username}?start=app_auction"))
+        
+        for cid in all_chats:
+            try: bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup); time.sleep(0.3)
+            except: pass
+    except: pass
+
 # ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС =================
 
 def personal_farm_notifications():
@@ -191,6 +288,15 @@ def personal_farm_notifications():
         # --- 3. ОБЫЧНЫЕ ПРОВЕРКИ ВОДЫ И СОЗРЕВАНИЯ ---
         if crop["water_req"] and (now - last_watered > 86400):
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
+            
+            # ТРЕКЕР: Засуха
+            paid_collection.update_one({"uid": uid}, {"$inc": {"withered_crops_count": 1}})
+            u_data = paid_collection.find_one({"uid": uid})
+            if u_data.get("withered_crops_count", 0) == 5 and "drought" not in u_data.get("achievements", []):
+                paid_collection.update_one({"uid": uid}, {"$push": {"achievements": "drought"}})
+                try: bot.send_message(uid, "🏆 <b>ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!</b>\nВы получили значок: 💩 <b>«Засуха»</b>! Худший фермер года.", parse_mode="HTML")
+                except: pass
+                
             try: bot.send_message(uid, f"🥀 <b>ПЛОХИЕ НОВОСТИ!</b>\nВаш {crop['name']} засох без воды.", parse_mode="HTML", reply_markup=markup)
             except: pass
             continue
@@ -571,6 +677,7 @@ def start_scheduler():
         # 1. Ежеминутные технические задачи
         scheduler.add_job(check_giveaways_task, 'interval', minutes=1, id='gw_checker', replace_existing=True)
         scheduler.add_job(tick_blue_safe, 'interval', minutes=1, id='tick_blue', replace_existing=True)
+        scheduler.add_job(check_auctions_task, 'interval', minutes=1, id='auction_checker', replace_existing=True)
         
         # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
         scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
@@ -580,15 +687,16 @@ def start_scheduler():
              
         # 4. Умная воронка-карусель в чаты (Проверяет базу каждую минуту)
         scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
-
-        # Умная воронка-карусель в чаты
-        scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
-        
+       
         # 🔥 НОВОЕ: Разведчик конкурсов (Каждое утро в 10:00) 🔥
         scheduler.add_job(holiday_contest_scout, 'cron', hour=10, minute=0, id='holiday_scout', replace_existing=True)
 
         # 🔥 Бомба в чаты (каждые 2 часа)
         scheduler.add_job(drop_cyber_bomb, 'interval', minutes=120, id='bomb_drop', replace_existing=True)
+
+        # === ДОБАВИТЬ СРАЗУ ПОСЛЕ НИХ ===
+        # 🔥 Авто-Аукцион (Каждую пятницу в 18:00 по МСК)
+        scheduler.add_job(auto_spawn_auction_lot, 'cron', day_of_week='fri', hour=18, minute=0, id='auto_auction_spawn', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш)!")
