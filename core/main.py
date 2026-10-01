@@ -2308,8 +2308,8 @@ def api_admin_stats():
                 username = u_info.get("username")
                 first_name = u_info.get("first_name", "Аноним")
                 
-                # Если есть юзернейм — показываем его, иначе имя
-                agent_name = f"@{username}" if username else first_name
+                # Безопасно ставим ровно одну @
+                agent_name = f"@{username.lstrip('@')}" if username else first_name
                 
                 medal = medals[i] if i < 3 else "🔹"
                 text += f"{medal} {agent_name} (ID {agent_id})\n"
