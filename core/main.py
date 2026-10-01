@@ -1275,7 +1275,17 @@ def api_add_market_lot():
     
     return jsonify({"success": True, "msg": f"Лот успешно выставлен за {price}₽!"})
 
-action = data.get('action')
+@app.route('/api/inventory_action', methods=['POST'])
+def api_inventory_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Ошибка авторизации (Неверная подпись)"}), 403
+        
+    user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    action = data.get('action')
     
     # Секретный переводчик @username -> ID
     def resolve_uid(target_info):
@@ -1289,18 +1299,6 @@ action = data.get('action')
             if cs: return cs['uid']
         return None
 
-@app.route('/api/inventory_action', methods=['POST'])
-def api_inventory_action():
-    data = request.json
-    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
-        return jsonify({"error": "Auth failed"}), 403
-        
-    user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
-    uid = user_info['id']
-    first_name = user_info.get('first_name', 'Аноним')
-    
-    action = data.get('action')
-    
     if action == 'cancel_lot':
         lot_id = data.get('lot_id')
         from bson.objectid import ObjectId
