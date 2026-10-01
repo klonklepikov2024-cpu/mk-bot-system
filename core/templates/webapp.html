@@ -33,13 +33,21 @@
     <!-- ================= ВКЛАДКА 1: ПРОФИЛЬ ================= -->
     <div id="tab-profile" class="tab-content active">
         <div class="flex items-center space-x-3 mb-6">
-            <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden">👤</div>
-            <div>
-                <div class="flex items-center">
-                    <h1 class="font-bold text-lg leading-tight transition-colors duration-500" id="userName">Скайнет</h1>
-                    <span id="karmaBadge" class="ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm">Карма: 0</span>
+            <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden shrink-0">👤</div>
+            <div class="flex-1">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <div class="flex items-center">
+                            <h1 class="font-bold text-lg leading-tight transition-colors duration-500" id="userName">Скайнет</h1>
+                            <span id="karmaBadge" class="ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm">Карма: 0</span>
+                        </div>
+                        <p class="text-xs text-gray-400" id="userId">ID: ...</p>
+                    </div>
+                    <!-- 🔥 СЕКРЕТНАЯ КНОПКА ЦУП (Появится только у Админов) 🔥 -->
+                    <button id="adminNavBtn" onclick="switchTab('admin', this)" class="hidden bg-red-900/30 text-red-500 border border-red-500/50 px-3 py-1.5 rounded-lg text-xs font-black shadow-md active:scale-95 transition-transform shrink-0 flex items-center gap-1">
+                        👁 ЦУП
+                    </button>
                 </div>
-                <p class="text-xs text-gray-400" id="userId">ID: ...</p>
                 <!-- Контейнер для медалей -->
                 <div id="medalsContainer" class="flex flex-wrap gap-1 mt-1.5 min-h-[28px]"></div>
             </div>
@@ -726,10 +734,6 @@
         <button onclick="switchTab('farm', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
             <span class="text-2xl mb-1">🚜</span><span class="text-[8px] font-bold">Участок</span>
         </button>
-        <!-- 🔥 СЕКРЕТНАЯ КНОПКА АДМИНА (Скрыта по умолчанию) 🔥 -->
-        <button id="adminNavBtn" onclick="switchTab('admin', this)" class="hidden nav-item text-red-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">👁</span><span class="text-[8px] font-bold">ЦУП</span>
-        </button>
     </div>
 
     <script>
@@ -812,8 +816,12 @@
                 el.classList.add('text-gray-500');
             });
             document.getElementById(`tab-${tabId}`).classList.add('active');
-            btnElement.classList.add('active');
-            btnElement.classList.remove('text-gray-500');
+            
+            // Зажигаем синим только кнопки из нижнего меню
+            if (btnElement && btnElement.classList.contains('nav-item')) {
+                btnElement.classList.add('active');
+                btnElement.classList.remove('text-gray-500');
+            }
 
             if(tabId === 'profile') loadProfile();
             if(tabId === 'giveaways') loadGiveaways();
