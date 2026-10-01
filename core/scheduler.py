@@ -700,6 +700,37 @@ def stray_cat_tax():
                 bot.send_message(uid, f"🐈‍⬛ <b>СОСЕДСКИЙ КОТ ДОБРАЛСЯ ДО КОШЕЛЬКА!</b>\n\nВы не заходили в Кабинет больше месяца. Бездомный кот пробрался к вам и сгрыз <b>{rubles} ₽</b>...\n\nСкайнет сжалился и обменял обрывки на <b>{converted_pts} 💎</b>.", parse_mode="HTML")
             except: pass
 
+def refund_expired_courts():
+    """Отменяет суды старше 24 часов и возвращает деньги вкладчикам"""
+    import time
+    now = int(time.time())
+    
+    # Ищем все суды в базе
+    all_courts = list(db['active_courts'].find({}))
+    
+    for court in all_courts:
+        court_id = court['_id']
+        # Вытаскиваем timestamp из ID суда (он в формате court_1718000000_12345)
+        parts = court_id.split('_')
+        if len(parts) >= 2 and parts[1].isdigit():
+            created_at = int(parts[1])
+            
+            # Если прошло больше 24 часов (86400 секунд)
+            if now - created_at > 86400:
+                investors = court.get('investors', [])
+                
+                # ВОЗВРАЩАЕМ ДЕНЬГИ ВСЕМ, КТО СКИНУЛСЯ (по 100 очков каждому)
+                for inv_uid in investors:
+                    paid_collection.update_one({"uid": inv_uid}, {"$inc": {"bounty_points": 100}})
+                    # Уведомляем инвесторов (по желанию, можно убрать try-except блок, чтобы не спамить)
+                    from core.bot import bot
+                    try:
+                        bot.send_message(inv_uid, f"⚖️ <b>СУД ЗАКРЫТ:</b> Дело против {court.get('target_name', 'пользователя')} развалилось из-за нехватки доказательств (истек срок 24ч).\nВаши 100 💎 возвращены на баланс!", parse_mode="HTML")
+                    except: pass
+                
+                # Удаляем суд из базы
+                db['active_courts'].delete_one({"_id": court_id})
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
@@ -730,6 +761,9 @@ def start_scheduler():
         
         # 🐈‍⬛ Набег Соседского Кота (Каждый день в 12:00)
         scheduler.add_job(stray_cat_tax, 'cron', hour=12, minute=0, id='stray_cat_tax', replace_existing=True)
+
+        # 🔥 Авто-возврат средств с зависших судов (Каждый час)
+        scheduler.add_job(refund_expired_courts, 'interval', minutes=60, id='refund_courts', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш + Коты)!")
