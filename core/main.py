@@ -2857,7 +2857,7 @@ RP_COMMANDS = {
 }
 
 # Ловим команды, но СТРОГО игнорируем системные (чтобы не ломать дуэли, суды и карму!)
-@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!развести', '!рейд', '!щелчок', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк')))
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!развести', '!рейд', '!щелчок', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay')))
 def handle_rp_commands(message):
     # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
     if message.sender_chat:
@@ -3398,6 +3398,61 @@ def handle_claim_userdrop(call):
         )
         db['active_airdrops'].delete_one({"_id": drop_id})
 
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!донат', '!чаевые', '!перевести', '!pay', 'донат', 'чаевые', 'перевести', 'pay')))
+def p2p_transfer(message):
+    initiator_id = message.from_user.id
+    initiator_name = message.from_user.first_name
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if initiator_id == target_id:
+        return bot.reply_to(message, "🤡 Вы пытаетесь переложить деньги из одного кармана в другой.")
+    if message.reply_to_message.from_user.is_bot:
+        return bot.reply_to(message, "🤖 Скайнет не принимает чаевые. Мы принимаем только человеческие души.")
+        
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return bot.reply_to(message, "⚠️️ **Формат:** `!чаевые [сумма]` в ответ на сообщение.\n_Пример:_ `!чаевые 100`", parse_mode="Markdown")
+        
+    amount = int(parts[1])
+    if amount < 10:
+        return bot.reply_to(message, "📉 Минимальная сумма перевода: 10 💎")
+        
+    user_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    if user_data.get("bounty_points", 0) < amount:
+        return bot.reply_to(message, f"💸 У вас нет {amount} 💎 для перевода!")
+        
+    # Налог Скайнета (5%)
+    commission = int(amount * 0.05)
+    if commission < 1: commission = 1
+    final_amount = amount - commission
+    
+    # Атомарное списание (дополнительная защита)
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "bounty_points": {"$gte": amount}},
+        {"$inc": {"bounty_points": -amount}}
+    )
+    if not updated_user:
+        return bot.reply_to(message, "❌ Транзакция отклонена. Недостаточно средств.")
+        
+    # Начисление получателю
+    paid_collection.update_one({"uid": target_id}, {"$inc": {"bounty_points": final_amount}}, upsert=True)
+    
+    # Комиссия улетает в Синий Сейф
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": commission}})
+    
+    # Рандомные атмосферные фразы
+    import random
+    phrases = [
+        f"💸 [{initiator_name}](tg://user?id={initiator_id}) щедро отблагодарил(а) [{target_name}](tg://user?id={target_id}) на **{amount} 💎**!",
+        f"👙 [{initiator_name}](tg://user?id={initiator_id}) игриво засунул(а) **{amount} 💎** в трусики [{target_name}](tg://user?id={target_id}).",
+        f"🤝 [{initiator_name}](tg://user?id={initiator_id}) жмет руку и переводит [{target_name}](tg://user?id={target_id}) **{amount} 💎**.",
+        f"🔥 [{initiator_name}](tg://user?id={initiator_id}) спонсирует [{target_name}](tg://user?id={target_id}) на **{amount} 💎**!"
+    ]
+    
+    msg_text = random.choice(phrases) + f"\n\n_Получено: {final_amount} 💎 (Комиссия Скайнета: {commission} 💎)_"
+    bot.send_message(message.chat.id, msg_text, parse_mode="Markdown")
+
 # ================= УБИЙЦА ИРИСА (МОДУЛЬ 4: СЕМЬИ И КЛАНЫ) =================
 
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!усыновить', '!удочерить')))
@@ -3820,6 +3875,7 @@ def help_commands(message):
         "🎲 **АЗАРТ И ЭКОНОМИКА:**\n"
         "• `!дуэль [ставка]` *(в ответ)* — битва на Очки\n"
         "• `!раздача [сумма] [кол-во]` — скинуть мешок с 💎 в чат\n"
+        "• `!чаевые [сумма]` *(в ответ)* — подарить Очки юзеру\n"
         "• `!рулетка` — выжить или словить мут (награда 5-15 💎)\n\n"
         "⚖️ **ПРАВОСУДИЕ:**\n"
         "• `!суд` *(в ответ)* — начать сбор на арест юзера\n"
