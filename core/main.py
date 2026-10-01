@@ -2433,8 +2433,13 @@ def api_admin_stats():
         
         text = "🏆 **ТОП 30 БОГАЧЕЙ (ОЧКИ 💎)**\n\n"
         for i, u in enumerate(top_pts, 1):
-            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
-            text += f"{i}. {name} — {int(u.get('bounty_points', 0))} 💎\n"
+            uid = u['uid']
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            c_info = db['chat_stats'].find_one({"uid": uid}) or {}
+            name = u_info.get("first_name") or c_info.get("name") or "Аноним"
+            
+            # 🔥 ВЫВОДИМ И ИМЯ, И ID 🔥
+            text += f"{i}. {name} [ID: {uid}] — {int(u.get('bounty_points', 0))} 💎\n"
         return jsonify({"text": text})
 
     # === ТОП 30 ОЛИГАРХОВ (РУБЛИ) ===
@@ -2444,8 +2449,13 @@ def api_admin_stats():
         
         text = "💸 **ТОП 30 ОЛИГАРХОВ (РУБЛИ ₽)**\n\n"
         for i, u in enumerate(top_rub, 1):
-            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
-            text += f"{i}. {name} — {int(u.get('cashback_balance', 0))} ₽\n"
+            uid = u['uid']
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            c_info = db['chat_stats'].find_one({"uid": uid}) or {}
+            name = u_info.get("first_name") or c_info.get("name") or "Аноним"
+            
+            # 🔥 ВЫВОДИМ И ИМЯ, И ID 🔥
+            text += f"{i}. {name} [ID: {uid}] — {int(u.get('cashback_balance', 0))} ₽\n"
         return jsonify({"text": text})
 
     # === ГЛОБАЛЬНАЯ СВОДКА ===
