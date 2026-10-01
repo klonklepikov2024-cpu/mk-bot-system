@@ -788,10 +788,8 @@ def api_craft():
             return jsonify({"success": True, "msg": f"👑 Выкован 100% Купон на VIP!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
             
         else:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 1000}})
-            import time
-            db['ruble_ledger'].insert_one({"uid": uid, "amount": 1000, "reason": "Крафт (Компенсация за макс. статус)", "timestamp": time.time()})
-            return jsonify({"success": True, "msg": "💰 Макс. уровень! Ресурсы переплавлены в 1000₽ кэшбэка!"})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 25000, "immunity": 5}})
+            return jsonify({"success": True, "msg": "💰 Макс. уровень! Ресурсы переплавлены в 25 000 💎 и 5 🛡 Щитов!"})
 
 @app.route('/api/open_chest', methods=['POST'])
 def api_open_chest():
@@ -2785,6 +2783,12 @@ RP_COMMANDS = {
     "лизнуть": "👅 [{name1}](tg://user?id={id1}) облизал(а) [{name2}](tg://user?id={id2})",
     "потрогать": "👉 [{name1}](tg://user?id={id1}) бесстыдно потрогал(а) [{name2}](tg://user?id={id2})",
     "раздеть": "👕 [{name1}](tg://user?id={id1}) стянул(а) одежду с [{name2}](tg://user?id={id2})",
+    "трахнуть": "🔞 [{name1}](tg://user?id={id1}) жестко трахнул(а) [{name2}](tg://user?id={id2})",
+    "отжарить": "🔥 [{name1}](tg://user?id={id1}) отжарил(а) во все щели [{name2}](tg://user?id={id2})",
+    "выебать": "💦 [{name1}](tg://user?id={id1}) выебал(а) без смазки [{name2}](tg://user?id={id2})",
+    "нагнуть": "😈 [{name1}](tg://user?id={id1}) нагнул(а) раком [{name2}](tg://user?id={id2})",
+    "сдать": "👴 [{name1}](tg://user?id={id1}) сдал(а) в дом престарелых [{name2}](tg://user?id={id2})",
+    "посадить на бутылку": "🍾 [{name1}](tg://user?id={id1}) посадил(а) на бутылку [{name2}](tg://user?id={id2})"
 
     # Бар / Взаимодействия
     "выпить": "🍻 [{name1}](tg://user?id={id1}) чокнулся(лась) бокалами с [{name2}](tg://user?id={id2}). За здоровье!",
@@ -2825,8 +2829,14 @@ def handle_rp_commands(message):
     
     if id1 == id2:
         bot.reply_to(message, "🤡 Одиночество — это когда ты пытаешься сделать это с самим собой.")
-        grant_achievement(id1, "schizo", "Шизофреник", "🤡", message.chat.id) # Выдаем ачивку!
+        grant_achievement(id1, "schizo", "Шизофреник", "🤡", message.chat.id)
         return
+        
+    # 🔥 ХВАТАЕМ ТЕКСТ ПОСЛЕ КОМАНДЫ (ХВОСТ) 🔥
+    extra_text = message.text.lower().replace(cmd, '', 1).strip()
+    tail = f" {extra_text}" if extra_text else ""
+        
+    bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2) + tail, parse_mode="Markdown")
         
     bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2), parse_mode="Markdown")
 

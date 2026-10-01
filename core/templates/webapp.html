@@ -743,9 +743,9 @@
             document.getElementById('userId').innerText = 'ID: ' + user.id;
             if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
             
-            // 🔥 РЕЖИМ БОГА: Показываем кнопку ЦУПа только Владельцу 🔥
-            const ADMIN_IDS = [479938867]; // Сюда можно через запятую добавить других админов
-            if (ADMIN_IDS.includes(user.id)) {
+            // 🔥 РЕЖИМ БОГА: ДОБАВЬ СЮДА ID ВСЕХ АДМИНОВ / ТЕСТЕРОВ 🔥
+            const ADMIN_IDS = ["479938867", "123456789", "987654321"]; 
+            if (ADMIN_IDS.includes(String(user.id))) {
                 document.getElementById('adminNavBtn').classList.remove('hidden');
             }
         }
