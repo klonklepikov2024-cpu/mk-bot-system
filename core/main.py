@@ -823,12 +823,20 @@ def api_get_cpa():
     dupes = user_data.get("cpa_duplicates", 0)
     cases = user_data.get("agent_cases", 0) 
     
-    # 2. 🔥 ФОРМИРУЕМ ЛИДЕРБОРД ТЕКУЩЕГО МЕСЯЦА 🔥
+    # 2. 🔥 ФОРМИРУЕМ ЛИДЕРБОРД ТЕКУЩЕГО МЕСЯЦА (LIVE-режим) 🔥
     import datetime
-    current_month_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m")
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
+    current_month_str = now.strftime("%Y-%m")
+    
+    # Вычисляем точную метку времени (timestamp) для 1 числа текущего месяца
+    start_of_month_ts = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
     
     pipeline = [
-        {"$match": {"status": "approved", "approved_month": current_month_str}},
+        # Берем ВСЕХ, кто пришел в этом месяце (и в холде, и одобренных)
+        {"$match": {
+            "join_time": {"$gte": start_of_month_ts},
+            "status": {"$in": ["approved", "hold"]}
+        }},
         {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
         {"$limit": 5}
@@ -838,18 +846,16 @@ def api_get_cpa():
     top_agents = []
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     for idx, agent in enumerate(top_agents_raw):
-        # Чтобы не палить реальные ID или полные имена в аппке всем подряд, 
-        # сделаем анонимизацию (Например: ID 123*** или "Александр С.")
+        # Анонимизация имен для безопасности
         u_info = db['users'].find_one({"_id": agent["_id"]}) or {}
         first_name = u_info.get("first_name", "Аноним")
-        # Берем только первую букву фамилии/имени для приватности
         safe_name = f"{first_name[:6]}***" 
         
         is_me = (agent["_id"] == uid)
         display_name = "Вы (Лидер!)" if is_me else safe_name
         
         top_agents.append({
-            "medal": medals[idx],
+            "medal": medals[idx] if idx < 5 else f"{idx+1}️⃣",
             "name": display_name,
             "count": agent["count"],
             "is_me": is_me
@@ -2241,8 +2247,9 @@ def api_admin_stats():
     # === CPA СТАТИСТИКА ===
     elif stat_type == "cpa":
         import datetime
-        # Берем текущий месяц для ТОП-5
-        current_month_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m")
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
+        current_month_str = now.strftime("%Y-%m")
+        start_of_month_ts = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
         
         total = db['cpa_traffic'].count_documents({})
         approved = db['cpa_traffic'].count_documents({"status": "approved"})
@@ -2254,12 +2261,15 @@ def api_admin_stats():
         fraud_old = db['cpa_traffic'].count_documents({"status": "fraud"})
         total_fraud = fraud_banned + fraud_left + fraud_old
         
-        # ТОП-5 АГЕНТОВ ТЕКУЩЕГО МЕСЯЦА
+        # 🔥 ТОП-15 АГЕНТОВ ТЕКУЩЕГО МЕСЯЦА (Расширенный список для админа) 🔥
         pipeline = [
-            {"$match": {"status": "approved", "approved_month": current_month_str}},
+            {"$match": {
+                "join_time": {"$gte": start_of_month_ts},
+                "status": {"$in": ["approved", "hold"]}
+            }},
             {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
-            {"$limit": 5}
+            {"$limit": 15}
         ]
         top_agents = list(db['cpa_traffic'].aggregate(pipeline))
         
@@ -2271,22 +2281,22 @@ def api_admin_stats():
             f"   ├ Сбежали из чата: {fraud_left}\n"
             f"   └ Забанены за спам: {fraud_banned}\n"
             f"✅ ОДОБРЕНО (Лиды за всё время): {approved}\n\n"
-            f"🏆 ТОП-5 АГЕНТОВ ({current_month_str}):\n"
+            f"🏆 ТОП АГЕНТОВ ЗА {current_month_str} (Холд + Одобрено):\n"
         )
         
         if top_agents:
-            medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+            medals = ["🥇", "🥈", "🥉"]
             for i, agent in enumerate(top_agents):
                 agent_id = agent["_id"]
                 count = agent["count"]
                 
-                # Достаем имя агента для красоты
                 u_info = db['users'].find_one({"_id": agent_id}) or {}
                 agent_name = u_info.get("first_name", "Аноним")
                 
-                text += f"{medals[i]} {agent_name} (ID {agent_id}) — {count} лидов\n"
+                medal = medals[i] if i < 3 else "🔹"
+                text += f"{medal} {agent_name} (ID {agent_id}) — {count} лидов\n"
         else:
-            text += "В этом месяце пока нет одобренных лидов."
+            text += "В этом месяце пока нет переходов по ссылкам."
             
         return jsonify({"text": text})
         
