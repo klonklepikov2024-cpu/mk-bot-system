@@ -260,7 +260,7 @@ def personal_farm_notifications():
         # --- 1. ПРОВЕРКА НА ВРЕДИТЕЛЯ (ЕСЛИ УЖЕ ЗАРАЖЕНО) ---
         if plot.get("pest"):
             spawned_at = plot["pest"].get("spawned_at", now)
-            if now - spawned_at > 43200: # 12 часов на то, чтобы убить гада
+            if now - spawned_at > 10800: # 🔥 ИЗМЕНИЛИ НА 3 ЧАСА (10800 сек) 🔥
                 db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}, "$unset": {"pest": ""}})
                 try: bot.send_message(uid, f"🥀 <b>УРОЖАЙ УНИЧТОЖЕН!</b>\n{plot['pest']['name']} {plot['pest']['emoji']} сожрал(а) ваш {crop['name']}.", parse_mode="HTML", reply_markup=markup)
                 except: pass
@@ -281,7 +281,7 @@ def personal_farm_notifications():
                 else:
                     # Заражаем грядку!
                     db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"pest": {"id": pest["id"], "name": pest["name"], "emoji": pest["emoji"], "spawned_at": now}}})
-                    try: bot.send_message(uid, f"🚨 <b>ТРЕВОГА НА ФЕРМЕ!</b>\nНа ваш {crop['name']} напал(а) <b>{pest['name']} {pest['emoji']}</b>!\n\nУ вас есть <b>12 часов</b>, чтобы зайти в Кабинет и прогнать вредителя, иначе он сожрет урожай!", parse_mode="HTML", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("👞 ПРОГНАТЬ!", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm"))))
+                    try: bot.send_message(uid, f"🚨 <b>ТРЕВОГА НА ФЕРМЕ!</b>\nНа ваш {crop['name']} напал(а) <b>{pest['name']} {pest['emoji']}</b>!\n\nУ вас есть <b>3 часа</b>, чтобы зайти в Кабинет и прогнать вредителя, иначе он сожрет урожай!", parse_mode="HTML", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("👞 ПРОГНАТЬ!", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm"))))
                     except: pass
                 continue # Прерываем цикл, так как напали
 
@@ -670,6 +670,36 @@ def drop_cyber_bomb():
     try: bot.send_message(target_chat, msg_text, parse_mode="Markdown", reply_markup=markup)
     except: pass
 
+def stray_cat_tax():
+    """Соседский кот сжирает деньги лентяев (Неактив 30 дней)"""
+    import time
+    thirty_days_ago = time.time() - (30 * 86400)
+    
+    # Ищем тех, кто не заходил в Web App больше месяца
+    inactive_users = db['users'].find({"last_webapp_visit": {"$lt": thirty_days_ago}})
+    
+    for u in inactive_users:
+        uid = u["_id"]
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        rubles = user_data.get("cashback_balance", 0)
+        
+        if rubles > 0:
+            converted_pts = rubles * 2 # Утешительная конвертация
+            paid_collection.update_one({"uid": uid}, {
+                "$inc": {"cashback_balance": -rubles, "bounty_points": converted_pts}
+            })
+            
+            # Логируем, куда делись деньги
+            db['ruble_ledger'].insert_one({
+                "uid": uid, "amount": -rubles, 
+                "reason": "Съел соседский кот (Неактив > 30 дней)", "timestamp": time.time()
+            })
+            
+            try:
+                from core.bot import bot
+                bot.send_message(uid, f"🐈‍⬛ <b>СОСЕДСКИЙ КОТ ДОБРАЛСЯ ДО КОШЕЛЬКА!</b>\n\nВы не заходили в Кабинет больше месяца. Бездомный кот пробрался к вам и сгрыз <b>{rubles} ₽</b>...\n\nСкайнет сжалился и обменял обрывки на <b>{converted_pts} 💎</b>.", parse_mode="HTML")
+            except: pass
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
@@ -698,5 +728,9 @@ def start_scheduler():
         # 🔥 Авто-Аукцион (Каждую пятницу в 18:00 по МСК)
         scheduler.add_job(auto_spawn_auction_lot, 'cron', day_of_week='fri', hour=18, minute=0, id='auto_auction_spawn', replace_existing=True)
         
+        # 🐈‍⬛ Набег Соседского Кота (Каждый день в 12:00)
+        scheduler.add_job(stray_cat_tax, 'cron', hour=12, minute=0, id='stray_cat_tax', replace_existing=True)
+        
         scheduler.start()
-        print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш)!")
+        print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш + Коты)!")
+

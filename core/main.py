@@ -121,9 +121,15 @@ def get_profile():
     # --- СОБИРАЕМ ИНФУ О СЕМЬЕ ДЛЯ WEB APP ---
     partner_id = user_db.get("partner_id")
     partner_name = None
+    family_balance = 0 # По умолчанию копилка пуста
     if partner_id:
         p_stat = db['chat_stats'].find_one({"uid": partner_id}) or {}
         partner_name = p_stat.get("name", f"ID {partner_id}")
+        
+        # Тянем баланс семьи из базы
+        fam_id = f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
+        fam_db = db['family_banks'].find_one({"_id": fam_id}) or {}
+        family_balance = fam_db.get("balance", 0)
         
     children_count = len(user_db.get("children", []))
     
@@ -133,6 +139,7 @@ def get_profile():
         "karma": user_db.get("social_rating", 0),
         "partner": partner_name,
         "kids": children_count,
+        "family_balance": family_balance, # 🔥 ДОБАВИЛИ ЭТУ СТРОЧКУ 🔥
         "golden_frame": user_db.get("golden_frame", False),
         "achievements": user_db.get("achievements", [])
     })
@@ -815,13 +822,32 @@ def api_open_chest():
     import random
     chance = random.randint(1, 100)
     if chance <= 45:
-        stolen = int(remaining * random.uniform(0.10, 0.25))
-        if stolen > 0: 
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
-            # 🔥 ДОБАВЬ ВОТ ЭТУ СТРОЧКУ 🔥
-            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": stolen}})
+        rubles = user_data.get("cashback_balance", 0)
+        target = "points"
+        
+        # 🔥 УМНЫЙ КОТ: Выбирает, что жрать 🔥
+        if rubles >= 2000 and random.randint(1, 100) <= 50:
+            target = "rubles" # Шанс 50%, если денег больше 2000
+        elif rubles > 0 and random.randint(1, 100) <= 15:
+            target = "rubles" # Шанс 15%, если просто есть деньги
             
-        return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen} очков, пока убегал!"})
+        if target == "rubles":
+            stolen_rub = int(rubles * random.uniform(0.10, 0.25))
+            if stolen_rub > 0:
+                paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -stolen_rub}})
+                db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": stolen_rub}})
+                import time
+                db['ruble_ledger'].insert_one({"uid": uid, "amount": -stolen_rub, "reason": "Кот в мешке (Сундук)", "timestamp": time.time()})
+                return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ-КАПИТАЛИСТ!\nКот выскочил из сундука и разорвал ваши купюры! Потеряно {stolen_rub} ₽ (переведены в Фин. Сейф)!"})
+
+        # Если кот выбрал очки
+        steal_pct = random.uniform(0.15, 0.35) if remaining >= 10000 else random.uniform(0.10, 0.25)
+        stolen_pts = int(remaining * steal_pct)
+        if stolen_pts > 0: 
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen_pts}})
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": stolen_pts}})
+            
+        return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen_pts} очков, пока убегал!"})
     elif chance <= 80:
         shards = random.randint(1, 4)
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
@@ -2830,7 +2856,8 @@ RP_COMMANDS = {
     "понюхать": "👃 [{name1}](tg://user?id={id1}) подозрительно обнюхал(а) [{name2}](tg://user?id={id2})"
 }
 
-@bot.message_handler(func=lambda m: m.reply_to_message and m.text)
+# Ловим команды, но СТРОГО игнорируем системные (чтобы не ломать дуэли и суды!)
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!развести', '!рейд', '!щелчок')))
 def handle_rp_commands(message):
     # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
     if message.sender_chat:

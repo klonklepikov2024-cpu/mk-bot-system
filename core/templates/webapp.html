@@ -76,12 +76,16 @@
                 <span class="font-bold text-white text-sm" id="uiPartnerName">...</span>
             </div>
             
-            <div class="flex justify-between items-center relative z-10 bg-black/20 p-2 rounded-lg border border-gray-700/50">
+            <div class="flex justify-between items-center mb-2 relative z-10 bg-black/20 p-2 rounded-lg border border-gray-700/50">
                 <span class="text-xs text-gray-400">Наследники:</span>
                 <span class="font-bold text-white"><span id="uiKidsCount" class="text-pink-400">0</span>/3</span>
             </div>
             
-            <p class="text-[9px] text-gray-500 mt-2 text-center leading-tight">Ваши грядки на ферме теперь общие!<br>Счет "Семейной Копилки" в разработке...</p>
+            <!-- 🔥 ТЕПЕРЬ ТУТ БАЛАНС КОПИЛКИ 🔥 -->
+            <div class="flex justify-between items-center relative z-10 bg-black/20 p-2 rounded-lg border border-gray-700/50">
+                <span class="text-xs text-gray-400">Семейный фонд:</span>
+                <span class="font-bold text-yellow-400"><span id="uiFamilyBank">0</span> 💎</span>
+            </div>
         </div>
 
         <div class="surface rounded-2xl p-4 mb-4 text-center">
@@ -878,6 +882,7 @@
                     famBlock.classList.remove('hidden');
                     document.getElementById('uiPartnerName').innerText = data.partner || "Одинок(а)";
                     document.getElementById('uiKidsCount').innerText = data.kids || "0";
+                    document.getElementById('uiFamilyBank').innerText = data.family_balance || "0"; // 🔥 ДОБАВЛЕНА СТРОКА 🔥
                 } else {
                     famBlock.classList.add('hidden'); // Прячем, если семьи нет
                 }
