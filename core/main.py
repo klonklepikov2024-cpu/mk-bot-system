@@ -1578,14 +1578,10 @@ def api_farm_action():
     elif action == 'water':
         if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
 
-        # 🔥 ИСПРАВЛЕНИЕ: Добавили импорт datetime 🔥
         import datetime
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        
-        # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (ПОЛИВ) 🔥
         db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"watered": True}}, upsert=True)
         
-        # 🔥 Защита от бесконечного полива (Кулдаун 4 часа)
         last_watered = plot.get('last_watered', 0)
         time_passed = now - last_watered
         cooldown = 4 * 3600 # 4 часа в секундах
@@ -1595,7 +1591,21 @@ def api_farm_action():
             return jsonify({"error": f"Грядка еще влажная! Возвращайтесь через {left_mins} мин."}), 400
             
         db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"last_watered": now}})
-        return jsonify({"success": True, "msg": "💧 Растение успешно полито. Таймер засухи сброшен!"})
+        
+        # 🔥 СИНДИКАТ: КООПЕРАТИВНЫЙ ПОЛИВ 🔥
+        user_db = paid_collection.find_one({"uid": uid}) or {}
+        partner_id = user_db.get("partner_id")
+        extra_msg = ""
+        
+        if partner_id:
+            # Поливаем ВСЕ растущие грядки партнера одним махом!
+            db['farm_plots'].update_many(
+                {"uid": partner_id, "status": "growing"}, 
+                {"$set": {"last_watered": now}}
+            )
+            extra_msg = "\n💖 Грядки вашего супруга(и) также автоматически политы!"
+            
+        return jsonify({"success": True, "msg": f"💧 Растение успешно полито. Таймер засухи сброшен!{extra_msg}"})
         
     # === ОЧИСТКА ЗАСОХШЕГО ===
     elif action == 'clear':
@@ -3304,20 +3314,22 @@ def help_commands(message):
         "• `!свадьба` *(в ответ)* — сделать предложение\n"
         "• `!развод` — расторгнуть брак (штраф 1000 💎)\n"
         "• `!усыновить` *(в ответ)* — взять ребенка в семью\n"
-        "• `!семья` — посмотреть генеалогическое древо\n\n"
+        "• `!семья` — генеалогическое древо\n"
+        "• `!копилка [сумма]` — положить Очки в семейный фонд\n"
+        "• `!копилка снять [сумма]` — взять из фонда\n\n"
         "🎲 **АЗАРТ И ЭКОНОМИКА:**\n"
         "• `!дуэль [ставка]` *(в ответ)* — битва на Очки\n"
         "• `!раздача [сумма] [кол-во]` — скинуть мешок с 💎 в чат\n"
         "• `!рулетка` — выжить или словить мут (награда 5-15 💎)\n\n"
         "⚖️ **ПРАВОСУДИЕ:**\n"
-        "• `!суд` *(в ответ)* — начать сбор на арест (мут) юзера\n"
-        "• `+` или `-` *(в ответ)* — повысить/понизить Карму\n\n"
+        "• `!суд` *(в ответ)* — начать сбор на арест юзера\n"
+        "• `+`, `-`, `лайк`, `дизлайк` *(в ответ)* — Карму\n\n"
         "👤 **ПРОФИЛЬ И ОБЩЕНИЕ:**\n"
         "• `!профиль` *(можно в ответ)* — досье и балансы\n"
-        "• `!топ` — топ болтунов текущего чата\n"
-        "• `!рп` — список интерактивных ролплей-действий\n\n"
+        "• `!топ` — топ болтунов чата\n"
+        "• `!рп` — список интерактивных действий\n\n"
         "🎮 **ИГРОВОЙ КАБИНЕТ:**\n"
-        "Напишите `/start` в личку боту, чтобы открыть Web App (Ферму, Рынок, Сейфы и Сундуки)!"
+        "Напишите `/start` в личку боту, чтобы открыть Web App!"
     )
     
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -3360,6 +3372,52 @@ def handle_karma_vote(message):
         paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": -1}}, upsert=True)
         new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
         bot.reply_to(message, f"📉 **Внимание, нарушение!**\nГражданин [{target_name}](tg://user?id={target_id}) получает -1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!копилка', 'копилка')))
+def family_piggy_bank(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    partner_id = user_data.get("partner_id")
+    
+    if not partner_id:
+        return bot.reply_to(message, "🕸 У вас нет Синдиката! Общий счет доступен только в браке.")
+        
+    # Формируем уникальный ID семьи (сортируем ID, чтобы у обоих был одинаковый ключ)
+    family_id = f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
+    fam_db = db['family_banks'].find_one({"_id": family_id}) or {"balance": 0}
+    current_bank = fam_db.get("balance", 0)
+    
+    parts = message.text.lower().split()
+    
+    # ПРОСТО "!КОПИЛКА" - Баланс
+    if len(parts) == 1:
+        return bot.reply_to(message, f"💍 **СЕМЕЙНЫЙ ФОНД**\n\nТекущий баланс: **{current_bank} 💎**\n\n_Пополнить:_ `!копилка 100`\n_Снять:_ `!копилка снять 100`", parse_mode="Markdown")
+        
+    # СНЯТИЕ ДЕНЕГ
+    if parts[1] == "снять":
+        if len(parts) < 3 or not parts[2].isdigit():
+            return bot.reply_to(message, "⚠️ Укажите сумму: `!копилка снять 500`")
+            
+        amount = int(parts[2])
+        if amount > current_bank:
+            return bot.reply_to(message, f"📉 В копилке нет столько денег! Там всего {current_bank} 💎.")
+            
+        db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": -amount}})
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}})
+        bot.reply_to(message, f"💸 Вы забрали **{amount} 💎** из семейного фонда!\n_Остаток: {current_bank - amount} 💎_", parse_mode="Markdown")
+        
+    # ПОПОЛНЕНИЕ КОПИЛКИ
+    elif parts[1].isdigit():
+        amount = int(parts[1])
+        if amount < 10:
+            return bot.reply_to(message, "📉 Минимальный вклад: 10 💎")
+            
+        if user_data.get("bounty_points", 0) < amount:
+            return bot.reply_to(message, "❌ У вас нет столько Очков на руках!")
+            
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -amount}})
+        db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": amount}}, upsert=True)
+        bot.reply_to(message, f"🏦 Вы положили **{amount} 💎** в семейный фонд!\n_Всего накоплено: {current_bank + amount} 💎_", parse_mode="Markdown")
 
 # ==============================================================================
             
