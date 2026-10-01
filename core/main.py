@@ -3127,7 +3127,9 @@ def challenge_duel(message):
 def handle_duel_response(call):
     parts = call.data.split('_')
     action = parts[1]
-    duel_id = f"{parts[0]}_{parts[2]}_{parts[3]}_{parts[4]}"
+    
+    # 🔥 ИСПРАВЛЕННАЯ СТРОКА: Берем куски 2, 3, 4 и 5! 🔥
+    duel_id = f"{parts[2]}_{parts[3]}_{parts[4]}_{parts[5]}"
     
     duel = db['active_duels'].find_one({"_id": duel_id, "status": "pending"})
     if not duel:
