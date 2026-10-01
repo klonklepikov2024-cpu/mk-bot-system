@@ -604,14 +604,25 @@
         <!-- Модуль 5: Аналитика -->
         <div class="surface rounded-2xl p-4 mb-4 shadow-lg border border-green-700/50">
             <h3 class="font-bold text-lg mb-2 text-green-400">📊 Аналитика Скайнета</h3>
-            <!-- 🔥 ТУТ ДОБАВИЛАСЬ КНОПКА СВОДКИ (Сетка 2x2) 🔥 -->
+            
+            <!-- ТОП-30 ДОСТУПЕН ВСЕМ АДМИНАМ -->
             <div class="grid grid-cols-2 gap-2 mb-3">
-                <button onclick="adminGetStats('global')" class="bg-green-600/30 py-2 rounded-xl font-bold text-green-400 text-xs active:scale-95 border border-green-500/50">📊 Глобальная сводка</button>
-                <button onclick="adminGetStats('zreport')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🧾 Z-Отчет</button>
-                <button onclick="adminGetStats('bank')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🏦 Банк Казино</button>
-                <button onclick="adminGetStats('cpa')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🔗 CPA Лиды</button>
+                <button onclick="adminGetStats('top30_pts')" class="bg-blue-600/30 py-2 rounded-xl font-bold text-blue-400 text-xs active:scale-95 border border-blue-500/50">🏆 Топ 30 (Очки)</button>
+                <button onclick="adminGetStats('top30_rub')" class="bg-green-600/30 py-2 rounded-xl font-bold text-green-400 text-xs active:scale-95 border border-green-500/50">💸 Топ 30 (Рубли)</button>
             </div>
-            <div id="adminStatsResult" class="hidden bg-black/50 p-3 rounded-lg border border-gray-600 text-xs font-mono text-green-300 whitespace-pre-wrap max-h-64 overflow-y-auto custom-scrollbar"></div>
+
+            <!-- 🔥 СЕКРЕТНЫЙ БЛОК (ТОЛЬКО ДЛЯ СОЗДАТЕЛЯ) 🔥 -->
+            <div id="creatorStatsBlock" class="hidden">
+                <div class="h-px bg-green-900/50 w-full mb-3"></div>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <button onclick="adminGetStats('global')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">📊 Глобальная сводка</button>
+                    <button onclick="adminGetStats('zreport')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🧾 Z-Отчет</button>
+                    <button onclick="adminGetStats('bank')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🏦 Банк Казино</button>
+                    <button onclick="adminGetStats('cpa')" class="bg-gray-700 py-2 rounded-xl font-bold text-white text-xs active:scale-95">🔗 CPA Лиды</button>
+                </div>
+            </div>
+
+            <div id="adminStatsResult" class="hidden bg-black/50 p-3 rounded-lg border border-gray-600 text-xs font-mono text-green-300 whitespace-pre-wrap max-h-64 overflow-y-auto custom-scrollbar mt-3"></div>
         </div>
     </div> <!-- 🔥 ВОТ ЭТОТ ТЕГ МЫ ПОТЕРЯЛИ (ЗАКРЫВАЕТ ВКЛАДКУ ЦУП) 🔥 -->
     
@@ -747,10 +758,24 @@
             document.getElementById('userId').innerText = 'ID: ' + user.id;
             if (user.photo_url) document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" class="w-full h-full object-cover">`;
             
-            // 🔥 РЕЖИМ БОГА: ДОБАВЬ СЮДА ID ВСЕХ АДМИНОВ / ТЕСТЕРОВ 🔥
-            const ADMIN_IDS = ["479938867", "123456789", "987654321"]; 
+            // 🔥 СИСТЕМА РОЛЕЙ СКАЙНЕТА 🔥
+            const CREATOR_ID = "479938867"; // Твой личный ID (Уровень Бога)
+            const ADMIN_IDS = ["479938867", "7235010425"]; // Список всех админов
+            
             if (ADMIN_IDS.includes(String(user.id))) {
-                document.getElementById('adminNavBtn').classList.remove('hidden');
+                const navBtn = document.getElementById('adminNavBtn');
+                navBtn.classList.remove('hidden');
+                navBtn.classList.add('flex'); // Заставляем Tailwind показать кнопку
+                
+                // ЕСЛИ ЭТО ТЫ (Создатель) - открываем секретный блок аналитики!
+                if (String(user.id) === CREATOR_ID) {
+                    document.getElementById('creatorStatsBlock').classList.remove('hidden');
+                } else {
+                    // Модераторам прячем еще и блок Эмиссии (если у него есть id="moduleEmission")
+                    // Добавь id="moduleEmission" к блоку "Эмиссия и Аирдропы" в HTML, чтобы это сработало
+                    const emissionBlock = document.getElementById('moduleEmission');
+                    if(emissionBlock) emissionBlock.classList.add('hidden');
+                }
             }
         }
 

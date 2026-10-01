@@ -2389,13 +2389,45 @@ def api_admin_stats():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     stat_type = data.get('type')
     
+    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    uid = json.loads(parsed_data['user'])['id']
+    
     import datetime
     import time
-    from config import ADMIN_CHAT_IDS
+    from config import ADMIN_CHAT_IDS, OWNER_ID
     
+    if uid not in ADMIN_CHAT_IDS and uid != OWNER_ID:
+        return jsonify({"error": "Доступ запрещен."}), 403
+        
+    # 🔥 ПРАВДОПОДОБНОЕ ОТРИЦАНИЕ: Скрываем финансы от модераторов 🔥
+    if stat_type in ["zreport", "bank", "global", "cpa"] and uid != OWNER_ID:
+        return jsonify({"text": "🛠 **Ошибка синхронизации кластера.**\n\nФинансовые шарды базы данных временно отключены сервером для создания бэкапа. Попробуйте запросить аналитику позже."})
+
+    # === ТОП 30 БОГАЧЕЙ (ОЧКИ 💎) ===
+    if stat_type == "top30_pts":
+        # Исключаем тестовые счета админов из топа
+        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
+        top_pts = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "bounty_points": {"$gt": 0}}).sort("bounty_points", -1).limit(30))
+        
+        text = "🏆 **ТОП 30 БОГАЧЕЙ (ОЧКИ 💎)**\n\n"
+        for i, u in enumerate(top_pts, 1):
+            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
+            text += f"{i}. {name} — {int(u.get('bounty_points', 0))} 💎\n"
+        return jsonify({"text": text})
+
+    # === ТОП 30 ОЛИГАРХОВ (РУБЛИ) ===
+    elif stat_type == "top30_rub":
+        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
+        top_rub = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "cashback_balance": {"$gt": 0}}).sort("cashback_balance", -1).limit(30))
+        
+        text = "💸 **ТОП 30 ОЛИГАРХОВ (РУБЛИ ₽)**\n\n"
+        for i, u in enumerate(top_rub, 1):
+            name = (db['chat_stats'].find_one({"uid": u['uid']}) or {}).get("name", f"ID {u['uid']}")
+            text += f"{i}. {name} — {int(u.get('cashback_balance', 0))} ₽\n"
+        return jsonify({"text": text})
+
     # 🔥 ИДЕАЛЬНЫЙ ЦЕНТР ПОДСЧЕТА (Игнорирует минуса и тестовые счета админов) 🔥
     def get_real_wealth():
-        # Считаем очки (строго > 0, ИСКЛЮЧАЯ АДМИНОВ)
         pts_res = list(paid_collection.aggregate([
             {"$match": {
                 "uid": {"$nin": ADMIN_CHAT_IDS}, 
@@ -2404,7 +2436,6 @@ def api_admin_stats():
             {"$group": {"_id": None, "total": {"$sum": "$bounty_points"}}}
         ]))
         
-        # Считаем рубли (строго > 0, ИСКЛЮЧАЯ АДМИНОВ)
         cb_res = list(paid_collection.aggregate([
             {"$match": {
                 "uid": {"$nin": ADMIN_CHAT_IDS}, 
@@ -2419,7 +2450,7 @@ def api_admin_stats():
         )
 
     # === ГЛОБАЛЬНАЯ СВОДКА ===
-    if stat_type == "global":
+    elif stat_type == "global":
         total_users = db['users'].count_documents({})
         total_banned = db['banned'].count_documents({})
         
@@ -2428,7 +2459,6 @@ def api_admin_stats():
         webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now_time - 86400}})
         active_plots = db['farm_plots'].count_documents({"status": "growing"})
         
-        # Получаем очищенные данные
         total_points, total_cb = get_real_wealth()
         
         active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
@@ -2452,8 +2482,6 @@ def api_admin_stats():
     # === БАНК КАЗИНО ===
     elif stat_type == "bank":
         bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
-        
-        # Получаем очищенные данные
         _, total_cb = get_real_wealth()
         
         text = (
@@ -2475,17 +2503,13 @@ def api_admin_stats():
         approved = db['cpa_traffic'].count_documents({"status": "approved"})
         hold = db['cpa_traffic'].count_documents({"status": "hold"})
         
-        # Считаем все виды отказов
         fraud_banned = db['cpa_traffic'].count_documents({"status": "fraud_banned"})
         fraud_left = db['cpa_traffic'].count_documents({"status": "fraud_left"})
         fraud_old = db['cpa_traffic'].count_documents({"status": "fraud"})
         total_fraud = fraud_banned + fraud_left + fraud_old
         
-        # 🔥 СУПЕР-ДЕТАЛЬНЫЙ ТОП-15 АГЕНТОВ (Вся воронка) 🔥
         pipeline = [
-            {"$match": {
-                "join_time": {"$gte": start_of_month_ts}
-            }},
+            {"$match": {"join_time": {"$gte": start_of_month_ts}}},
             {"$group": {
                 "_id": "$agent_id",
                 "valid_leads": {"$sum": {"$cond": [{"$in": ["$status", ["approved", "hold"]]}, 1, 0]}},
@@ -2493,7 +2517,7 @@ def api_admin_stats():
                 "hold": {"$sum": {"$cond": [{"$eq": ["$status", "hold"]}, 1, 0]}},
                 "fraud": {"$sum": {"$cond": [{"$in": ["$status", ["fraud_banned", "fraud_left", "fraud"]]}, 1, 0]}}
             }},
-            {"$match": {"valid_leads": {"$gt": 0}}}, # Показываем только тех, кто налил хоть 1 валидный лид
+            {"$match": {"valid_leads": {"$gt": 0}}}, 
             {"$sort": {"valid_leads": -1}},
             {"$limit": 15}
         ]
@@ -2523,7 +2547,6 @@ def api_admin_stats():
                 username = u_info.get("username")
                 first_name = u_info.get("first_name", "Аноним")
                 
-                # Безопасно ставим ровно одну @
                 agent_name = f"@{username.lstrip('@')}" if username else first_name
                 
                 medal = medals[i] if i < 3 else "🔹"
@@ -2563,7 +2586,7 @@ def api_admin_stats():
             f"📅 СЕГОДНЯ:\n"
             f"💰 Штрафы: {today_fine} ⭐️\n"
             f"📢 Реклама: {today_ads} ⭐️\n"
-            f"👑 VIP-доступ: {format_money(today_dict, 'vip')} ⭐️\n"
+            f"👑 VIP-доступ: {format_money(today_dict, 'vip')} ⭐️️\n"
             f"🏳️‍🌈 BEYOND-чат: {format_money(today_dict, 'beyond')} ⭐️\n"
             f"📜 Индульгенции: {format_money(today_dict, 'indulgence')} ⭐️\n"
             f"🛒 Магазин очков: {format_money(today_dict, 'points_shop')} ⭐️\n"
@@ -2578,7 +2601,7 @@ def api_admin_stats():
             f"💰 Штрафы: {all_fine} ⭐️\n"
             f"📢 Реклама: {all_ads} ⭐️\n"
             f"👑 VIP-доступ: {format_money(all_dict, 'vip')} ⭐️\n"
-            f"🏳️‍🌈 BEYOND-чат: {format_money(all_dict, 'beyond')} ⭐️\n"
+            f"🏳️️‍🌈 BEYOND-чат: {format_money(all_dict, 'beyond')} ⭐️\n"
             f"📜 Индульгенции: {format_money(all_dict, 'indulgence')} ⭐️\n"
             f"🛒 Магазин очков: {format_money(all_dict, 'points_shop')} ⭐️\n"
             f"⚖️ Ком-я рынка: {format_money(all_dict, 'market_fee')} ⭐️\n"
@@ -2798,12 +2821,19 @@ RP_COMMANDS = {
     "понюхать": "👃 [{name1}](tg://user?id={id1}) подозрительно обнюхал(а) [{name2}](tg://user?id={id2})"
 }
 
-# Ловим команды (умный поиск, чтобы работало "дать пять" и игнорировался текст после команды)
-@bot.message_handler(func=lambda m: m.reply_to_message and m.text and any(m.text.strip().lower().startswith(k) for k in RP_COMMANDS.keys()))
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text)
 def handle_rp_commands(message):
+    # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
+    if message.sender_chat:
+        # Отвечаем только если это реально похоже на команду
+        if message.text.startswith('!') or any(message.text.lower().startswith(k) for k in RP_COMMANDS.keys()):
+            bot.reply_to(message, "👻 Вы пишете от имени группы! Выйдите из анонимного режима, чтобы играть.")
+        return
+
     text_lower = message.text.strip().lower()
-    
-    # Ищем команду. Сортируем по длине (reverse=True), чтобы "дать пять" сработало раньше, чем просто "дать"
+    if text_lower.startswith('!'):
+        text_lower = text_lower[1:]
+        
     cmd = None
     for k in sorted(RP_COMMANDS.keys(), key=len, reverse=True):
         if text_lower.startswith(k):
@@ -2814,10 +2844,11 @@ def handle_rp_commands(message):
     if cmd:
         text_template = RP_COMMANDS[cmd]
     else:
-        # Проверяем личных NPC (Аукцион)
+        # Проверяем личных NPC
         for npc in db['custom_rp'].find({"uid": message.from_user.id}):
-            if text_lower.startswith(f"!{npc['cmd']}") or text_lower.startswith(npc['cmd']):
+            if text_lower.startswith(npc['cmd']):
                 text_template = npc['text']
+                cmd = npc['cmd']
                 break
                 
     if not text_template: return
@@ -2833,12 +2864,14 @@ def handle_rp_commands(message):
         return
         
     # 🔥 ХВАТАЕМ ТЕКСТ ПОСЛЕ КОМАНДЫ (ХВОСТ) 🔥
-    extra_text = message.text.lower().replace(cmd, '', 1).strip()
+    clean_text = message.text.strip()
+    if clean_text.startswith('!'):
+        clean_text = clean_text[1:]
+        
+    extra_text = clean_text[len(cmd):].strip()
     tail = f" {extra_text}" if extra_text else ""
         
     bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2) + tail, parse_mode="Markdown")
-        
-    bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2), parse_mode="Markdown")
 
 # 1.5 СПРАВОЧНИК КОМАНД ДЛЯ ИГРОКОВ
 @bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!рп', 'рп', '/rp'])
