@@ -3048,22 +3048,6 @@ def text_profile(message):
     )
     bot.reply_to(message, text, parse_mode="Markdown")
 
-# 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ (С сохранением @username)
-@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
-def track_global_activity(message):
-    if message.text and message.text.startswith(('!', '/')): return
-    
-    set_fields = {"name": message.from_user.first_name}
-    if message.from_user.username:
-        # Сохраняем юзернейм в нижнем регистре для удобного поиска
-        set_fields["username"] = message.from_user.username.lower()
-        db['users'].update_one({"_id": message.from_user.id}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
-        
-    db['chat_stats'].update_one(
-        {"chat_id": message.chat.id, "uid": message.from_user.id}, 
-        {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True
-    )
-
 # 5. КИБЕР-ДУЭЛИ (PvP на ставки)
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!дуэль', 'дуэль', '/duel')))
 def challenge_duel(message):
@@ -3895,6 +3879,22 @@ def spawn_auction_lot(message):
         "status": "active"
     })
     bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
+
+# 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ (С сохранением @username)
+@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
+def track_global_activity(message):
+    if message.text and message.text.startswith(('!', '/')): return
+    
+    set_fields = {"name": message.from_user.first_name}
+    if message.from_user.username:
+        # Сохраняем юзернейм в нижнем регистре для удобного поиска
+        set_fields["username"] = message.from_user.username.lower()
+        db['users'].update_one({"_id": message.from_user.id}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
+        
+    db['chat_stats'].update_one(
+        {"chat_id": message.chat.id, "uid": message.from_user.id}, 
+        {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True
+    )
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
