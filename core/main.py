@@ -3035,8 +3035,8 @@ def russian_roulette(message):
     
     if random.randint(1, 6) == 1:
         # УВЕЛИЧИВАЕМ СЧЕТЧИК СМЕРТЕЙ
-        paid_collection.update_one({"uid": uid}, {"$inc": {"roulette_deaths_streak": 1}})
-        new_data = paid_collection.find_one({"uid": uid})
+        paid_collection.update_one({"uid": uid}, {"$inc": {"roulette_deaths_streak": 1}}, upsert=True)
+        new_data = paid_collection.find_one({"uid": uid}) or {}
         
         if user_data.get("immunity", 0) > 0:
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
