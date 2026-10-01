@@ -823,22 +823,25 @@ def api_get_cpa():
     dupes = user_data.get("cpa_duplicates", 0)
     cases = user_data.get("agent_cases", 0) 
     
-    # 2. 🔥 ФОРМИРУЕМ ЛИДЕРБОРД ТЕКУЩЕГО МЕСЯЦА (LIVE-режим) 🔥
+    # 2. 🔥 ФОРМИРУЕМ ЛИДЕРБОРД ТЕКУЩЕГО МЕСЯЦА (С БРАКОМ) 🔥
     import datetime
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
     current_month_str = now.strftime("%Y-%m")
-    
-    # Вычисляем точную метку времени (timestamp) для 1 числа текущего месяца
     start_of_month_ts = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
     
     pipeline = [
-        # Берем ВСЕХ, кто пришел в этом месяце (и в холде, и одобренных)
         {"$match": {
-            "join_time": {"$gte": start_of_month_ts},
-            "status": {"$in": ["approved", "hold"]}
+            "join_time": {"$gte": start_of_month_ts}
         }},
-        {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
+        {"$group": {
+            "_id": "$agent_id",
+            "valid_leads": {"$sum": {"$cond": [{"$in": ["$status", ["approved", "hold"]]}, 1, 0]}},
+            "approved": {"$sum": {"$cond": [{"$eq": ["$status", "approved"]}, 1, 0]}},
+            "hold": {"$sum": {"$cond": [{"$eq": ["$status", "hold"]}, 1, 0]}},
+            "fraud": {"$sum": {"$cond": [{"$in": ["$status", ["fraud_banned", "fraud_left", "fraud"]]}, 1, 0]}}
+        }},
+        {"$match": {"valid_leads": {"$gt": 0}}},
+        {"$sort": {"valid_leads": -1}},
         {"$limit": 5}
     ]
     top_agents_raw = list(db['cpa_traffic'].aggregate(pipeline))
@@ -846,7 +849,6 @@ def api_get_cpa():
     top_agents = []
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     for idx, agent in enumerate(top_agents_raw):
-        # Анонимизация имен для безопасности
         u_info = db['users'].find_one({"_id": agent["_id"]}) or {}
         first_name = u_info.get("first_name", "Аноним")
         safe_name = f"{first_name[:6]}***" 
@@ -857,7 +859,10 @@ def api_get_cpa():
         top_agents.append({
             "medal": medals[idx] if idx < 5 else f"{idx+1}️⃣",
             "name": display_name,
-            "count": agent["count"],
+            "count": agent["valid_leads"],
+            "approved": agent["approved"],
+            "hold": agent["hold"],
+            "fraud": agent["fraud"], # <--- Передаем БРАК на фронтенд
             "is_me": is_me
         })
     
@@ -2261,14 +2266,20 @@ def api_admin_stats():
         fraud_old = db['cpa_traffic'].count_documents({"status": "fraud"})
         total_fraud = fraud_banned + fraud_left + fraud_old
         
-        # 🔥 ТОП-15 АГЕНТОВ ТЕКУЩЕГО МЕСЯЦА (Расширенный список для админа) 🔥
+        # 🔥 СУПЕР-ДЕТАЛЬНЫЙ ТОП-15 АГЕНТОВ (Вся воронка) 🔥
         pipeline = [
             {"$match": {
-                "join_time": {"$gte": start_of_month_ts},
-                "status": {"$in": ["approved", "hold"]}
+                "join_time": {"$gte": start_of_month_ts}
             }},
-            {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1}},
+            {"$group": {
+                "_id": "$agent_id",
+                "valid_leads": {"$sum": {"$cond": [{"$in": ["$status", ["approved", "hold"]]}, 1, 0]}},
+                "approved": {"$sum": {"$cond": [{"$eq": ["$status", "approved"]}, 1, 0]}},
+                "hold": {"$sum": {"$cond": [{"$eq": ["$status", "hold"]}, 1, 0]}},
+                "fraud": {"$sum": {"$cond": [{"$in": ["$status", ["fraud_banned", "fraud_left", "fraud"]]}, 1, 0]}}
+            }},
+            {"$match": {"valid_leads": {"$gt": 0}}}, # Показываем только тех, кто налил хоть 1 валидный лид
+            {"$sort": {"valid_leads": -1}},
             {"$limit": 15}
         ]
         top_agents = list(db['cpa_traffic'].aggregate(pipeline))
@@ -2281,20 +2292,29 @@ def api_admin_stats():
             f"   ├ Сбежали из чата: {fraud_left}\n"
             f"   └ Забанены за спам: {fraud_banned}\n"
             f"✅ ОДОБРЕНО (Лиды за всё время): {approved}\n\n"
-            f"🏆 ТОП АГЕНТОВ ЗА {current_month_str} (Холд + Одобрено):\n"
+            f"🏆 ДЕТАЛЬНЫЙ ТОП АГЕНТОВ ЗА {current_month_str}:\n\n"
         )
         
         if top_agents:
             medals = ["🥇", "🥈", "🥉"]
             for i, agent in enumerate(top_agents):
                 agent_id = agent["_id"]
-                count = agent["count"]
+                valid_leads = agent["valid_leads"]
+                approved_leads = agent["approved"]
+                hold_leads = agent["hold"]
+                fraud_leads = agent["fraud"]
                 
                 u_info = db['users'].find_one({"_id": agent_id}) or {}
-                agent_name = u_info.get("first_name", "Аноним")
+                username = u_info.get("username")
+                first_name = u_info.get("first_name", "Аноним")
+                
+                # Если есть юзернейм — показываем его, иначе имя
+                agent_name = f"@{username}" if username else first_name
                 
                 medal = medals[i] if i < 3 else "🔹"
-                text += f"{medal} {agent_name} (ID {agent_id}) — {count} лидов\n"
+                text += f"{medal} {agent_name} (ID {agent_id})\n"
+                text += f"   ├ В зачёт: {valid_leads} (Одобрено: {approved_leads} | Холд: {hold_leads})\n"
+                text += f"   └ Брак (сбежали/бан): {fraud_leads}\n\n"
         else:
             text += "В этом месяце пока нет переходов по ссылкам."
             
