@@ -213,6 +213,32 @@
     <!-- ================= ВКЛАДКА 5: ФИНАНСЫ ================= -->
     <div id="tab-finance" class="tab-content">
         <h2 class="font-bold text-2xl mb-4">Финансы & Сеть</h2>
+
+        <!-- 🔥 МФО: БЫСТРЫЕ АЛМАЗЫ 🔥 -->
+        <h3 class="font-bold text-lg mb-2 text-red-400">💳 МФО «Быстрые Алмазы»</h3>
+        <div class="surface rounded-2xl p-4 mb-6 shadow-lg border border-red-500/50 relative overflow-hidden bg-red-900/10">
+            <div class="absolute -right-4 -top-4 text-6xl opacity-10">🏦</div>
+            <p class="text-xs text-gray-300 mb-3 relative z-10">Мгновенные займы без проверок! Одобрение 100%.</p>
+            
+            <input type="number" id="loanAmount" placeholder="Сумма (до 10000 💎)" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-red-900 focus:border-red-500 relative z-10">
+            
+            <select id="loanDays" onchange="calcLoan()" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-red-900 focus:border-red-500 relative z-10 appearance-none">
+                <option value="1">Срок: 1 день (+20%)</option>
+                <option value="3">Срок: 3 дня (+40%)</option>
+                <option value="7">Срок: 7 дней (+70%)</option>
+            </select>
+            
+            <div class="flex justify-between items-center mb-3 bg-black/40 p-2 rounded-lg border border-red-900/50 relative z-10">
+                <span class="text-xs text-gray-400">К возврату:</span>
+                <span class="font-bold text-white"><span id="loanReturnAmount">0</span> 💎</span>
+            </div>
+            
+            <div class="flex space-x-2 relative z-10">
+                <button onclick="handleLoan('take')" class="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Взять займ</button>
+                <button onclick="handleLoan('pay')" class="flex-1 bg-green-600 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform">Погасить долг</button>
+            </div>
+            <p class="text-[9px] text-red-400/80 mt-2 text-center relative z-10 font-bold uppercase">Внимание: Просрочка карается арестом счетов и блокировкой (МУТ)!</p>
+        </div>
         
         <h3 class="font-bold text-lg mb-2">⭐ Покупка очков</h3>
         <div class="grid grid-cols-2 gap-2 mb-6">
@@ -2096,6 +2122,30 @@
                         loadAuction(); 
                         loadProfile();
                     });
+                }
+            });
+        }
+
+        function calcLoan() {
+            let amount = parseInt(document.getElementById('loanAmount').value) || 0;
+            let days = parseInt(document.getElementById('loanDays').value) || 1;
+            let pct = days === 1 ? 0.20 : (days === 3 ? 0.40 : 0.70);
+            document.getElementById('loanReturnAmount').innerText = Math.floor(amount + (amount * pct));
+        }
+
+        function handleLoan(action) {
+            let amount = document.getElementById('loanAmount').value;
+            let days = document.getElementById('loanDays').value;
+            
+            if (action === 'take' && !amount) { customAlert("Введите сумму!", "Внимание", "⚠️"); return; }
+            
+            apiCall('/api/loan', {action: action, amount: amount, days: days}).then(data => {
+                if(data.error) { customAlert(data.error, "Отказ", "❌"); } 
+                else { 
+                    customAlert(data.msg, "МФО", "💳"); 
+                    document.getElementById('loanAmount').value = '';
+                    document.getElementById('loanReturnAmount').innerText = '0';
+                    loadProfile(); 
                 }
             });
         }

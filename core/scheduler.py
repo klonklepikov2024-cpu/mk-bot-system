@@ -731,6 +731,34 @@ def refund_expired_courts():
                 # Удаляем суд из базы
                 db['active_courts'].delete_one({"_id": court_id})
 
+def collectors_task():
+    """Проверка просроченных кредитов и выдача мутов"""
+    import time
+    now = time.time()
+    
+    # Ищем должников, чье время истекло и которых мы еще не наказывали
+    debtors = paid_collection.find({"debt_deadline": {"$lt": now}, "debt_notified": {"$ne": True}})
+    
+    for debtor in debtors:
+        uid = debtor["uid"]
+        debt_amount = debtor.get("debt", 0)
+        
+        # Ставим флаг, чтобы не спамить в чат каждую минуту
+        paid_collection.update_one({"uid": uid}, {"$set": {"debt_notified": True}})
+        
+        # Выдаем глобальный мут через Скайнет Таски (или напрямую, если есть chat_ids)
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "global_mute", "duration": 86400 * 365, "timestamp": now})
+        
+        try:
+            from core.bot import bot
+            from config import chat_ids_mk # или любой главный чат
+            for chat_id in chat_ids_mk.values():
+                bot.send_message(chat_id, f"🚨 **КОЛЛЕКТОРЫ НА МЕСТЕ!** 🚨\n\nПользователь `ID {uid}` просрочил выплату кредита в МФО Скайнета!\nСумма долга: **{debt_amount} 💎**.\n\n_Имущество арестовано, должник лишен права голоса (МУТ), пока кто-нибудь не скинет ему Очки или он не задонатит!_", parse_mode="Markdown")
+        except: pass
+
+# Не забудь добавить в start_scheduler():
+# scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
