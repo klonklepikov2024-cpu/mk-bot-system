@@ -2237,15 +2237,14 @@ def api_admin_generate_contest():
     gemini_key = os.getenv("GEMINI_API_KEY")
     if not gemini_key: return jsonify({"error": "Ключ Gemini не найден на сервере!"}), 500
 
-    # 🔥 Обновленные правила: Разрешен контент 18+ 🔥
+    # 🔥 Промпт без дат! Нейросеть генерирует только креатив 🔥
     system_prompt = """Ты креативный директор мужского Telegram-сообщества. Твоя задача — придумать МАСШТАБНЫЙ тематический фотоконкурс.
-    Верни СТРОГО валидный JSON без маркдауна (без ```json).
+    Верни СТРОГО валидный JSON без маркдауна (без ```json) и без комментариев.
     Формат ответа:
     {
       "contest_id": "уникальный_id_на_английском",
       "title": "Яркое название с эмодзи",
       "description": "Короткое описание",
-      "deadline_date": "ГГГГ-ММ-ДД", // Впиши сюда точную дату дедлайна в этом формате (высчитай 10 дней от сегодняшнего числа)
       "announcement_text": "ОГРОМНЫЙ текст поста-анонса и правил (используй HTML теги <b> и <i>). ОБЯЗАТЕЛЬНО СКОПИРУЙ ЭТУ СТРУКТУРУ ТЕКСТА:
       
       [Завлекающее вступление и призыв к действию]
@@ -2260,9 +2259,6 @@ def api_admin_generate_contest():
       
       <b>🎭 Номинации</b>
       [Придумай 4-5 крутых названий номинаций по теме конкурса и распиши, за что они даются]
-      
-      <b>⏰ Важные даты</b>
-      [Придумай дедлайн приема работ (примерно через 7-10 дней)]
       
       <b>💡 Советы для успеха</b>
       [Дай 3 креативных совета участникам]
@@ -2282,21 +2278,19 @@ def api_admin_generate_contest():
       }
     }"""
     
-    # 🔥 Возвращаем твои актуальные модели 2026 года 🔥
     models_queue = ["gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.6-flash"]
     ai_data = None
     last_err_msg = "Неизвестная ошибка"
     
     import requests, time
     for model_name in models_queue:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
         try:
             payload = {
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"parts": [{"text": theme_instruction}]}],
                 "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
             }
-            # 🔥 ЖЕСТКИЙ ТАЙМАУТ 25 СЕК (Чтобы Gunicorn нас не убил) 🔥
             res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=25)
             
             if res.status_code == 200:
@@ -2316,7 +2310,7 @@ def api_admin_generate_contest():
                 
         except requests.exceptions.Timeout:
             last_err_msg = f"Таймаут: Скайнет думал дольше 25 секунд."
-            break # Прерываем цикл, иначе на второй попытке Gunicorn 100% убьет процесс
+            break 
         except json.JSONDecodeError as e:
             last_err_msg = f"Кривой JSON от нейросети: {str(e)}"
         except Exception as e:
@@ -2343,29 +2337,63 @@ def api_admin_deploy_contest():
     from config import ADMIN_CHAT_IDS
     if uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен"}), 403
 
-    # Обновляем черновик теми данными, которые ты отредактировал ручками в Web App
-    db['active_contest'].update_one({"_id": "current_event"}, {
-        "$set": {
-            "title": data.get("title"),
-            "announcement_text": data.get("desc"),
-            "prizes.1.text": data.get("prize1"),
-            "prizes.2.text": data.get("prize2"),
-            "prizes.3.text": data.get("prize3"),
-            "status": "running"
-        }
-    })
+    # Сохраняем все 4 даты в базу
+    update_fields = {
+        "title": data.get("title"),
+        "announcement_text": data.get("desc"),
+        "sub_start": data.get("sub_start"),
+        "sub_end": data.get("sub_end"),
+        "vote_start": data.get("vote_start"),
+        "vote_end": data.get("vote_end"),
+        "prizes": {
+            "1": {"text": data.get("prize1")},
+            "2": {"text": data.get("prize2")},
+            "3": {"text": data.get("prize3")}
+        },
+        "status": "running"
+    }
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": update_fields})
 
-    # Запускаем фоновую рассылку
     def broadcast():
         from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
         from core.bot import bot
         import time
+        from datetime import datetime, timedelta # <--- ДОБАВИЛИ timedelta
         
         all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
         unique_chats = set(all_chats)
         
+        # Переводим машинные даты в человеческие
+        def format_date(d_str):
+            try: return datetime.strptime(d_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+            except: return "??.??.????"
+
+        # 🔥 НОВАЯ ФУНКЦИЯ: Вычисляет дату итогов (+1 день к концу голосования)
+        def get_results_date(d_str):
+            try: 
+                return (datetime.strptime(d_str, "%Y-%m-%d") + timedelta(days=1)).strftime("%d.%m.%Y")
+            except: return "??.??.????"
+            
+        ss = format_date(data.get("sub_start"))
+        se = format_date(data.get("sub_end"))
+        vs = format_date(data.get("vote_start"))
+        ve = format_date(data.get("vote_end"))
+        
+        # Получаем дату итогов
+        res_date = get_results_date(data.get("vote_end"))
+        
+        dates_block = (
+            f"\n\n⏰ <b>ВАЖНЫЕ ДАТЫ (МСК):</b>\n"
+            f"— Прием работ: <b>с {ss} по {se}</b>\n"
+            f"— Зрительское голосование: <b>с {vs} по {ve}</b>\n"
+            f"— Подведение итогов: <b>{res_date} в 10:30</b>\n" # <--- ДОБАВИЛИ СТРОЧКУ
+        )
+        
         prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {data.get('prize1')}\n🥈 2 место: {data.get('prize2')}\n🥉 3 место: {data.get('prize3')}"
-        announcement = data.get("desc") + prize_block
+        announcement = data.get("desc") + dates_block + prize_block
+        
+        # Склеиваем франкенштейна
+        announcement = data.get("desc") + dates_block + prize_block
         
         success = 0
         for chat_id in unique_chats:
@@ -2375,7 +2403,7 @@ def api_admin_deploy_contest():
                 time.sleep(0.3)
             except: pass
             
-        try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Анонс конкурса успешно разослан в {success} чатов! (Запущено из ЦУП)</b>", parse_mode="HTML")
+        try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Анонс конкурса успешно разослан в {success} чатов!</b>", parse_mode="HTML")
         except: pass
 
     import threading

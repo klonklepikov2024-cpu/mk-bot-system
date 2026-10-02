@@ -14,10 +14,19 @@ from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, cha
 def start_contest(message):
     uid = message.from_user.id
     
-    # 🔥 Тянем активный конкурс из базы (тот самый, который мы утвердили)
     active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    
+    # 🔥 ИСПРАВЛЕНИЕ: Если конкурса нет, сразу прерываем функцию
     if not active:
-        bot.send_message(uid, "😴 Пока что активных конкурсов нет! Скайнет готовит что-то грандиозное к следующему празднику.")
+        bot.send_message(uid, "❌ Сейчас нет активных конкурсов.")
+        return
+        
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    today_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
+    
+    if today_str < active.get('sub_start', '') or today_str > active.get('sub_end', ''):
+        bot.send_message(uid, "❌ Сейчас не время для приема работ! Проверьте даты в анонсе.")
         return
         
     active_contest = active['contest_id']
@@ -106,6 +115,19 @@ def handle_contest_vote(call):
     work_id = call.data[6:] 
     uid = call.from_user.id
     
+    # 🔥 НОВЫЙ БЛОК: ПРОВЕРКА ДАТ ГОЛОСОВАНИЯ 🔥
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if active:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        today_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
+        
+        if today_str < active.get('vote_start', '') or today_str > active.get('vote_end', ''):
+            try: bot.answer_callback_query(call.id, "❌ Голосование сейчас закрыто! Сверьтесь с датами.", show_alert=True)
+            except: pass
+            return
+    # 🔥 КОНЕЦ НОВОГО БЛОКА 🔥
+
     work = db['contests'].find_one({"_id": work_id})
     if not work:
         try: bot.answer_callback_query(call.id, "❌ Работа не найдена!", show_alert=True)
@@ -133,7 +155,6 @@ def handle_contest_vote(call):
 # --- 4. ПОДВЕДЕНИЕ ИТОГОВ И РАЗДАЧА ПРИЗОВ ---
 @bot.message_handler(commands=['end_contest'])
 def end_contest_cmd(message):
-    # Команду может писать только админ в служебной группе
     if str(message.chat.id) != str(STAFF_GROUP_ID): return
     
     parts = message.text.split()
@@ -143,21 +164,18 @@ def end_contest_cmd(message):
         
     contest_id = parts[1]
     
-    # 1. Тянем данные конкурса, чтобы знать, КАКИЕ призы мы обещали
     contest_data = db['active_contest'].find_one({"contest_id": contest_id})
     prizes_dict = contest_data.get("prizes", {}) if contest_data else {}
     
-    # 2. Достаем все работы, которые были опубликованы
     works = list(db['contests'].find({"contest_id": contest_id, "status": "published"}))
     if not works:
         bot.send_message(message.chat.id, f"❌ Нет активных работ для конкурса `{contest_id}`.", parse_mode="Markdown", message_thread_id=message.message_thread_id)
         return
         
-    # 3. Считаем длину массива голосов для каждой работы (ЭТО И ЕСТЬ ЗРИТЕЛЬСКИЕ СИМПАТИИ)
+    # Считаем лайки (Зрительские симпатии)
     for w in works:
         w['vote_count'] = len(w.get('votes', []))
         
-    # Сортируем от большего к меньшему и берем ТОП-3
     works.sort(key=lambda x: x['vote_count'], reverse=True)
     top_works = works[:3] 
     
@@ -171,31 +189,28 @@ def end_contest_cmd(message):
         safe_title = html.escape(work['title'])
         votes = work['vote_count']
         
-        # Достаем заявленный текст приза из базы
-        prize_text = prizes_dict.get(place, {}).get("text", "Ценный приз (на усмотрение админа)")
+        # Тянем актуальный текст приза
+        prize_text = prizes_dict.get(place, {}).get("text", "Ценный приз (выбор админа)")
         medal = ["🥇", "🥈", "🥉"][i]
         
         report += f"<b>{place} МЕСТО {medal}</b>\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 «{safe_title}»\n❤️ Голосов: <b>{votes}</b>\n🎁 Приз: <i>{prize_text}</i>\n\n"
         
-        # 🔥 ВМЕСТО АВТОВЫДАЧИ — СОЗДАЕМ ЗАЯВКУ В ПАНЕЛЬ АДМИНА 🔥
+        # Создаем заявку в ЦУП на ручную выдачу
         db['premium_claims'].insert_one({
             "uid": uid, 
             "username": safe_username, 
             "timestamp": time.time(), 
             "status": "pending",
-            "prize_desc": f"Приз за {place} место в конкурсе: {prize_text}" # Админ увидит это описание в Web App
+            "prize_desc": f"Приз за {place} место в конкурсе: {prize_text}" 
         })
         
-        # Радуем победителя в ЛС
         try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nПо итогам зрительского голосования ваш образ «{safe_title}» занял <b>{place} место</b>!\n\nВаша награда: <b>{prize_text}</b>.\n<i>Заявка на выдачу приза передана администрации. С вами скоро свяжутся в ЛС, либо приз будет начислен вам на баланс!</i>", parse_mode="HTML")
         except: pass
         
-    # Меняем статус всем участникам, чтобы заморозить конкурс
     db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})
     
-    # Отправляем отчет с кнопкой перехода в ЦУП
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать призы в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
-    
-    report += "❗️ <i>Заявки на выдачу призов отправлены в панель управления. Вы можете начислить очки/предметы вручную. Главного Победителя (выбор Администрации) вы можете наградить отдельно!</i>"
+    report += "❗️ <i>Заявки на выдачу призов отправлены в панель управления. Вы можете начислить очки/сертификаты вручную. Победителей в тематических номинациях можно наградить отдельно!</i>"
     
     bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", reply_markup=markup, message_thread_id=message.message_thread_id)

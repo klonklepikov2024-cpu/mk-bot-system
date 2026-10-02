@@ -568,10 +568,7 @@ def holiday_contest_scout():
       
       <b>🎭 Номинации — выбери свою категорию!</b>
       [Придумай 4-5 крутых названий номинаций по теме конкурса и распиши, за что они даются]
-      
-      <b>⏰ Важные даты</b>
-      [Укажи, что дедлайн приема работ — ровно через 10 дней от сегодня]
-      
+           
       <b>💡 Советы для успеха</b>
       [Дай 3 полезных совета по свету, фону и композиции]
       
@@ -610,9 +607,11 @@ def holiday_contest_scout():
                     if clean_text.startswith("```"): clean_text = clean_text[3:]
                     if clean_text.endswith("```"): clean_text = clean_text[:-3]
                     ai_data = json.loads(clean_text.strip())
+                    
+                    # 👇 ДОБАВЬТЕ ЭТУ СТРОЧКУ СЮДА:
+                    ai_data['deadline_date'] = target_date.strftime("%Y-%m-%d")
+                    
                     break
-            except: time.sleep(2)
-        if ai_data: break
 
     if not ai_data: return
 
@@ -703,26 +702,24 @@ def stray_cat_tax():
             except: pass
 
 def check_contests_task():
-    """Скайнет автоматически проверяет сроки конкурсов и подводит итоги"""
     from datetime import datetime
     import time
     import html
     from core.bot import bot
     from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
     
-    # Ищем активный конкурс
     active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
     if not active: return
     
-    deadline_str = active.get("deadline_date") # Должно быть в формате "2026-11-05"
-    if not deadline_str: return
+    vote_end_str = active.get("vote_end") 
+    if not vote_end_str: return
     
     try:
-        deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d").date()
+        vote_end_date = datetime.strptime(vote_end_str, "%Y-%m-%d").date()
         today = datetime.now(tz).date()
         
-        # Если наступил день подведения итогов (или мы его проспали)
-        if today >= deadline_date:
+        # Если сегодня СТРОГО БОЛЬШЕ последнего дня голосования (т.е. наступил следующий день)
+        if today > vote_end_date:
             contest_id = active.get("contest_id")
             prizes_dict = active.get("prizes", {})
             

@@ -561,6 +561,19 @@
                 <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">Название</label>
                 <input type="text" id="draftTitle" class="w-full text-white bg-black/30 rounded p-2 mb-2 text-sm border border-gray-700">
                 
+                <!-- 🔥 4 КАЛЕНДАРИКА 🔥 -->
+                <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block text-yellow-500 mt-2">Прием работ (Начало - Конец)</label>
+                <div class="flex space-x-2 mb-2">
+                    <input type="date" id="draftSubStart" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-yellow-700 focus:border-yellow-500 outline-none">
+                    <input type="date" id="draftSubEnd" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-yellow-700 focus:border-yellow-500 outline-none">
+                </div>
+                
+                <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block text-blue-400">Голосование (Начало - Конец)</label>
+                <div class="flex space-x-2 mb-3">
+                    <input type="date" id="draftVoteStart" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-blue-700 focus:border-blue-500 outline-none">
+                    <input type="date" id="draftVoteEnd" class="w-full text-white bg-black/30 rounded p-2 text-xs border border-blue-700 focus:border-blue-500 outline-none">
+                </div>
+                
                 <label class="text-[10px] text-gray-400 uppercase font-bold mb-1 block">Пост-анонс (Правила)</label>
                 <textarea id="draftDesc" class="w-full text-white bg-black/30 rounded p-2 mb-2 text-sm border border-gray-700 h-64 custom-scrollbar"></textarea>
                 
@@ -1981,8 +1994,18 @@
                 desc: document.getElementById('draftDesc').value,
                 prize1: document.getElementById('draftPrize1').value,
                 prize2: document.getElementById('draftPrize2').value,
-                prize3: document.getElementById('draftPrize3').value
+                prize3: document.getElementById('draftPrize3').value,
+                // Забираем все 4 даты:
+                sub_start: document.getElementById('draftSubStart').value,
+                sub_end: document.getElementById('draftSubEnd').value,
+                vote_start: document.getElementById('draftVoteStart').value,
+                vote_end: document.getElementById('draftVoteEnd').value
             };
+            
+            if (!payload.sub_start || !payload.sub_end || !payload.vote_start || !payload.vote_end) {
+                customAlert("Укажите все 4 даты в календарях!", "Внимание", "⚠️");
+                return;
+            }
             
             customConfirm("Сохранить изменения и запустить массовую рассылку во все чаты?", function(c) {
                 if(c) {
