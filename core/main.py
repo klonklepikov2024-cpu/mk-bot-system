@@ -2284,7 +2284,8 @@ def api_admin_generate_contest():
     
     import requests, time
     for model_name in models_queue:
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        # Убрали скобки и дублирование ссылки
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
         try:
             payload = {
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
