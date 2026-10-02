@@ -594,7 +594,7 @@ def holiday_contest_scout():
     ai_data = None
     
     for model_name in models_queue:
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model_name}:generateContent?key={gemini_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
         for attempt in range(2):
             try:
                 payload = {
