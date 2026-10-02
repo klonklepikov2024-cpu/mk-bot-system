@@ -3860,266 +3860,6 @@ def bribe_court(message):
         parse_mode="Markdown"
     )
 
-# ================= АДМИНСКОЕ: СПИСОК ДОЛЖНИКОВ =================
-@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!должники')
-def show_debtors(message):
-    from config import ADMIN_CHAT_IDS, OWNER_ID
-    if str(message.from_user.id) not in ADMIN_CHAT_IDS and message.from_user.id != OWNER_ID:
-        return
-
-    # Ищем всех, у кого поле debt больше нуля, сортируем по сумме долга (самые злостные сверху)
-    debtors = list(paid_collection.find({"debt": {"$gt": 0}}).sort("debt", -1))
-    
-    if not debtors:
-        return bot.reply_to(message, "📜 Должников нет. МФО работает в плюс, все кристально чисты.")
-
-    text = "🚨 **СПИСОК ДОЛЖНИКОВ МФО** 🚨\n\n"
-    import time
-    now = time.time()
-    
-    for i, d in enumerate(debtors, 1):
-        uid = d['uid']
-        debt = d.get('debt', 0)
-        deadline = d.get('debt_deadline', 0)
-        
-        # Пытаемся вытянуть имя из базы
-        u_info = db['users'].find_one({"_id": uid}) or {}
-        c_info = db['chat_stats'].find_one({"uid": uid}) or {}
-        name = u_info.get("first_name") or c_info.get("name") or f"ID {uid}"
-
-        if deadline > now:
-            left_hrs = int((deadline - now) / 3600)
-            status = f"🟢 До коллекторов: {left_hrs} ч."
-        else:
-            status = "🔴 ПРОСРОЧКА (В МУТЕ)"
-            
-        text += f"{i}. [{name}](tg://user?id={uid}) — **{debt} 💎**\n└ {status}\n\n"
-
-    bot.reply_to(message, text, parse_mode="Markdown")
-
-# ================= КРИМИНАЛ: ПОБЕГ ИЗ ТЮРЬМЫ =================
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!побег', 'побег')))
-def prison_break(message):
-    parts = message.text.split()
-    if len(parts) < 2:
-        return bot.reply_to(message, "⚠️ Укажите цель для спасения: `!побег @username`")
-
-    target_id = resolve_target_uid(parts[1])
-    if not target_id:
-        return bot.reply_to(message, "❌ Заключенный не найден!")
-
-    uid = message.from_user.id
-    if target_id == uid:
-        return bot.reply_to(message, "🤡 Вытащить самого себя за волосы из тюрьмы мог только барон Мюнхгаузен. Ждите помощи от друзей!")
-
-    bot.send_message(message.chat.id, f"🚁 [{message.from_user.first_name}](tg://user?id={uid}) подгоняет вертолет к стенам изолятора и кидает трос для {parts[1]}...", parse_mode="Markdown")
-    
-    import time, random
-    time.sleep(3)
-
-    if random.randint(1, 100) <= 40:
-        # УСПЕХ: Снимаем мут и гуантанамо
-        db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
-        paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
-        
-        # Даем спасателю Карму за хороший (хоть и нелегальный) поступок
-        paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": 2}})
-        bot.send_message(message.chat.id, f"✅ **ПОБЕГ УДАЛСЯ!**\nОхрана не успела среагировать. {parts[1]} на свободе!\n\n_Спасатель получает +2 к Карме за преданность братве._", parse_mode="Markdown")
-    else:
-        # ПРОВАЛ: Полиция вяжет спасателя
-        bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СНАЙПЕРЫ НА ВЫШКАХ!**\nВертолет сбит из РПГ. [{message.from_user.first_name}](tg://user?id={uid}) арестован за пособничество и отправляется в карцер на 2 часа!", parse_mode="Markdown")
-        try: bot.restrict_chat_member(message.chat.id, uid, until_date=int(time.time()) + 7200, can_send_messages=False)
-        except: pass
-
-# ================= СМЕРТЕЛЬНЫЙ ИВЕНТ: ИГРА В КАЛЬМАРА =================
-@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!кальмар', 'кальмар'])
-def start_squid_game(message):
-    chat_id = message.chat.id
-    uid = message.from_user.id
-    user_name = message.from_user.first_name
-
-    game = db['active_squid_games'].find_one({"_id": chat_id})
-    if game:
-        if game['status'] == 'playing':
-            return bot.reply_to(message, "🦑 Игра уже идет! Ждите окончания, чтобы собрать трупы.")
-        elif len(game['players']) >= 10:
-            return bot.reply_to(message, "🦑 Мест нет! Набрано 10/10. Игра вот-вот начнется.")
-        else:
-            return bot.reply_to(message, f"🦑 Набор уже открыт! Пишите `!играю` (Собрано {len(game['players'])}/10)")
-
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    if user_data.get("bounty_points", 0) < 1000:
-        return bot.reply_to(message, "💸 Участнику нужно 1000 💎 для входа в Игру в Кальмара!")
-
-    # Списываем вступительный взнос
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -1000}})
-
-    import time
-    db['active_squid_games'].insert_one({
-        "_id": chat_id,
-        "status": "recruiting",
-        "players": [{"id": uid, "name": user_name}],
-        "start_time": time.time()
-    })
-
-    bot.send_message(message.chat.id, f"🦑 **ИГРА В КАЛЬМАРА НАЧАЛАСЬ!** 🦑\n\n[{user_name}](tg://user?id={uid}) открыл(а) набор смертников.\nВход: **1000 💎**.\nПризовой фонд: **10 000 💎** (Выживший забирает всё).\n\nНапишите `!играю`, чтобы вступить. Нужно ровно 10 человек. Кто готов рискнуть голосом?", parse_mode="Markdown")
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!играю', 'играю'])
-def join_squid_game(message):
-    chat_id = message.chat.id
-    uid = message.from_user.id
-    user_name = message.from_user.first_name
-
-    game = db['active_squid_games'].find_one({"_id": chat_id, "status": "recruiting"})
-    if not game: return
-
-    if any(p['id'] == uid for p in game['players']):
-        return bot.reply_to(message, "🦑 Ты уже в игре. Назад дороги нет.")
-
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    if user_data.get("bounty_points", 0) < 1000:
-        return bot.reply_to(message, "💸 У тебя нет 1000 💎. Ты не подходишь для Игры.")
-
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -1000}})
-    db['active_squid_games'].update_one({"_id": chat_id}, {"$push": {"players": {"id": uid, "name": user_name}}})
-
-    current_players = len(game['players']) + 1
-
-    if current_players < 10:
-        bot.send_message(chat_id, f"👤 Игрок [{user_name}](tg://user?id={uid}) подписал контракт!\nСобрано: {current_players}/10", parse_mode="Markdown")
-    else:
-        bot.send_message(chat_id, "🦑 **ИГРОКИ СОБРАНЫ! ИГРА НАЧИНАЕТСЯ!**\n\nПравила просты: каждые 30 секунд Скайнет будет случайным образом убивать одного участника.\nПобедитель только один.", parse_mode="Markdown")
-        db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"status": "playing"}})
-        
-        # Запускаем фоновый поток игры
-        import threading
-        threading.Thread(target=run_squid_game, args=(chat_id,), daemon=True).start()
-
-def run_squid_game(chat_id):
-    import time, random
-    from core.bot import bot
-    time.sleep(5)
-
-    game = db['active_squid_games'].find_one({"_id": chat_id})
-    if not game: return
-    
-    players = game['players']
-    pot = len(players) * 1000
-
-    while len(players) > 1:
-        time.sleep(30) # Каждые 30 секунд убиваем одного
-        loser = random.choice(players)
-        players.remove(loser)
-        
-        # Сохраняем выживших в базу
-        db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"players": players}})
-
-        # Выдаем мут выбывшему (убит = мут 3 часа)
-        until = int(time.time()) + 10800 
-        try: bot.restrict_chat_member(chat_id, loser['id'], until_date=until, can_send_messages=False)
-        except: pass
-
-        try:
-            bot.send_message(chat_id, f"🔫 **Игрок [{loser['name']}](tg://user?id={loser['id']}) устранен.** (Мут на 3 часа).\nОсталось игроков: {len(players)}", parse_mode="Markdown")
-        except: pass
-
-    # Победитель
-    winner = players[0]
-    paid_collection.update_one({"uid": winner['id']}, {"$inc": {"bounty_points": pot}})
-    db['active_squid_games'].delete_one({"_id": chat_id})
-
-    try:
-        bot.send_message(chat_id, f"🏆 **ИГРА В КАЛЬМАРА ЗАВЕРШЕНА!** 🏆\n\nВыживший: [{winner['name']}](tg://user?id={winner['id']})!\nОн забирает весь куш: **{pot} 💎**!\n\n_Поздравляем. Остальные отправлены в морг._", parse_mode="Markdown")
-    except: pass
-
-# ================= КРИМИНАЛ: ОГРАБЛЕНИЕ КАЗИНО =================
-@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!ограбление', 'ограбление'])
-def start_heist(message):
-    chat_id = message.chat.id
-    uid = message.from_user.id
-    import time
-    
-    # Проверяем, не идет ли уже сбор банды в этом чате
-    heist = db['active_heists'].find_one({"_id": chat_id})
-    if heist:
-        if time.time() - heist['start_time'] > 300: # 5 минут на сбор
-            db['active_heists'].delete_one({"_id": chat_id})
-        else:
-            left = 3 - len(heist['members'])
-            return bot.reply_to(message, f"🔫 Сбор банды уже идет! Не хватает еще **{left}** чел.\nПишите `!в деле`, чтобы присоединиться.", parse_mode="Markdown")
-            
-    # Запускаем новый сбор
-    db['active_heists'].insert_one({
-        "_id": chat_id,
-        "members": [{"id": uid, "name": message.from_user.first_name}],
-        "start_time": time.time()
-    })
-    
-    bot.send_message(message.chat.id, f"🏴‍☠️ **ПЛАНИРУЕТСЯ ОГРАБЛЕНИЕ ФИНАНСОВОГО СЕЙФА!**\n\n[{message.from_user.first_name}](tg://user?id={uid}) собирает банду.\nДля налета нужно ровно **3 человека**. На сбор есть 5 минут!\n\n_Награда: 20% от всех рублей в Красном Сейфе._\n_Риск: Мут на 2 часа и штраф 500 💎 каждому._\n\nПишите `!в деле`, если готовы рискнуть!", parse_mode="Markdown")
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!в деле', 'в деле'])
-def join_heist(message):
-    chat_id = message.chat.id
-    uid = message.from_user.id
-    user_name = message.from_user.first_name
-    import time, random
-    
-    heist = db['active_heists'].find_one({"_id": chat_id})
-    if not heist:
-        return # Нет активного сбора
-        
-    if time.time() - heist['start_time'] > 300:
-        db['active_heists'].delete_one({"_id": chat_id})
-        return bot.reply_to(message, "⏳ Время вышло. Полиция оцепила район, банда не собралась.")
-        
-    if any(m['id'] == uid for m in heist['members']):
-        return bot.reply_to(message, "🔫 Ты и так уже в банде, держи пушку крепче!")
-        
-    # Добавляем юзера в банду
-    db['active_heists'].update_one({"_id": chat_id}, {"$push": {"members": {"id": uid, "name": user_name}}})
-    heist['members'].append({"id": uid, "name": user_name})
-    
-    if len(heist['members']) < 3:
-        left = 3 - len(heist['members'])
-        return bot.send_message(message.chat.id, f"🤝 [{user_name}](tg://user?id={uid}) надел(а) маску и присоединился(лась) к банде!\nОсталось найти еще **{left}** чел.", parse_mode="Markdown")
-        
-    # === БАНДА СОБРАНА. НАЧИНАЕМ НАЛЕТ! ===
-    db['active_heists'].delete_one({"_id": chat_id})
-    bot.send_message(message.chat.id, "🚐 **БАНДА В СБОРЕ! Налет начался...**\n_Стрельба, взломы серверов, визги сирен..._", parse_mode="Markdown")
-    time.sleep(3)
-    
-    # 30% на успех
-    success = random.randint(1, 100) <= 30
-    names_str = ", ".join([f"[{m['name']}](tg://user?id={m['id']})" for m in heist['members']])
-    
-    if success:
-        # УСПЕХ! Взламываем Красный Сейф
-        red_safe = db['safes_state'].find_one({"_id": "safe_red"}) or {"balance": 500}
-        total_loot = int(red_safe.get("balance", 500) * 0.20)
-        if total_loot < 3: total_loot = 300
-        
-        share = total_loot // 3
-        
-        # Списываем из сейфа
-        db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": -total_loot}})
-        
-        # Раздаем рубли (кэшбэк) грабителям
-        for m in heist['members']:
-            paid_collection.update_one({"uid": m['id']}, {"$inc": {"cashback_balance": share}})
-            db['ruble_ledger'].insert_one({"uid": m['id'], "amount": share, "reason": "Успешное ограбление", "timestamp": time.time()})
-            
-        bot.send_message(message.chat.id, f"💰 **ОГРАБЛЕНИЕ УДАЛОСЬ!**\n\nСигнализация отключена, Сейф вскрыт болгаркой!\nБанда вынесла **{total_loot} ₽** наличными!\n\nГерои дня: {names_str}\n_Каждый получает свою долю: {share} ₽._", parse_mode="Markdown")
-        
-    else:
-        # ПРОВАЛ! Полиция вяжет всех.
-        for m in heist['members']:
-            paid_collection.update_one({"uid": m['id']}, {"$inc": {"bounty_points": -500}})
-            until = int(time.time()) + 7200 # Мут на 2 часа
-            try: bot.restrict_chat_member(chat_id, m['id'], until_date=until, can_send_messages=False)
-            except: pass
-            
-        bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СПЕЦНАЗ НА МЕСТЕ!**\n\nКто-то нажал тревожную кнопку. Полиция повязала всю банду прямо в хранилище!\n\nАрестованы: {names_str}\n\n_Суд был скорым: конфискация 500 💎 у каждого и 2 часа тюрьмы (Мут)._", parse_mode="Markdown")
-
 # ================= ТЕНЕВЫЕ АРТЕФАКТЫ (ХАОС) =================
 
 def resolve_target_uid(target_info):
@@ -4486,6 +4226,267 @@ def pay_debt_chat(message):
     db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": time.time()})
     
     bot.reply_to(message, f"✅ **КРЕДИТ ПОГАШЕН!**\n\nВы выплатили МФО **{debt} 💎**.\nДолгов нет, арест со счетов снят, коллекторы отозваны.", parse_mode="Markdown")
+
+# ================= АДМИНСКОЕ: СПИСОК ДОЛЖНИКОВ =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!должники')
+def show_debtors(message):
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    if str(message.from_user.id) not in ADMIN_CHAT_IDS and message.from_user.id != OWNER_ID:
+        return
+
+    # Ищем всех, у кого поле debt больше нуля, сортируем по сумме долга (самые злостные сверху)
+    debtors = list(paid_collection.find({"debt": {"$gt": 0}}).sort("debt", -1))
+    
+    if not debtors:
+        return bot.reply_to(message, "📜 Должников нет. МФО работает в плюс, все кристально чисты.")
+
+    text = "🚨 **СПИСОК ДОЛЖНИКОВ МФО** 🚨\n\n"
+    import time
+    now = time.time()
+    
+    for i, d in enumerate(debtors, 1):
+        uid = d['uid']
+        debt = d.get('debt', 0)
+        deadline = d.get('debt_deadline', 0)
+        
+        # Пытаемся вытянуть имя из базы
+        u_info = db['users'].find_one({"_id": uid}) or {}
+        c_info = db['chat_stats'].find_one({"uid": uid}) or {}
+        name = u_info.get("first_name") or c_info.get("name") or f"ID {uid}"
+
+        if deadline > now:
+            left_hrs = int((deadline - now) / 3600)
+            status = f"🟢 До коллекторов: {left_hrs} ч."
+        else:
+            status = "🔴 ПРОСРОЧКА (В МУТЕ)"
+            
+        text += f"{i}. [{name}](tg://user?id={uid}) — **{debt} 💎**\n└ {status}\n\n"
+
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# ================= КРИМИНАЛ: ПОБЕГ ИЗ ТЮРЬМЫ =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!побег', 'побег')))
+def prison_break(message):
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Укажите цель для спасения: `!побег @username`")
+
+    target_id = resolve_target_uid(parts[1])
+    if not target_id:
+        return bot.reply_to(message, "❌ Заключенный не найден!")
+
+    uid = message.from_user.id
+    if target_id == uid:
+        return bot.reply_to(message, "🤡 Вытащить самого себя за волосы из тюрьмы мог только барон Мюнхгаузен. Ждите помощи от друзей!")
+
+    bot.send_message(message.chat.id, f"🚁 [{message.from_user.first_name}](tg://user?id={uid}) подгоняет вертолет к стенам изолятора и кидает трос для {parts[1]}...", parse_mode="Markdown")
+    
+    import time, random
+    time.sleep(3)
+
+    if random.randint(1, 100) <= 40:
+        # УСПЕХ: Снимаем мут и гуантанамо
+        db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
+        paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
+        
+        # Даем спасателю Карму за хороший (хоть и нелегальный) поступок
+        paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": 2}})
+        bot.send_message(message.chat.id, f"✅ **ПОБЕГ УДАЛСЯ!**\nОхрана не успела среагировать. {parts[1]} на свободе!\n\n_Спасатель получает +2 к Карме за преданность братве._", parse_mode="Markdown")
+    else:
+        # ПРОВАЛ: Полиция вяжет спасателя
+        bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СНАЙПЕРЫ НА ВЫШКАХ!**\nВертолет сбит из РПГ. [{message.from_user.first_name}](tg://user?id={uid}) арестован за пособничество и отправляется в карцер на 2 часа!", parse_mode="Markdown")
+        try: bot.restrict_chat_member(message.chat.id, uid, until_date=int(time.time()) + 7200, can_send_messages=False)
+        except: pass
+
+# ================= СМЕРТЕЛЬНЫЙ ИВЕНТ: ИГРА В КАЛЬМАРА =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!кальмар', 'кальмар'])
+def start_squid_game(message):
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    user_name = message.from_user.first_name
+
+    game = db['active_squid_games'].find_one({"_id": chat_id})
+    if game:
+        if game['status'] == 'playing':
+            return bot.reply_to(message, "🦑 Игра уже идет! Ждите окончания, чтобы собрать трупы.")
+        elif len(game['players']) >= 10:
+            return bot.reply_to(message, "🦑 Мест нет! Набрано 10/10. Игра вот-вот начнется.")
+        else:
+            return bot.reply_to(message, f"🦑 Набор уже открыт! Пишите `!играю` (Собрано {len(game['players'])}/10)")
+
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("bounty_points", 0) < 1000:
+        return bot.reply_to(message, "💸 Участнику нужно 1000 💎 для входа в Игру в Кальмара!")
+
+    # Списываем вступительный взнос
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -1000}})
+
+    import time
+    db['active_squid_games'].insert_one({
+        "_id": chat_id,
+        "status": "recruiting",
+        "players": [{"id": uid, "name": user_name}],
+        "start_time": time.time()
+    })
+
+    bot.send_message(message.chat.id, f"🦑 **ИГРА В КАЛЬМАРА НАЧАЛАСЬ!** 🦑\n\n[{user_name}](tg://user?id={uid}) открыл(а) набор смертников.\nВход: **1000 💎**.\nПризовой фонд: **10 000 💎** (Выживший забирает всё).\n\nНапишите `!играю`, чтобы вступить. Нужно ровно 10 человек. Кто готов рискнуть голосом?", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!играю', 'играю'])
+def join_squid_game(message):
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    user_name = message.from_user.first_name
+
+    game = db['active_squid_games'].find_one({"_id": chat_id, "status": "recruiting"})
+    if not game: return
+
+    if any(p['id'] == uid for p in game['players']):
+        return bot.reply_to(message, "🦑 Ты уже в игре. Назад дороги нет.")
+
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("bounty_points", 0) < 1000:
+        return bot.reply_to(message, "💸 У тебя нет 1000 💎. Ты не подходишь для Игры.")
+
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -1000}})
+    db['active_squid_games'].update_one({"_id": chat_id}, {"$push": {"players": {"id": uid, "name": user_name}}})
+
+    current_players = len(game['players']) + 1
+
+    if current_players < 10:
+        bot.send_message(chat_id, f"👤 Игрок [{user_name}](tg://user?id={uid}) подписал контракт!\nСобрано: {current_players}/10", parse_mode="Markdown")
+    else:
+        bot.send_message(chat_id, "🦑 **ИГРОКИ СОБРАНЫ! ИГРА НАЧИНАЕТСЯ!**\n\nПравила просты: каждые 30 секунд Скайнет будет случайным образом убивать одного участника.\nПобедитель только один.", parse_mode="Markdown")
+        db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"status": "playing"}})
+        
+        # Запускаем фоновый поток игры
+        import threading
+        threading.Thread(target=run_squid_game, args=(chat_id,), daemon=True).start()
+
+def run_squid_game(chat_id):
+    import time, random
+    from core.bot import bot
+    time.sleep(5)
+
+    game = db['active_squid_games'].find_one({"_id": chat_id})
+    if not game: return
+    
+    players = game['players']
+    pot = len(players) * 1000
+
+    while len(players) > 1:
+        time.sleep(30) # Каждые 30 секунд убиваем одного
+        loser = random.choice(players)
+        players.remove(loser)
+        
+        # Сохраняем выживших в базу
+        db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"players": players}})
+
+        # Выдаем мут выбывшему (убит = мут 3 часа)
+        until = int(time.time()) + 10800 
+        try: bot.restrict_chat_member(chat_id, loser['id'], until_date=until, can_send_messages=False)
+        except: pass
+
+        try:
+            bot.send_message(chat_id, f"🔫 **Игрок [{loser['name']}](tg://user?id={loser['id']}) устранен.** (Мут на 3 часа).\nОсталось игроков: {len(players)}", parse_mode="Markdown")
+        except: pass
+
+    # Победитель
+    winner = players[0]
+    paid_collection.update_one({"uid": winner['id']}, {"$inc": {"bounty_points": pot}})
+    db['active_squid_games'].delete_one({"_id": chat_id})
+
+    try:
+        bot.send_message(chat_id, f"🏆 **ИГРА В КАЛЬМАРА ЗАВЕРШЕНА!** 🏆\n\nВыживший: [{winner['name']}](tg://user?id={winner['id']})!\nОн забирает весь куш: **{pot} 💎**!\n\n_Поздравляем. Остальные отправлены в морг._", parse_mode="Markdown")
+    except: pass
+
+# ================= КРИМИНАЛ: ОГРАБЛЕНИЕ КАЗИНО =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!ограбление', 'ограбление'])
+def start_heist(message):
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    import time
+    
+    # Проверяем, не идет ли уже сбор банды в этом чате
+    heist = db['active_heists'].find_one({"_id": chat_id})
+    if heist:
+        if time.time() - heist['start_time'] > 300: # 5 минут на сбор
+            db['active_heists'].delete_one({"_id": chat_id})
+        else:
+            left = 3 - len(heist['members'])
+            return bot.reply_to(message, f"🔫 Сбор банды уже идет! Не хватает еще **{left}** чел.\nПишите `!в деле`, чтобы присоединиться.", parse_mode="Markdown")
+            
+    # Запускаем новый сбор
+    db['active_heists'].insert_one({
+        "_id": chat_id,
+        "members": [{"id": uid, "name": message.from_user.first_name}],
+        "start_time": time.time()
+    })
+    
+    bot.send_message(message.chat.id, f"🏴‍☠️ **ПЛАНИРУЕТСЯ ОГРАБЛЕНИЕ ФИНАНСОВОГО СЕЙФА!**\n\n[{message.from_user.first_name}](tg://user?id={uid}) собирает банду.\nДля налета нужно ровно **3 человека**. На сбор есть 5 минут!\n\n_Награда: 20% от всех рублей в Красном Сейфе._\n_Риск: Мут на 2 часа и штраф 500 💎 каждому._\n\nПишите `!в деле`, если готовы рискнуть!", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!в деле', 'в деле'])
+def join_heist(message):
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    user_name = message.from_user.first_name
+    import time, random
+    
+    heist = db['active_heists'].find_one({"_id": chat_id})
+    if not heist:
+        return # Нет активного сбора
+        
+    if time.time() - heist['start_time'] > 300:
+        db['active_heists'].delete_one({"_id": chat_id})
+        return bot.reply_to(message, "⏳ Время вышло. Полиция оцепила район, банда не собралась.")
+        
+    if any(m['id'] == uid for m in heist['members']):
+        return bot.reply_to(message, "🔫 Ты и так уже в банде, держи пушку крепче!")
+        
+    # Добавляем юзера в банду
+    db['active_heists'].update_one({"_id": chat_id}, {"$push": {"members": {"id": uid, "name": user_name}}})
+    heist['members'].append({"id": uid, "name": user_name})
+    
+    if len(heist['members']) < 3:
+        left = 3 - len(heist['members'])
+        return bot.send_message(message.chat.id, f"🤝 [{user_name}](tg://user?id={uid}) надел(а) маску и присоединился(лась) к банде!\nОсталось найти еще **{left}** чел.", parse_mode="Markdown")
+        
+    # === БАНДА СОБРАНА. НАЧИНАЕМ НАЛЕТ! ===
+    db['active_heists'].delete_one({"_id": chat_id})
+    bot.send_message(message.chat.id, "🚐 **БАНДА В СБОРЕ! Налет начался...**\n_Стрельба, взломы серверов, визги сирен..._", parse_mode="Markdown")
+    time.sleep(3)
+    
+    # 30% на успех
+    success = random.randint(1, 100) <= 30
+    names_str = ", ".join([f"[{m['name']}](tg://user?id={m['id']})" for m in heist['members']])
+    
+    if success:
+        # УСПЕХ! Взламываем Красный Сейф
+        red_safe = db['safes_state'].find_one({"_id": "safe_red"}) or {"balance": 500}
+        total_loot = int(red_safe.get("balance", 500) * 0.20)
+        if total_loot < 3: total_loot = 300
+        
+        share = total_loot // 3
+        
+        # Списываем из сейфа
+        db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": -total_loot}})
+        
+        # Раздаем рубли (кэшбэк) грабителям
+        for m in heist['members']:
+            paid_collection.update_one({"uid": m['id']}, {"$inc": {"cashback_balance": share}})
+            db['ruble_ledger'].insert_one({"uid": m['id'], "amount": share, "reason": "Успешное ограбление", "timestamp": time.time()})
+            
+        bot.send_message(message.chat.id, f"💰 **ОГРАБЛЕНИЕ УДАЛОСЬ!**\n\nСигнализация отключена, Сейф вскрыт болгаркой!\nБанда вынесла **{total_loot} ₽** наличными!\n\nГерои дня: {names_str}\n_Каждый получает свою долю: {share} ₽._", parse_mode="Markdown")
+        
+    else:
+        # ПРОВАЛ! Полиция вяжет всех.
+        for m in heist['members']:
+            paid_collection.update_one({"uid": m['id']}, {"$inc": {"bounty_points": -500}})
+            until = int(time.time()) + 7200 # Мут на 2 часа
+            try: bot.restrict_chat_member(chat_id, m['id'], until_date=until, can_send_messages=False)
+            except: pass
+            
+        bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СПЕЦНАЗ НА МЕСТЕ!**\n\nКто-то нажал тревожную кнопку. Полиция повязала всю банду прямо в хранилище!\n\nАрестованы: {names_str}\n\n_Суд был скорым: конфискация 500 💎 у каждого и 2 часа тюрьмы (Мут)._", parse_mode="Markdown")
+
 
 # ==============================================================================
 @bot.message_handler(commands=['spawn_lot'])
