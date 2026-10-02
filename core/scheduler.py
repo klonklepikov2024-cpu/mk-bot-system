@@ -612,6 +612,15 @@ def holiday_contest_scout():
                     ai_data['deadline_date'] = target_date.strftime("%Y-%m-%d")
                     
                     break
+            except Exception as e:
+                # 🔥 ВОТ ЭТОГО БЛОКА НЕ ХВАТАЛО 🔥
+                print(f"Ошибка ИИ скаута: {e}")
+                import time
+                time.sleep(2)
+        
+        # Если данные успешно получены, прерываем цикл перебора моделей
+        if ai_data:
+            break
 
     if not ai_data: return
 
