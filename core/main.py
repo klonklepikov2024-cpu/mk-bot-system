@@ -476,9 +476,10 @@ def api_spin_roulette():
     )
     pay_casino_owner(5)
 
-    # 🔥 ТРЕКЕР ДЛЯ ЗОЛОТОГО КЕЙСА 🔥
+    # 🔥 ТРЕКЕР ДЛЯ ЗОЛОТОГО КЕЙСА (СИНХРОНИЗАЦИЯ ПО ЕКБ) 🔥
     import datetime
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
     db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"roulette_spins": 1}}, upsert=True)
 
     if not updated_user:
@@ -674,8 +675,9 @@ def api_claim_bonus():
     # Увеличиваем стрик
     current_streak += 1
 
-    # 🔥 ИСПРАВЛЕНИЕ: Генерируем today_str 🔥
-    today_str = now.strftime("%Y-%m-%d")
+    # 🔥 ИСПРАВЛЕНИЕ: Генерируем today_str С УЧЕТОМ ЧАСОВОГО ПОЯСА 🔥
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
     
     # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (БОНУС) 🔥
     db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"bonus_claimed": True}}, upsert=True)
@@ -1812,7 +1814,8 @@ def api_farm_action():
         if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
 
         import datetime
-        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+        today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
         db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"watered": True}}, upsert=True)
         
         last_watered = plot.get('last_watered', 0)
@@ -4530,16 +4533,23 @@ def spawn_auction_lot(message):
 def track_global_activity(message):
     if message.text and message.text.startswith(('!', '/')): return
     
+    uid = message.from_user.id
     set_fields = {"name": message.from_user.first_name}
     if message.from_user.username:
         # Сохраняем юзернейм в нижнем регистре для удобного поиска
         set_fields["username"] = message.from_user.username.lower()
-        db['users'].update_one({"_id": message.from_user.id}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
+        db['users'].update_one({"_id": uid}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
         
     db['chat_stats'].update_one(
-        {"chat_id": message.chat.id, "uid": message.from_user.id}, 
+        {"chat_id": message.chat.id, "uid": uid}, 
         {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True
     )
+
+    # 🔥 ТРЕКЕР ЗАДАНИЙ: СЧИТАЕМ ДНЕВНЫЕ СООБЩЕНИЯ (ЕКБ ВРЕМЯ) 🔥
+    import datetime
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"messages": 1}}, upsert=True)
 
 # === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
 def heartbeat_sec():
