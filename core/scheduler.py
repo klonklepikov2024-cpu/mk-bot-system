@@ -771,28 +771,29 @@ def start_scheduler():
         # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
         scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
         
-        # 3. 🔥 ВЕЧЕРНИЙ ПУШ О БОНУСАХ (Ровно в 20:00 по Москве) 🔥
+        # 3. 🔥 ВЕЧЕРНИЙ ПУШ О БОНУСАХ (Ровно в 20:00 по Москве / 22:00 ЕКБ) 🔥
         scheduler.add_job(daily_bonus_reminder, 'cron', hour=20, minute=0, id='bonus_reminder', replace_existing=True)
              
         # 4. Умная воронка-карусель в чаты (Проверяет базу каждую минуту)
         scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
        
-        # 🔥 НОВОЕ: Разведчик конкурсов (Каждое утро в 10:00) 🔥
+        # 5. Разведчик конкурсов (Каждое утро в 10:00)
         scheduler.add_job(holiday_contest_scout, 'cron', hour=10, minute=0, id='holiday_scout', replace_existing=True)
 
-        # 🔥 Бомба в чаты (каждые 2 часа)
+        # 6. Бомба в чаты (каждые 2 часа)
         scheduler.add_job(drop_cyber_bomb, 'interval', minutes=120, id='bomb_drop', replace_existing=True)
 
-        # === ДОБАВИТЬ СРАЗУ ПОСЛЕ НИХ ===
-        # 🔥 Авто-Аукцион (Каждую пятницу в 18:00 по МСК)
+        # 7. Авто-Аукцион (Каждую пятницу в 18:00 по МСК)
         scheduler.add_job(auto_spawn_auction_lot, 'cron', day_of_week='fri', hour=18, minute=0, id='auto_auction_spawn', replace_existing=True)
         
-        # 🐈‍⬛ Набег Соседского Кота (Каждый день в 12:00)
+        # 8. Набег Соседского Кота (Каждый день в 12:00)
         scheduler.add_job(stray_cat_tax, 'cron', hour=12, minute=0, id='stray_cat_tax', replace_existing=True)
 
-        # 🔥 Авто-возврат средств с зависших судов (Каждый час)
+        # 9. Авто-возврат средств с зависших судов (Каждый час)
         scheduler.add_job(refund_expired_courts, 'interval', minutes=60, id='refund_courts', replace_existing=True)
         
+        # 🔥 10. КОЛЛЕКТОРЫ СКАЙНЕТА (Каждые 30 минут проверяют должников) 🔥
+        scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
+        
         scheduler.start()
-        print("⏰ APScheduler запущен (Воронка + ЛС Ферма + Розыгрыши + Вечерний Пуш + Коты)!")
-
+        print("⏰ APScheduler запущен (Воронка + Ферма + Розыгрыши + Пуши + Коты + Коллекторы)!")
