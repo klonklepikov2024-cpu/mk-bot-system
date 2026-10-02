@@ -155,6 +155,12 @@ def buy_ticket():
     uid = user_info['id']
     username = user_info.get('first_name', 'Аноним')
     
+    # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ В РОЗЫГРЫШАХ 🔥
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 50}})
+    if not chat_stat and not user_db.get("is_vip"):
+        return jsonify({"error": "Розыгрыши только для своих! Напишите хотя бы 50 сообщений в чате, чтобы участвовать."}), 400
+
     amount = int(data.get('amount', 1))
     giveaway_id = data.get('giveaway_id')
     
@@ -1027,6 +1033,12 @@ def api_loan():
     if action == 'take':
         if user_db.get("debt", 0) > 0:
             return jsonify({"error": "У вас уже есть непогашенный кредит! МФО отказывает в выдаче."}), 400
+            
+        # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ 🔥
+        # Ищем, есть ли у юзера хотя бы в одном чате 100 сообщений
+        chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 100}})
+        if not chat_stat and user_db.get("social_rating", 0) <= 0:
+            return jsonify({"error": "МФО не дает деньги незнакомцам! Напишите хотя бы 100 сообщений в наших чатах."}), 400
             
         amount = int(data.get('amount', 0))
         days = int(data.get('days', 1))
