@@ -143,82 +143,59 @@ def end_contest_cmd(message):
         
     contest_id = parts[1]
     
-    # Достаем все работы, которые были опубликованы
+    # 1. Тянем данные конкурса, чтобы знать, КАКИЕ призы мы обещали
+    contest_data = db['active_contest'].find_one({"contest_id": contest_id})
+    prizes_dict = contest_data.get("prizes", {}) if contest_data else {}
+    
+    # 2. Достаем все работы, которые были опубликованы
     works = list(db['contests'].find({"contest_id": contest_id, "status": "published"}))
     if not works:
         bot.send_message(message.chat.id, f"❌ Нет активных работ для конкурса `{contest_id}`.", parse_mode="Markdown", message_thread_id=message.message_thread_id)
         return
         
-    # Считаем длину массива голосов для каждой работы
+    # 3. Считаем длину массива голосов для каждой работы (ЭТО И ЕСТЬ ЗРИТЕЛЬСКИЕ СИМПАТИИ)
     for w in works:
         w['vote_count'] = len(w.get('votes', []))
         
-    # Сортируем от большего к меньшему
+    # Сортируем от большего к меньшему и берем ТОП-3
     works.sort(key=lambda x: x['vote_count'], reverse=True)
-    
-    # Берем ТОП-3 (если участников меньше 3, Питон просто возьмет сколько есть)
     top_works = works[:3] 
     
-    report = f"🏆 <b>ИТОГИ КОНКУРСА: {contest_id}</b> 🏆\n\n"
+    report = f"🏆 <b>ИТОГИ ЗРИТЕЛЬСКОГО ГОЛОСОВАНИЯ: {contest_id}</b> 🏆\n\n"
     
+    import time
     for i, work in enumerate(top_works):
-        place = i + 1
+        place = str(i + 1)
         uid = work['uid']
-        safe_username = html.escape(work['username'])
+        safe_username = html.escape(work.get('username', f"ID {uid}"))
         safe_title = html.escape(work['title'])
         votes = work['vote_count']
         
-        # --- ВЫДАЧА ПРИЗОВ ПО МЕСТАМ ---
-        if place == 1:
-            u_info = db['users'].find_one({"_id": uid}) or {}
-            has_vip = u_info.get("is_vip", False)
-            has_beyond = u_info.get("is_queer", False) # is_queer — это флаг BEYOND в базе
-            
-            if has_beyond:
-                # Максимальный статус уже есть -> Компенсируем деньгами (+1000₽ сверху)
-                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 5000, "cashback_balance": 2500}}, upsert=True)
-                prize_text = "5000 💎 + 2500 ₽ (Компенсация за макс. статус)"
-            elif has_vip:
-                # Есть VIP -> Апаем до BEYOND
-                db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
-                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 5000, "cashback_balance": 1500}}, upsert=True)
-                prize_text = "5000 💎 + Апгрейд до BEYOND + 1500 ₽"
-            else:
-                # Нет ничего -> Даем базовый VIP
-                db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
-                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 5000, "cashback_balance": 1500}}, upsert=True)
-                prize_text = "5000 💎 + Пожизненный VIP + 1500 ₽"
-                
-            medal = "🥇"
-            
-        elif place == 2:
-            import random
-            # Генерируем 3 Ордера на арест с ЗАЩИТОЙ от дубликатов
-            for _ in range(3):
-                while True:
-                    code = f"ARREST-{random.randint(10000, 999999)}" # Увеличили диапазон
-                    # Проверяем, есть ли уже такой код в базе
-                    if not db['promocodes'].find_one({"_id": code}):
-                        db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
-                        break # Выходим из цикла while, код уникален
-            
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000}}, upsert=True)
-            prize_text = "3000 💎 + 3 Ордера на Арест"
-            medal = "🥈"
-            
-        elif place == 3:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "immunity": 2}}, upsert=True)
-            prize_text = "1000 💎 + 2 Щита Иммунитета"
-            medal = "🥉"
-            
+        # Достаем заявленный текст приза из базы
+        prize_text = prizes_dict.get(place, {}).get("text", "Ценный приз (на усмотрение админа)")
+        medal = ["🥇", "🥈", "🥉"][i]
+        
         report += f"<b>{place} МЕСТО {medal}</b>\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 «{safe_title}»\n❤️ Голосов: <b>{votes}</b>\n🎁 Приз: <i>{prize_text}</i>\n\n"
         
+        # 🔥 ВМЕСТО АВТОВЫДАЧИ — СОЗДАЕМ ЗАЯВКУ В ПАНЕЛЬ АДМИНА 🔥
+        db['premium_claims'].insert_one({
+            "uid": uid, 
+            "username": safe_username, 
+            "timestamp": time.time(), 
+            "status": "pending",
+            "prize_desc": f"Приз за {place} место в конкурсе: {prize_text}" # Админ увидит это описание в Web App
+        })
+        
         # Радуем победителя в ЛС
-        try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nВаш образ «{safe_title}» занял <b>{place} место</b> в конкурсе!\n\nВаша награда: <b>{prize_text}</b> успешно зачислена на ваш баланс Скайнета. Можете проверить в Кабинете!", parse_mode="HTML")
+        try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nПо итогам зрительского голосования ваш образ «{safe_title}» занял <b>{place} место</b>!\n\nВаша награда: <b>{prize_text}</b>.\n<i>Заявка на выдачу приза передана администрации. С вами скоро свяжутся в ЛС, либо приз будет начислен вам на баланс!</i>", parse_mode="HTML")
         except: pass
         
     # Меняем статус всем участникам, чтобы заморозить конкурс
     db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
     
-    # Отправляем отчет тебе в админскую тему
-    bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", message_thread_id=message.message_thread_id)
+    # Отправляем отчет с кнопкой перехода в ЦУП
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать призы в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
+    
+    report += "❗️ <i>Заявки на выдачу призов отправлены в панель управления. Вы можете начислить очки/предметы вручную. Главного Победителя (выбор Администрации) вы можете наградить отдельно!</i>"
+    
+    bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", reply_markup=markup, message_thread_id=message.message_thread_id)

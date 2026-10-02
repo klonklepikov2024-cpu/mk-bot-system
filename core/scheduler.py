@@ -702,6 +702,81 @@ def stray_cat_tax():
                 bot.send_message(uid, f"🐈‍⬛ <b>СОСЕДСКИЙ КОТ ДОБРАЛСЯ ДО КОШЕЛЬКА!</b>\n\nВы не заходили в Кабинет больше месяца. Бездомный кот пробрался к вам и сгрыз <b>{rubles} ₽</b>...\n\nСкайнет сжалился и обменял обрывки на <b>{converted_pts} 💎</b>.", parse_mode="HTML")
             except: pass
 
+def check_contests_task():
+    """Скайнет автоматически проверяет сроки конкурсов и подводит итоги"""
+    from datetime import datetime
+    import time
+    import html
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
+    
+    # Ищем активный конкурс
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if not active: return
+    
+    deadline_str = active.get("deadline_date") # Должно быть в формате "2026-11-05"
+    if not deadline_str: return
+    
+    try:
+        deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d").date()
+        today = datetime.now(tz).date()
+        
+        # Если наступил день подведения итогов (или мы его проспали)
+        if today >= deadline_date:
+            contest_id = active.get("contest_id")
+            prizes_dict = active.get("prizes", {})
+            
+            works = list(db['contests'].find({"contest_id": contest_id, "status": "published"}))
+            if not works:
+                # Если никто не участвовал, просто закрываем конкурс
+                db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})
+                try: bot.send_message(STAFF_GROUP_ID, f"🤷‍♂️ Конкурс {contest_id} завершен, но работ не было.", message_thread_id=CONTESTS_THREAD_ID)
+                except: pass
+                return
+                
+            # Подсчет лайков (Зрительские симпатии)
+            for w in works: w['vote_count'] = len(w.get('votes', []))
+            works.sort(key=lambda x: x['vote_count'], reverse=True)
+            top_works = works[:3]
+            
+            report = f"🏆 <b>АВТО-ИТОГИ ЗРИТЕЛЬСКОГО ГОЛОСОВАНИЯ: {contest_id}</b> 🏆\n\n"
+            
+            for i, work in enumerate(top_works):
+                place = str(i + 1)
+                uid = work['uid']
+                safe_username = html.escape(work.get('username', f"ID {uid}"))
+                safe_title = html.escape(work['title'])
+                votes = work['vote_count']
+                
+                prize_text = prizes_dict.get(place, {}).get("text", "Ценный приз")
+                medal = ["🥇", "🥈", "🥉"][i]
+                
+                report += f"<b>{place} МЕСТО {medal}</b>\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 «{safe_title}»\n❤️ Голосов: <b>{votes}</b>\n🎁 Приз: <i>{prize_text}</i>\n\n"
+                
+                # Создаем заявку в ЦУП
+                db['premium_claims'].insert_one({
+                    "uid": uid, 
+                    "username": safe_username, 
+                    "timestamp": time.time(), 
+                    "status": "pending",
+                    "prize_desc": f"Зрительские симпатии ({place} место): {prize_text}"
+                })
+                
+                try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nПо итогам зрительского голосования ваш образ «{safe_title}» занял <b>{place} место</b>!\nВаша награда: <b>{prize_text}</b>.\n<i>Заявка передана администрации. Ждите начисления!</i>", parse_mode="HTML")
+                except: pass
+
+            # Замораживаем работы и сам конкурс
+            db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
+            db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})
+            
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Выдать призы в ЦУПе", url="https://elite-poster-bot.onrender.com/glaz"))
+            report += "❗️ <i>Заявки сформированы. Победителей в тематических номинациях вы можете наградить вручную!</i>"
+            
+            bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", reply_markup=markup, message_thread_id=CONTESTS_THREAD_ID)
+            
+    except Exception as e:
+        print(f"Ошибка в авто-итогах конкурса: {e}")
+
 def refund_expired_courts():
     """Отменяет суды старше 24 часов и возвращает деньги вкладчикам"""
     import time
@@ -793,6 +868,9 @@ def start_scheduler():
 
         # 9. Авто-возврат средств с зависших судов (Каждый час)
         scheduler.add_job(refund_expired_courts, 'interval', minutes=60, id='refund_courts', replace_existing=True)
+
+        # Автоматическое подведение итогов фотоконкурсов (каждый день в 10:30)
+        scheduler.add_job(check_contests_task, 'cron', hour=10, minute=30, id='contest_auto_end', replace_existing=True)
         
         # 🔥 10. КОЛЛЕКТОРЫ СКАЙНЕТА (Каждые 30 минут проверяют должников) 🔥
         scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
