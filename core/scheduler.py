@@ -590,7 +590,7 @@ def holiday_contest_scout():
       }
     }"""
     
-    models_queue = ["gemini-3.7-flash", "gemini-3.6-flash"]
+    models_queue = ["gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.6-flash"]
     ai_data = None
     
     for model_name in models_queue:
