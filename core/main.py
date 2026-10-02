@@ -2291,14 +2291,14 @@ def api_admin_generate_contest():
     for model_name in models_queue:
         # 🔥 ВОТ ОНА — ЧИСТАЯ И ИДЕАЛЬНАЯ ССЫЛКА 🔥
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
-        for attempt in range(2):
+        for attempt in range(1):
             try:
                 payload = {
                     "systemInstruction": {"parts": [{"text": system_prompt}]},
                     "contents": [{"parts": [{"text": theme_instruction}]}],
                     "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
                 }
-                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
                 
                 if res.status_code == 200:
                     raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]

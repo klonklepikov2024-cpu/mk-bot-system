@@ -837,29 +837,38 @@
             safeHaptic('impact', 'medium');
         }
 
-        // --- УТИЛИТА ЗАПРОСОВ ---
+        // --- УТИЛИТА ЗАПРОСОВ (С БРОНЕБОЙНЫМ ЛОГИРОВАНИЕМ) ---
         async function apiCall(endpoint, payload = {}) {
             payload.initData = tg.initData;
+
             try {
                 const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
                 });
-                
-                // Бэкенд на Flask возвращает JSON даже при ошибках 400 и 403.
-                // Читаем тело ответа ДО проверки статуса.
-                const data = await response.json();
-                
-                // Возвращаем полученный JSON. Если бэкенд прислал {"error": "описание"}, 
-                // интерфейс дальше сам корректно выведет его в customAlert.
+
+                const raw = await response.text();
+
+                let data;
+                try {
+                    data = JSON.parse(raw);
+                } catch (e) {
+                    console.error("SERVER RAW RESPONSE:", raw);
+                    // Выплевываем реальную ошибку сервера (502/504), а не "проверьте интернет"
+                    return {
+                        error: `Сбой сервера (HTTP ${response.status}).\nОтвет: ${raw.slice(0, 150)}...`
+                    };
+                }
+
+                console.log(`API ${endpoint}:`, response.status, data);
                 return data;
 
             } catch (e) {
-                // Сюда скрипт попадет только при РЕАЛЬНОМ сбое сети 
-                // (выключен интернет, упал сервер, ошибка CORS, или сервер вернул не JSON)
-                console.error("API Error:", e);
-                return {error: "⚠️ Ошибка связи со Скайнетом. Проверьте интернет!"};
+                console.error("API NETWORK ERROR:", e);
+                return {
+                    error: `Ошибка сети: ${e.message}`
+                };
             }
         }
 
