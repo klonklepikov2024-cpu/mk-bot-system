@@ -200,7 +200,7 @@ def handle_contest_moderation(call):
     try:
         pub_msg = bot.send_photo(chat_id=target_chat, photo=work['photo_id'], caption=post_caption, reply_markup=markup, parse_mode="HTML")
         
-        # 🔥 И ЗДЕСЬ ОБОРАЧИВАЕМ В ObjectId 🔥
+        # Обновляем статус текущей работы
         db['contests'].update_one({"_id": ObjectId(work_id)}, {
             "$set": {
                 "status": "published",
@@ -209,11 +209,26 @@ def handle_contest_moderation(call):
             }
         })
         
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 200, "immunity": 1, "jackpot_shards": 1}}, upsert=True)
+        # 🔥 ПРОВЕРЯЕМ, ВЫДАВАЛИ ЛИ МЫ УЖЕ БОНУС В ЭТОМ КОНКУРСЕ 🔥
+        # Ищем, есть ли у юзера ДРУГИЕ опубликованные работы в этом же конкурсе
+        already_published = db['contests'].count_documents({
+            "uid": uid, 
+            "contest_id": work['contest_id'], 
+            "status": "published",
+            "_id": {"$ne": ObjectId(work_id)} # Не считаем ту работу, которую только что одобрили
+        })
         
         bot.edit_message_caption(f"{call.message.caption}\n\n✅ <b>ОПУБЛИКОВАНО в {chat_name}</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None, parse_mode="HTML")
-        try: bot.send_message(uid, f"🎉 <b>Ваша работа одобрена и опубликована в {chat_name}!</b>\n\nСкайнет начислил вам бонус за смелость: <b>200 💎, 1 🛡 Щит и 1 🧩 Осколок!</b>", parse_mode="HTML")
-        except: pass
+        
+        if already_published == 0:
+            # Выдаем бонус (только за первое фото!)
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 200, "immunity": 1, "jackpot_shards": 1}}, upsert=True)
+            try: bot.send_message(uid, f"🎉 <b>Ваша работа одобрена и опубликована в {chat_name}!</b>\n\nСкайнет начислил вам бонус за смелость: <b>200 💎, 1 🛡 Щит и 1 🧩 Осколок!</b>", parse_mode="HTML")
+            except: pass
+        else:
+            # Бонус уже был, просто уведомляем о публикации еще одного фото
+            try: bot.send_message(uid, f"🎉 <b>Ваша дополнительная работа одобрена и опубликована в {chat_name}!</b>\n\n<i>Желаем удачи в голосовании!</i>", parse_mode="HTML")
+            except: pass
         
     except Exception as e:
         bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации: {e}. Бот точно админ в этом чате?")
