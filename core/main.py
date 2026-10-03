@@ -9,6 +9,7 @@ import hmac
 import json
 import random
 import html
+from telebot.types import ChatPermissions
 from urllib.parse import unquote
 from flask import render_template, jsonify
 from database.mongo import paid_collection, db
@@ -81,6 +82,44 @@ def webhook():
 @app.route('/ping')
 def ping():
     return "I am alive!", 200
+
+def mute_user(chat_id, user_id, seconds, reason=""):
+    until = int(time.time()) + seconds
+    perms = ChatPermissions(
+        can_send_messages=False,
+        can_send_audios=False,
+        can_send_documents=False,
+        can_send_photos=False,
+        can_send_videos=False,
+        can_send_video_notes=False,
+        can_send_voice_notes=False,
+        can_send_polls=False,
+        can_send_other_messages=False,
+        can_add_web_page_previews=False,
+        can_change_info=False,
+        can_invite_users=False,
+        can_pin_messages=False,
+        can_manage_topics=False
+    )
+    try:
+        from core.bot import bot
+        bot.restrict_chat_member(
+            chat_id,
+            user_id,
+            until_date=until,
+            permissions=perms
+        )
+        return True
+    except Exception as e:
+        from config import STAFF_GROUP_ID
+        from core.bot import bot
+        error_text = f"🔇 <b>СБОЙ ВЫДАЧИ МУТА</b>\nЧат: <code>{chat_id}</code>\nЮзер: <code>{user_id}</code>\nВремя: {seconds} сек.\nПричина: {reason}\n\n<b>Ответ Telegram:</b> <code>{str(e)}</code>"
+        print(error_text)
+        try:
+            bot.send_message(STAFF_GROUP_ID, error_text, parse_mode="HTML")
+        except:
+            pass
+        return False
 
 # ================= WEB APP API =================
 
@@ -2998,13 +3037,7 @@ def handle_defuse(call):
         # БАБАХ!
         text = f"💥 **БАБАХ!** 💥\n\nХакер [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель... ОШИБКА!\n\nЕму оторвало руки, он отправляется в реанимацию (Мут на 15 минут)."
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        
-        # Выдаем физический мут
-        import time
-        until = int(time.time()) + (15 * 60)
-        try:
-            bot.restrict_chat_member(call.message.chat.id, uid, until_date=until, can_send_messages=False)
-        except: pass
+        mute_user(call.message.chat.id, uid, 15 * 60, "Провал в разминировании бомбы")
 
 # ================= УБИЙЦА ИРИСА (МОДУЛЬ 1: РОЛПЛЕЙ И РАЗДАЧИ) =================
 
@@ -3248,8 +3281,7 @@ def russian_roulette(message):
             bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
         else:
             bot.reply_to(message, "💥 **БАБАХ!**\nВы словили пулю. Скайнет отправляет вас в реанимацию на 1 час.\n_F._", parse_mode="Markdown")
-            try: bot.restrict_chat_member(message.chat.id, uid, until_date=int(time.time()) + 3600, can_send_messages=False)
-            except: pass
+            mute_user(message.chat.id, uid, 3600, "Смерть в русской рулетке")
             
         # ПРОВЕРЯЕМ АЧИВКУ (3 смерти подряд)
         if new_data.get("roulette_deaths_streak", 0) == 3:
@@ -4039,9 +4071,9 @@ def handle_court_funding(call):
         
         bot.edit_message_text(f"⚖️ **СУД ВЕРШИЛСЯ!**\n\nНеобходимая сумма в **{court['goal']} 💎** собрана!\n[{court['target_name']}](tg://user?id={court['target_id']}) признан виновным народным голосованием и отправляется за решетку на 1 час.\n\n_Правосудие восторжествовало. Деньги переведены в Сейф Скайнета._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
         
-        import time
-        try: bot.restrict_chat_member(call.message.chat.id, court['target_id'], until_date=int(time.time()) + 3600, can_send_messages=False)
-        except: pass
+        # 👇 ВОТ ЭТУ СТРОКУ НУЖНО ДОБАВИТЬ СЮДА 👇
+        mute_user(call.message.chat.id, court['target_id'], 3600, "Осужден Народным Судом")
+        
     else:
         # Обновляем кнопку
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -4142,10 +4174,9 @@ def use_thanos_glove(message):
                 bot.send_message(message.chat.id, f"🛡 <b>Сбой матрицы!</b> Гражданин {t.get('name', 'Аноним')} имеет статус Святого (Карма 100+). Перчатка не смогла стереть его!", parse_mode="HTML")
                 continue
                 
-            try:
-                bot.restrict_chat_member(message.chat.id, t['uid'], until_date=until, can_send_messages=False)
+            success = mute_user(message.chat.id, t['uid'], 15 * 60, "Рассыпался от Щелчка Таноса")
+            if success:
                 muted_names.append(t.get('name', 'Аноним'))
-            except: pass
             
         if muted_names:
             bot.send_message(message.chat.id, "💨 <b>Половина активных участников рассыпалась в прах (Мут 15 минут):</b>\n" + ", ".join(muted_names), parse_mode="HTML")
@@ -4276,8 +4307,7 @@ def guantanamo_order(message):
     until = int(time.time()) + 86400
     # Флаг, блокирующий снятие Ангелом
     paid_collection.update_one({"uid": target_id}, {"$set": {"guantanamo_until": until}})
-    try: bot.restrict_chat_member(message.chat.id, target_id, until_date=until, can_send_messages=False)
-    except: pass
+    mute_user(message.chat.id, target_id, 86400, "Ордер Гуантанамо")
     bot.send_message(message.chat.id, f"🚷 <b>Ордер Гуантанамо применен!</b>\n\n{parts[1]} отправлен в изолятор на 24 часа. Ангелы и Индульгенции бессильны.", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!вскрыть'))
@@ -4615,8 +4645,7 @@ def prison_break(message):
         else:
             # ПРОВАЛ: Полиция вяжет спасателя
             bot.send_message(message.chat.id, f"🚨 <b>ПРОВАЛ! СНАЙПЕРЫ НА ВЫШКАХ!</b>\nВертолет сбит из РПГ. <a href='tg://user?id={uid}'>{safe_name}</a> арестован за пособничество и отправляется в карцер на 2 часа!", parse_mode="HTML")
-            try: bot.restrict_chat_member(message.chat.id, uid, until_date=int(time.time()) + 7200, can_send_messages=False)
-            except: pass
+            mute_user(message.chat.id, uid, 7200, "Провал попытки побега из тюрьмы")
     except Exception as e:
         bot.reply_to(message, f"Системный сбой: {e}")
 
@@ -4707,14 +4736,7 @@ def run_squid_game(chat_id):
         players.remove(loser)
         
         db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"players": players}})
-
-        until = int(time.time()) + 10800 
-        try: bot.restrict_chat_member(chat_id, loser['id'], until_date=until, can_send_messages=False)
-        except: pass
-
-        try:
-            bot.send_message(chat_id, f"🔫 <b>Игрок <a href='tg://user?id={loser['id']}'>{html.escape(loser['name'])}</a> устранен.</b> (Мут на 3 часа).\nОсталось игроков: {len(players)}", parse_mode="HTML")
-        except: pass
+        mute_user(chat_id, loser['id'], 10800, "Устранен в Игре в Кальмара")
 
     winner = players[0]
     paid_collection.update_one({"uid": winner['id']}, {"$inc": {"bounty_points": pot}})
@@ -4806,9 +4828,7 @@ def join_heist(message):
         # ПРОВАЛ! Полиция вяжет всех.
         for m in heist['members']:
             paid_collection.update_one({"uid": m['id']}, {"$inc": {"bounty_points": -500}})
-            until = int(time.time()) + 7200 # Мут на 2 часа
-            try: bot.restrict_chat_member(chat_id, m['id'], until_date=until, can_send_messages=False)
-            except: pass
+            mute_user(chat_id, m['id'], 7200, "Пойман полицией на ограблении")
             
         bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СПЕЦНАЗ НА МЕСТЕ!**\n\nКто-то нажал тревожную кнопку. Полиция повязала всю банду прямо в хранилище!\n\nАрестованы: {names_str}\n\n_Суд был скорым: конфискация 500 💎 у каждого и 2 часа тюрьмы (Мут)._", parse_mode="Markdown")
 
@@ -4868,9 +4888,10 @@ def track_global_activity(message):
     if karma <= -100:
         try:
             bot.delete_message(message.chat.id, message.message_id)
-            until = int(time.time()) + 172800 # 48 часов
-            bot.restrict_chat_member(message.chat.id, uid, until_date=until, can_send_messages=False)
-            paid_collection.update_one({"uid": uid}, {"$set": {"social_rating": -50}}) # Сброс до -50
+        except: pass
+        mute_user(message.chat.id, uid, 172800, "Цифровой ГУЛАГ (Карма <= -100)")
+        paid_collection.update_one({"uid": uid}, {"$set": {"social_rating": -50}}) # Сброс до -50
+        try:
             bot.send_message(message.chat.id, f"🚨 <b>ВРАГ НАРОДА УСТРАНЕН!</b>\nГражданин {message.from_user.first_name} лишен голоса на 48 часов за достижение Кармы -100. Рейтинг принудительно сброшен до -50.", parse_mode="HTML")
         except: pass
         return
@@ -4889,8 +4910,9 @@ def track_global_activity(message):
         if pts < 5:
             try:
                 bot.delete_message(message.chat.id, message.message_id)
-                until = int(time.time()) + 43200 # 12 часов
-                bot.restrict_chat_member(message.chat.id, uid, until_date=until, can_send_messages=False)
+            except: pass
+            mute_user(message.chat.id, uid, 43200, "Налог на слова: исчерпан баланс")
+            try:
                 bot.send_message(message.chat.id, f"🔇 <b>БАЛАНС СЛОВ ИСЧЕРПАН.</b>\nУ гражданина нет 5 💎 на оплату сообщения. Выдан мут на 12 часов. Молчание — золото.", parse_mode="HTML")
             except: pass
             return
