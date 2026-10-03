@@ -938,8 +938,11 @@
                 const profileTab = document.getElementById('tab-profile');
                 const userNameEl = document.getElementById('userName');
                 
+                // Сохраняем текущее состояние вкладки, чтобы она не вылезала поверх других
+                const isActive = profileTab.classList.contains('active') ? ' active' : '';
+                
                 // Сбрасываем классы на дефолтные при обновлении
-                profileTab.className = "tab-content active";
+                profileTab.className = "tab-content" + isActive;
                 userNameEl.className = "font-bold text-lg leading-tight transition-colors duration-500";
                 
                 if (data.karma >= 100) {
