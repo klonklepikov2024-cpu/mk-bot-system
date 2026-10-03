@@ -4738,6 +4738,11 @@ def run_squid_game(chat_id):
         db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"players": players}})
         mute_user(chat_id, loser['id'], 10800, "Устранен в Игре в Кальмара")
 
+        # 👇 ВОТ ЭТА СТРОКА ВЕРНЕТ ШОУ В ЧАТ 👇
+        try:
+            bot.send_message(chat_id, f"🔫 <b>Игрок <a href='tg://user?id={loser['id']}'>{html.escape(loser['name'])}</a> устранен.</b> (Мут на 3 часа).\nОсталось игроков: {len(players)}", parse_mode="HTML")
+        except: pass
+
     winner = players[0]
     paid_collection.update_one({"uid": winner['id']}, {"$inc": {"bounty_points": pot}})
     db['active_squid_games'].delete_one({"_id": chat_id})
