@@ -44,7 +44,7 @@ def start_contest(message):
         f"🎉 <b>{title}</b>\n\n{desc}\n\n👇 <b>Отправьте ОДНО ФОТО вашей работы.</b>\n<i>Убедитесь, что фото загружено как картинка, а не файлом.</i>",
         parse_mode="HTML"
     )
-    bot.register_next_step_handler(msg, process_contest_photo, active_contest)
+    bot.register_next_step_handler(msg, process_contest_photo, active) # <--- ПЕРЕДАЕМ СЛОВАРЬ (active), А НЕ СТРОКУ
 
 def process_contest_photo(message, active_contest):
     from core.bot import bot
