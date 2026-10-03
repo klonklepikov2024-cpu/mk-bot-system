@@ -13,10 +13,8 @@ from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, cha
 @bot.message_handler(commands=['contest', 'конкурс'])
 def start_contest(message):
     uid = message.from_user.id
-    
     active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
     
-    # 🔥 ИСПРАВЛЕНИЕ: Если конкурса нет, сразу прерываем функцию
     if not active:
         bot.send_message(uid, "❌ Сейчас нет активных конкурсов.")
         return
@@ -41,22 +39,19 @@ def start_contest(message):
         
     msg = bot.send_message(
         uid,
-        f"🎉 <b>{title}</b>\n\n{desc}\n\n👇 <b>Отправьте ОДНО ФОТО вашей работы.</b>\n<i>Убедитесь, что фото загружено как картинка, а не файлом.</i>",
+        f"🎉 <b>{title}</b>\n\n{desc}\n\n👇 <b>Отправьте ОДНО ФОТО вашей работы.</b>\n<i>Вы можете сразу написать выбранную номинацию или название образа в подписи к фото!</i>",
         parse_mode="HTML"
     )
-    bot.register_next_step_handler(msg, process_contest_photo, active) # <--- ПЕРЕДАЕМ СЛОВАРЬ (active), А НЕ СТРОКУ
+    bot.register_next_step_handler(msg, process_contest_photo, active) # Передаем словарь
 
 def process_contest_photo(message, active_contest):
     from core.bot import bot
     from database.mongo import db
-    import time
 
-    # Позволяем юзеру передумать
     if message.text and message.text.lower() in ['/cancel', 'отмена']:
         bot.send_message(message.chat.id, "🛑 Отправка работы отменена.")
         return
 
-    # Защита от дурака: проверяем, фото ли это
     if not message.photo:
         msg = bot.send_message(message.chat.id, "❌ Это не фотография! Пожалуйста, отправьте именно фото (сжатое, не файлом/документом).\n\n<i>Для отмены напишите /cancel</i>", parse_mode="HTML")
         bot.register_next_step_handler(msg, process_contest_photo, active_contest)
@@ -65,24 +60,59 @@ def process_contest_photo(message, active_contest):
     uid = message.from_user.id
     contest_id = active_contest.get("contest_id", "current_event")
 
-    # 🔥 ПРОВЕРКА ЛИМИТОВ (Максимум 3 фото, как в наших правилах!) 🔥
-    # Ищем в правильной коллекции и не считаем отклоненные работы
     user_submissions = db['contests'].count_documents({"uid": uid, "contest_id": contest_id, "status": {"$ne": "rejected"}})
-    
     if user_submissions >= 3:
         bot.send_message(message.chat.id, "🚫 <b>Лимит исчерпан!</b>\nВы уже отправили максимальное количество работ (3 шт.) на этот конкурс.", parse_mode="HTML")
         return
 
-    # Берем фото в максимальном качестве (последний элемент массива)
     file_id = message.photo[-1].file_id
 
-    # Сохраняем работу в правильную базу Скайнета
+    # Если юзер написал номинацию сразу в подписи к фото
+    if message.caption:
+        finalize_contest_submission(message, active_contest, file_id, message.caption, user_submissions)
+    else:
+        # Если прислал просто фото, запрашиваем текст
+        msg = bot.send_message(
+            message.chat.id, 
+            "📸 Фото получено!\n\nТеперь <b>напишите название вашей работы и/или выбранную номинацию</b> (одним сообщением).\n\n<i>Например: «Номинация: Самый жуткий грим» или просто креативное название вашего образа.</i>", 
+            parse_mode="HTML"
+        )
+        bot.register_next_step_handler(msg, process_contest_nomination, active_contest, file_id, user_submissions)
+
+def process_contest_nomination(message, active_contest, file_id, user_submissions):
+    from core.bot import bot
+    
+    if message.text and message.text.lower() in ['/cancel', 'отмена']:
+        bot.send_message(message.chat.id, "🛑 Отправка работы отменена.")
+        return
+        
+    if not message.text:
+        msg = bot.send_message(message.chat.id, "❌ Отправьте название или номинацию ТЕКСТОМ.\n\n<i>Для отмены напишите /cancel</i>", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_contest_nomination, active_contest, file_id, user_submissions)
+        return
+        
+    finalize_contest_submission(message, active_contest, file_id, message.text, user_submissions)
+
+def finalize_contest_submission(message, active_contest, file_id, nomination_text, user_submissions):
+    from core.bot import bot
+    from database.mongo import db
+    import time
+    import html
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
+
+    uid = message.from_user.id
+    contest_id = active_contest.get("contest_id", "current_event")
+
+    # Ограничиваем длину названия
+    safe_nomination = html.escape(nomination_text[:150])
+
     inserted = db['contests'].insert_one({
         "uid": uid,
         "name": message.from_user.first_name,
         "username": message.from_user.username,
         "contest_id": contest_id,
-        "title": active_contest.get("title", "Конкурс"),
+        "title": safe_nomination, # <--- ПИШЕМ НОМИНАЦИЮ / НАЗВАНИЕ СЮДА
         "photo_id": file_id,
         "timestamp": time.time(),
         "status": "pending",
@@ -90,10 +120,6 @@ def process_contest_photo(message, active_contest):
     })
     
     work_id = str(inserted.inserted_id)
-
-    # Отправляем фото админам в ЦУП на модерацию
-    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -105,12 +131,12 @@ def process_contest_photo(message, active_contest):
     safe_name = html.escape(message.from_user.first_name)
     try:
         bot.send_photo(
-            STAFF_GROUP_ID,
-            file_id,
-            caption=f"📸 <b>НОВАЯ РАБОТА НА КОНКУРС</b>\n\n👤 От: {safe_name} (<code>{uid}</code>)\n🏆 Конкурс: {html.escape(active_contest.get('title', 'Конкурс'))}",
+            chat_id=STAFF_GROUP_ID,
+            photo=file_id,
+            caption=f"📸 <b>НОВАЯ РАБОТА НА КОНКУРС</b>\n\n👤 От: {safe_name} (<code>{uid}</code>)\n🏆 Конкурс: {html.escape(active_contest.get('title', 'Конкурс'))}\n🏷 Номинация/Название:\n<i>{safe_nomination}</i>",
             parse_mode="HTML",
-            reply_markup=markup,
-            message_thread_id=CONTESTS_THREAD_ID
+            message_thread_id=CONTESTS_THREAD_ID,
+            reply_markup=markup
         )
     except Exception as e:
         print(f"Ошибка отправки работы админам: {e}")
@@ -137,7 +163,7 @@ def handle_contest_moderation(call):
         return
         
     uid = work['uid']
-    safe_title = html.escape(work['title'])
+    safe_title = html.escape(work.get('title', 'Без названия'))
     
     if action == "rej":
         db['contests'].update_one({"_id": work_id}, {"$set": {"status": "rejected"}})
@@ -162,7 +188,11 @@ def handle_contest_moderation(call):
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("❤️ Отдать голос (0)", callback_data=f"cvote_{work_id}"))
     
-    post_caption = f"🎃 <b>Конкурс: ХЭЛЛОУИН-2026</b>\n\n🏷 Название: «{safe_title}»\n\n👇 <i>Нажми на кнопку, чтобы отдать голос за этот образ!</i>"
+    # Делаем динамический заголовок конкурса (без хардкода Хэллоуина)
+    active_contest = db['active_contest'].find_one({"contest_id": work['contest_id']})
+    contest_name = active_contest.get("title", "Конкурс") if active_contest else "Конкурс"
+    
+    post_caption = f"🏆 <b>{html.escape(contest_name)}</b>\n\n🏷 <i>{safe_title}</i>\n\n👇 Нажми на кнопку, чтобы отдать голос за этот образ!"
     
     try:
         pub_msg = bot.send_photo(target_chat, work['photo_id'], caption=post_caption, reply_markup=markup, parse_mode="HTML")
@@ -178,7 +208,7 @@ def handle_contest_moderation(call):
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 200, "immunity": 1, "jackpot_shards": 1}}, upsert=True)
         
         bot.edit_message_caption(f"{call.message.caption}\n\n✅ <b>ОПУБЛИКОВАНО в {chat_name}</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None, parse_mode="HTML")
-        try: bot.send_message(uid, f"🎉 <b>Ваша работа «{safe_title}» одобрена и опубликована в {chat_name}!</b>\n\nСкайнет начислил вам бонус за смелость: <b>200 💎, 1 🛡 Щит и 1 🧩 Осколок!</b>", parse_mode="HTML")
+        try: bot.send_message(uid, f"🎉 <b>Ваша работа одобрена и опубликована в {chat_name}!</b>\n\nСкайнет начислил вам бонус за смелость: <b>200 💎, 1 🛡 Щит и 1 🧩 Осколок!</b>", parse_mode="HTML")
         except: pass
         
     except Exception as e:
