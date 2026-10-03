@@ -66,7 +66,8 @@ def process_contest_photo(message, active_contest):
     contest_id = active_contest.get("contest_id", "current_event")
 
     # 🔥 ПРОВЕРКА ЛИМИТОВ (Максимум 3 фото, как в наших правилах!) 🔥
-    user_submissions = db['contest_submissions'].count_documents({"uid": uid, "contest_id": contest_id})
+    # Ищем в правильной коллекции и не считаем отклоненные работы
+    user_submissions = db['contests'].count_documents({"uid": uid, "contest_id": contest_id, "status": {"$ne": "rejected"}})
     
     if user_submissions >= 3:
         bot.send_message(message.chat.id, "🚫 <b>Лимит исчерпан!</b>\nВы уже отправили максимальное количество работ (3 шт.) на этот конкурс.", parse_mode="HTML")
@@ -75,21 +76,48 @@ def process_contest_photo(message, active_contest):
     # Берем фото в максимальном качестве (последний элемент массива)
     file_id = message.photo[-1].file_id
 
-    # Сохраняем работу в базу Скайнета
-    db['contest_submissions'].insert_one({
+    # Сохраняем работу в правильную базу Скайнета
+    inserted = db['contests'].insert_one({
         "uid": uid,
         "name": message.from_user.first_name,
         "username": message.from_user.username,
         "contest_id": contest_id,
-        "file_id": file_id,
+        "title": active_contest.get("title", "Конкурс"),
+        "photo_id": file_id,
         "timestamp": time.time(),
-        "votes": 0,
-        "voters": [] # Сюда будем писать ID тех, кто проголосовал за фотку, чтобы не крутили
+        "status": "pending",
+        "votes": [] 
     })
+    
+    work_id = str(inserted.inserted_id)
+
+    # Отправляем фото админам в ЦУП на модерацию
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✅ В Галерею МК", callback_data=f"cmod_gal_{work_id}"),
+        InlineKeyboardButton("🔞 В Без предрассудков", callback_data=f"cmod_nsfw_{work_id}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"cmod_rej_{work_id}")
+    )
+    
+    safe_name = html.escape(message.from_user.first_name)
+    try:
+        bot.send_photo(
+            STAFF_GROUP_ID,
+            file_id,
+            caption=f"📸 <b>НОВАЯ РАБОТА НА КОНКУРС</b>\n\n👤 От: {safe_name} (<code>{uid}</code>)\n🏆 Конкурс: {html.escape(active_contest.get('title', 'Конкурс'))}",
+            parse_mode="HTML",
+            reply_markup=markup,
+            message_thread_id=CONTESTS_THREAD_ID
+        )
+    except Exception as e:
+        print(f"Ошибка отправки работы админам: {e}")
 
     bot.send_message(
         message.chat.id, 
-        f"✅ <b>РАБОТА ПРИНЯТА!</b> ({user_submissions + 1}/3)\n\nВаш шедевр успешно зарегистрирован на конкурс <b>«{active_contest.get('title')}»</b>!\nЖдите начала зрительского голосования.", 
+        f"✅ <b>РАБОТА ПРИНЯТА!</b> ({user_submissions + 1}/3)\n\nВаш шедевр успешно зарегистрирован на конкурс <b>«{active_contest.get('title', 'Конкурс')}»</b>!\nЖдите результатов модерации.", 
         parse_mode="HTML"
     )
 
