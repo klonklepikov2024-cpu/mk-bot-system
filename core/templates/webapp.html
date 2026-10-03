@@ -934,12 +934,28 @@
                 } else {
                     famBlock.classList.add('hidden'); // Прячем, если семьи нет
                 }
-                // --- ЗОЛОТАЯ РАМКА ---
+                // --- ЗОЛОТАЯ РАМКА И КАРМА-РАМКИ ---
                 const profileTab = document.getElementById('tab-profile');
                 const userNameEl = document.getElementById('userName');
-                if (data.golden_frame) {
+                
+                // Сбрасываем классы на дефолтные при обновлении
+                profileTab.className = "tab-content active";
+                userNameEl.className = "font-bold text-lg leading-tight transition-colors duration-500";
+                
+                if (data.karma >= 100) {
+                    profileTab.classList.add('bg-gradient-to-b', 'from-white/20', 'to-transparent', 'border', 'border-white/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(255,255,255,0.2)]', 'p-4', '-m-4', 'mb-4');
+                    userNameEl.classList.add('text-white', 'drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]');
+                    userNameEl.innerText = "[Святой] " + user.first_name;
+                } else if (data.karma <= -100) {
+                    profileTab.classList.add('bg-gradient-to-b', 'from-red-900/40', 'to-transparent', 'border', 'border-red-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(239,68,68,0.2)]', 'p-4', '-m-4', 'mb-4');
+                    userNameEl.classList.add('text-red-500', 'drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]');
+                    userNameEl.innerText = "[Изгой] " + user.first_name;
+                } else if (data.golden_frame) {
                     profileTab.classList.add('bg-gradient-to-b', 'from-yellow-900/40', 'to-transparent', 'border', 'border-yellow-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(234,179,8,0.15)]', 'p-4', '-m-4', 'mb-4');
                     userNameEl.classList.add('text-yellow-400', 'drop-shadow-[0_0_8px_rgba(234,179,8,0.8)]');
+                    userNameEl.innerText = user.first_name;
+                } else {
+                    userNameEl.innerText = user.first_name;
                 }
 
                 // --- ЗАЛ СЛАВЫ (АЧИВКИ) ---

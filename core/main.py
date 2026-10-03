@@ -849,7 +849,14 @@ def api_open_chest():
     
     import random
     chance = random.randint(1, 100)
-    if chance <= 45:
+    karma = user_data.get("social_rating", 0)
+    
+    # 🔥 ВЛИЯНИЕ КАРМЫ НА СУНДУК 🔥
+    cat_threshold = 45
+    if karma >= 50: cat_threshold = 5   # Святые почти не встречают кота
+    elif karma <= -50: cat_threshold = 70 # Злых кот грабит по-черному
+    
+    if chance <= cat_threshold:
         rubles = user_data.get("cashback_balance", 0)
         target = "points"
         
@@ -1034,22 +1041,26 @@ def api_loan():
         if user_db.get("debt", 0) > 0:
             return jsonify({"error": "У вас уже есть непогашенный кредит! МФО отказывает в выдаче."}), 400
             
-        # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ 🔥
-        # Ищем, есть ли у юзера хотя бы в одном чате 100 сообщений
+        # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ И РЕЙТИНГ 🔥
+        karma = user_db.get("social_rating", 0)
+        if karma <= -100:
+            return jsonify({"error": "ВРАГ НАРОДА! Скайнет не спонсирует криминал. Выдача запрещена."}), 400
+
         chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 100}})
-        if not chat_stat and user_db.get("social_rating", 0) <= 0:
+        if not chat_stat and karma <= 0:
             return jsonify({"error": "МФО не дает деньги незнакомцам! Напишите хотя бы 100 сообщений в наших чатах."}), 400
             
         amount = int(data.get('amount', 0))
         days = int(data.get('days', 1))
         
-        if amount < 100 or amount > 10000:
-            return jsonify({"error": "Сумма кредита: от 100 до 10000 💎!"}), 400
+        max_loan = 20000 if karma >= 50 else 10000
+        if amount < 100 or amount > max_loan:
+            return jsonify({"error": f"Сумма кредита: от 100 до {max_loan} 💎!"}), 400
             
-        # Считаем проценты
-        if days == 1: percent = 0.20
-        elif days == 3: percent = 0.40
-        elif days == 7: percent = 0.70
+        # Считаем проценты в зависимости от Кармы
+        if days == 1: percent = 0.05 if karma >= 50 else (0.40 if karma <= -50 else 0.20)
+        elif days == 3: percent = 0.15 if karma >= 50 else (0.80 if karma <= -50 else 0.40)
+        elif days == 7: percent = 0.30 if karma >= 50 else (1.40 if karma <= -50 else 0.70)
         else: return jsonify({"error": "Неверный срок кредита!"}), 400
         
         debt_amount = int(amount + (amount * percent))
@@ -1908,6 +1919,14 @@ def api_farm_action():
         # СТАНДАРТНЫЙ УРОЖАЙ (ВКЛЮЧАЯ ПЕТРУШКУ)
         else:
             reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
+            karma = user_db.get("social_rating", 0)
+            
+            # 🔥 ВЛИЯНИЕ КАРМЫ НА УРОЖАЙ 🔥
+            if karma <= -50 and random.randint(1, 100) <= 10:
+                penalty = int(reward_pts * 0.5)
+                reward_pts -= penalty
+                msg += f"\n📉 <b>ЭКО-ШТРАФ!</b> Участок признан свалкой из-за кармы. Удержано {penalty} 💎."
+                
             update_query["$inc"]["bounty_points"] = reward_pts
             msg += f"\nВы получили {reward_pts} 💎."
             
@@ -1928,7 +1947,10 @@ def api_farm_action():
             msg += "\n🧩 Найден Осколок рулетки!"
             
         key_type = crop.get('key')
-        if key_type and random.randint(1, 100) <= crop['key_chance']:
+        key_chance = crop.get('key_chance', 0)
+        if karma >= 50: key_chance += 5 # Бафф святых на +5% к шансу ключа
+        
+        if key_type and random.randint(1, 100) <= key_chance:
             update_query["$inc"][f"key_{key_type}"] = 1
             key_name = "Синий 🗄" if key_type == "blue" else "Красный 🏦"
             msg += f"\n\n🔑 УРА! ВЫ НАШЛИ {key_name} КЛЮЧ ОТ СЕЙФА!"
@@ -3016,6 +3038,17 @@ def handle_rp_commands(message):
         if text_lower.startswith(k):
             cmd = k
             break
+
+    user_data = paid_collection.find_one({"uid": message.from_user.id}) or {}
+    karma = user_data.get("social_rating", 0)
+
+    # Блокировка добрых действий для изгоев
+    if karma <= -50:
+        good_cmds = ["обнять", "поцеловать", "погладить", "дать пять", "пожать", "укрыть"]
+        if cmd in good_cmds:
+            return bot.reply_to(message, "🚫 <b>ЦЕНЗУРА:</b> Грязным преступникам (Карма < -50) запрещено прикасаться к порядочным гражданам. Вам доступны только агрессивные действия!", parse_mode="HTML")
+            
+    text_template = None
             
     text_template = None
     if cmd:
@@ -3251,6 +3284,11 @@ def text_profile(message):
         partner_id = user_data.get("partner_id")
         partner_text = f"В браке с ID {partner_id}" if partner_id else "Одинок(а)"
         title = "👑 VIP-Персона" if user_data.get("is_vip") else "🔴 Гражданин Империи"
+        
+        # 🔥 АВТО-ТИТУЛЫ ПО КАРМЕ 🔥
+        if karma >= 100: title = "😇 Святой (Неприкасаемый)"
+        elif karma <= -100: title = "💀 Враг Народа (Опущенный)"
+        elif karma <= -50: title = "🗑 Изгой (Под надзором)"
         
         # Сборка ачивок
         ach_map = {
@@ -3694,6 +3732,13 @@ def my_family_tree(message):
         p_name = (db['chat_stats'].find_one({"uid": parent_id}) or {}).get("name", "Опекун")
         text += f"👑 **Родитель:** [{p_name}](tg://user?id={parent_id})\n"
         
+        # 🔥 НОВОЕ: ИЩЕМ ОТЧИМА / РОДИТЕЛЯ №2 🔥
+        p_data = paid_collection.find_one({"uid": parent_id}) or {}
+        stepfather_id = p_data.get("partner_id")
+        if stepfather_id:
+            sf_name = (db['chat_stats'].find_one({"uid": stepfather_id}) or {}).get("name", "Отчим")
+            text += f"👨‍👨‍👦 **Отчим / Родитель №2:** [{sf_name}](tg://user?id={stepfather_id})\n"
+        
     if partner_id:
         part_name = (db['chat_stats'].find_one({"uid": partner_id}) or {}).get("name", "Супруг(а)")
         text += f"💍 **В браке с:** [{part_name}](tg://user?id={partner_id})\n"
@@ -3775,6 +3820,27 @@ def run_away_child(message):
     except:
         pass
 
+# ================= ПРАВО ВЕТО (ДЛЯ СВЯТЫХ) =================
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!амнистия', 'амнистия')))
+def elite_amnesty(message):
+    uid = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = user_data.get("social_rating", 0)
+    
+    if karma < 100:
+        return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
+        
+    import time
+    # Списываем 20 кармы
+    paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": -20}})
+    # Снимаем все муты
+    db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
+    paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
+    
+    bot.reply_to(message, f"🕊 <b>ПРАВО ВЕТО ПРИМЕНЕНО!</b>\n\nСвятой гражданин пожертвовал 20 Кармы, чтобы очистить грехи <a href='tg://user?id={target_id}'>{message.reply_to_message.from_user.first_name}</a>!\n\n<i>Тюремные замки открыты. Все блокировки сняты.</i>", parse_mode="HTML")
+
 # ================= НАРОДНЫЙ СУД (СБОР НА КИЛЛЕРА) =================
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!суд', 'суд')))
 def public_court(message):
@@ -3802,7 +3868,20 @@ def public_court(message):
     
     import time
     court_id = f"court_{int(time.time())}_{target_id}"
+    target_data = paid_collection.find_one({"uid": target_id}) or {}
+    target_karma = target_data.get("social_rating", 0)
+    
     GOAL = 1000
+    extra_msg = ""
+    if target_karma >= 50:
+        GOAL = 2000
+        extra_msg = "\n🌟 <i>Цель имеет безупречную репутацию! Подкупить Скайнет будет в 2 раза дороже.</i>"
+    elif target_karma <= -50:
+        GOAL = 500
+        extra_msg = "\n👿 <i>Обвиняемый — известная угроза обществу! Народ готов скинуться по дешевке.</i>"
+    
+    import time
+    court_id = f"court_{int(time.time())}_{target_id}"
     
     db['active_courts'].insert_one({
         "_id": court_id,
@@ -3818,8 +3897,8 @@ def public_court(message):
     
     bot.send_message(
         message.chat.id, 
-        f"🚨 **НАРОДНЫЙ СУД ОТКРЫТ!** 🚨\n\n[{message.from_user.first_name}](tg://user?id={initiator_id}) требует забанить [{target_name}](tg://user?id={target_id}) на 1 час!\n\n💰 Цель сбора: **{GOAL} 💎** для подкупа Скайнета.\n_Жмите кнопку, чтобы пожертвовать 100 очков на правосудие._", 
-        parse_mode="Markdown", reply_markup=markup
+        f"🚨 <b>НАРОДНЫЙ СУД ОТКРЫТ!</b> 🚨\n\n<a href='tg://user?id={initiator_id}'>{message.from_user.first_name}</a> требует забанить <a href='tg://user?id={target_id}'>{target_name}</a> на 1 час!\n\n💰 Цель сбора: <b>{GOAL} 💎</b> для подкупа Скайнета.{extra_msg}\n<i>Жмите кнопку, чтобы пожертвовать 100 очков на правосудие.</i>", 
+        parse_mode="HTML", reply_markup=markup
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('court_fund_'))
@@ -3951,6 +4030,13 @@ def use_thanos_glove(message):
         for t in targets:
             # Защита от мута админов (Telegram API само выдаст ошибку, мы ее гасим)
             if t['uid'] == uid: continue
+            
+            # 🔥 ИММУНИТЕТ ДЛЯ СВЯТЫХ 🔥
+            t_data = paid_collection.find_one({"uid": t['uid']}) or {}
+            if t_data.get("social_rating", 0) >= 100:
+                bot.send_message(message.chat.id, f"🛡 <b>Сбой матрицы!</b> Гражданин {t.get('name', 'Аноним')} имеет статус Святого (Карма 100+). Перчатка не смогла стереть его!", parse_mode="HTML")
+                continue
+                
             try:
                 bot.restrict_chat_member(message.chat.id, t['uid'], until_date=until, can_send_messages=False)
                 muted_names.append(t.get('name', 'Аноним'))
@@ -4274,6 +4360,52 @@ def pay_debt_chat(message):
     
     bot.reply_to(message, f"✅ **КРЕДИТ ПОГАШЕН!**\n\nВы выплатили МФО **{debt} 💎**.\nДолгов нет, арест со счетов снят, коллекторы отозваны.", parse_mode="Markdown")
 
+# ================= АДМИНСКОЕ: КИБЕР-ПРИСТАВ (ОЧИСТКА БАЗЫ) =================
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() == '!пристав')
+def cyber_bailiff(message):
+    try:
+        from config import ADMIN_CHAT_IDS, OWNER_ID
+        if str(message.from_user.id) not in [str(x) for x in ADMIN_CHAT_IDS] and str(message.from_user.id) != str(OWNER_ID):
+            return bot.reply_to(message, "❌ У вас нет лицензии Судебного Пристава Скайнета.")
+
+        bot.send_message(message.chat.id, "👨‍⚖️ <i>Кибер-Пристав начал проверку архивов МФО...</i>", parse_mode="HTML")
+        
+        # Ищем всех должников
+        debtors = list(paid_collection.find({"debt": {"$gt": 0}}))
+        wiped_count = 0
+        freed_money = 0
+        
+        for d in debtors:
+            uid = d["uid"]
+            debt = d.get("debt", 0)
+            
+            # Проверяем количество сообщений юзера в чатах
+            chat_stat = db['chat_stats'].find_one({"uid": uid})
+            msgs = chat_stat.get("msgs", 0) if chat_stat else 0
+            
+            # Если сообщений меньше 50 — это твинк. Уничтожаем!
+            if msgs < 50:
+                # Полностью удаляем финансовый профиль мошенника
+                paid_collection.delete_one({"uid": uid})
+                
+                # Дополнительно вычищаем его билеты из лотерей, чтобы он не выиграл
+                db['tickets_history'].delete_many({"uid": uid})
+                
+                wiped_count += 1
+                freed_money += debt
+                
+        bot.send_message(
+            message.chat.id, 
+            f"👨‍⚖️ <b>ОТЧЕТ ПРИСТАВА:</b>\n\n"
+            f"🗑 Дела безнадежных должников (твинков) уничтожены: <b>{wiped_count} шт.</b>\n"
+            f"💸 Списано фиктивных долгов: <b>{freed_money} 💎</b>.\n"
+            f"🎟 Аннулированы все их лотерейные билеты.\n\n"
+            f"<i>Экономика очищена от мусора.</i>", 
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        bot.reply_to(message, f"Системный сбой: {e}")
+
 # ================= АДМИНСКОЕ: СПИСОК ДОЛЖНИКОВ =================
 @bot.message_handler(func=lambda m: m.text and m.text.strip().lower() == '!должники')
 def show_debtors(message):
@@ -4587,24 +4719,67 @@ def spawn_auction_lot(message):
     })
     bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
 
-# 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ (С сохранением @username)
+# 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ И СОЦИАЛЬНЫЙ РЕЙТИНГ
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
 def track_global_activity(message):
     if message.text and message.text.startswith(('!', '/')): return
     
     uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = user_data.get("social_rating", 0)
+    import time, random
+
+    # 💀 1. ЦИФРОВОЙ ГУЛАГ (Карма <= -100)
+    if karma <= -100:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            until = int(time.time()) + 172800 # 48 часов
+            bot.restrict_chat_member(message.chat.id, uid, until_date=until, can_send_messages=False)
+            paid_collection.update_one({"uid": uid}, {"$set": {"social_rating": -50}}) # Сброс до -50
+            bot.send_message(message.chat.id, f"🚨 <b>ВРАГ НАРОДА УСТРАНЕН!</b>\nГражданин {message.from_user.first_name} лишен голоса на 48 часов за достижение Кармы -100. Рейтинг принудительно сброшен до -50.", parse_mode="HTML")
+        except: pass
+        return
+
+    # 👻 2. ТЕНЕВОЙ БАН (Карма <= -90)
+    if karma <= -90 and random.randint(1, 100) <= 25:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            bot.send_message(message.chat.id, f"🗑 <i>Пакет данных утерян. Социальный рейтинг отправителя слишком низок для стабильной маршрутизации.</i>", parse_mode="HTML")
+        except: pass
+        return
+
+    # 💸 3. НАЛОГ НА СЛОВА (Карма <= -75)
+    if karma <= -75:
+        pts = user_data.get("bounty_points", 0)
+        if pts < 5:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+                until = int(time.time()) + 43200 # 12 часов
+                bot.restrict_chat_member(message.chat.id, uid, until_date=until, can_send_messages=False)
+                bot.send_message(message.chat.id, f"🔇 <b>БАЛАНС СЛОВ ИСЧЕРПАН.</b>\nУ гражданина нет 5 💎 на оплату сообщения. Выдан мут на 12 часов. Молчание — золото.", parse_mode="HTML")
+            except: pass
+            return
+        else:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -5}})
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 5}})
+
+    # 📵 4. ПЕЙДЖЕР-РЕЖИМ (Карма <= -50, запрет медиа)
+    if karma <= -50 and message.content_type != 'text':
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            bot.send_message(message.chat.id, f"📵 <b>ПЕЙДЖЕР-РЕЖИМ!</b>\nГражданину {message.from_user.first_name} запрещено отправлять фото, стикеры и войсы (Карма ниже -50). Только текст!", parse_mode="HTML")
+        except: pass
+        return
+
+    # Стандартный сбор статистики (если прошел цензуру)
     set_fields = {"name": message.from_user.first_name}
     if message.from_user.username:
-        # Сохраняем юзернейм в нижнем регистре для удобного поиска
         set_fields["username"] = message.from_user.username.lower()
         db['users'].update_one({"_id": uid}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
         
-    db['chat_stats'].update_one(
-        {"chat_id": message.chat.id, "uid": uid}, 
-        {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True
-    )
+    db['chat_stats'].update_one({"chat_id": message.chat.id, "uid": uid}, {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True)
 
-    # 🔥 ТРЕКЕР ЗАДАНИЙ: СЧИТАЕМ ДНЕВНЫЕ СООБЩЕНИЯ (ЕКБ ВРЕМЯ) 🔥
+    # Трекер заданий ЕКБ
     import datetime
     tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
     today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")

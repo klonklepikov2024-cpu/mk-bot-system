@@ -46,6 +46,53 @@ def start_contest(message):
     )
     bot.register_next_step_handler(msg, process_contest_photo, active_contest)
 
+def process_contest_photo(message, active_contest):
+    from core.bot import bot
+    from database.mongo import db
+    import time
+
+    # Позволяем юзеру передумать
+    if message.text and message.text.lower() in ['/cancel', 'отмена']:
+        bot.send_message(message.chat.id, "🛑 Отправка работы отменена.")
+        return
+
+    # Защита от дурака: проверяем, фото ли это
+    if not message.photo:
+        msg = bot.send_message(message.chat.id, "❌ Это не фотография! Пожалуйста, отправьте именно фото (сжатое, не файлом/документом).\n\n<i>Для отмены напишите /cancel</i>", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_contest_photo, active_contest)
+        return
+
+    uid = message.from_user.id
+    contest_id = active_contest.get("contest_id", "current_event")
+
+    # 🔥 ПРОВЕРКА ЛИМИТОВ (Максимум 3 фото, как в наших правилах!) 🔥
+    user_submissions = db['contest_submissions'].count_documents({"uid": uid, "contest_id": contest_id})
+    
+    if user_submissions >= 3:
+        bot.send_message(message.chat.id, "🚫 <b>Лимит исчерпан!</b>\nВы уже отправили максимальное количество работ (3 шт.) на этот конкурс.", parse_mode="HTML")
+        return
+
+    # Берем фото в максимальном качестве (последний элемент массива)
+    file_id = message.photo[-1].file_id
+
+    # Сохраняем работу в базу Скайнета
+    db['contest_submissions'].insert_one({
+        "uid": uid,
+        "name": message.from_user.first_name,
+        "username": message.from_user.username,
+        "contest_id": contest_id,
+        "file_id": file_id,
+        "timestamp": time.time(),
+        "votes": 0,
+        "voters": [] # Сюда будем писать ID тех, кто проголосовал за фотку, чтобы не крутили
+    })
+
+    bot.send_message(
+        message.chat.id, 
+        f"✅ <b>РАБОТА ПРИНЯТА!</b> ({user_submissions + 1}/3)\n\nВаш шедевр успешно зарегистрирован на конкурс <b>«{active_contest.get('title')}»</b>!\nЖдите начала зрительского голосования.", 
+        parse_mode="HTML"
+    )
+
 # --- 2. МОДЕРАЦИЯ И ПУБЛИКАЦИЯ ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cmod_'))
 def handle_contest_moderation(call):
