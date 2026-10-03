@@ -86,6 +86,7 @@ def ping():
 
 def validate_webapp_data(init_data, token):
     """Секретная функция проверки подписи от Telegram"""
+    if not init_data: return False # <--- ДОБАВИЛИ ЗАЩИТУ
     try:
         parsed_data = dict(qc.split("=", 1) for qc in unquote(init_data).split("&"))
         if "hash" not in parsed_data: return False
@@ -433,6 +434,8 @@ def api_buy_market():
     if seller_data.get("offshore_until", 0) > time.time(): 
         multiplier = 1.0 # 0% комиссии
     
+    promo_id = lot['promo_id'] # <--- ПЕРЕНЕСЛИ СЮДА
+    
     # 🔥 ПАТЧ РЫНКА: Разделение валют 🔥
     if currency == "rub":
         seller_profit = int(gross_payout * multiplier)
@@ -448,7 +451,6 @@ def api_buy_market():
         currency_sym = "💎"
         subsidy_msg = "" # Субсидия в рублях не платится, если сделка в очках
     
-    promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
     
     # === 3. УВЕДОМЛЕНИЕ ПРОДАВЦУ ===
@@ -1814,11 +1816,13 @@ def api_farm_action():
 
     # Для остальных действий нам нужна конкретная грядка
     plot = db['farm_plots'].find_one({"uid": uid, "slot_id": slot_id})
+    
+    if not plot: return jsonify({"error": "Грядка не найдена!"}), 400 # <--- ПЕРЕНЕСЛИ НАВЕРХ
+    
     # Защита от действий во время заражения
     if action in ['water', 'fertilize', 'harvest']:
         if plot.get('pest'):
             return jsonify({"error": f"Сначала прогоните вредителя ({plot['pest']['emoji']})!"}), 400
-    if not plot: return jsonify({"error": "Грядка не найдена!"}), 400
     
     # === ПОСАДКА ===
     if action == 'plant':
