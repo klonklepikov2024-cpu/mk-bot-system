@@ -1939,6 +1939,10 @@ def api_farm_action():
         # СТАНДАРТНЫЙ УРОЖАЙ (ВКЛЮЧАЯ ПЕТРУШКУ)
         else:
             reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
+            
+            # 👇 ДОБАВЛЯЕМ ЭТУ СТРОЧКУ 👇
+            user_db = paid_collection.find_one({"uid": uid}) or {}
+            
             karma = user_db.get("social_rating", 0)
             
             # 🔥 ВЛИЯНИЕ КАРМЫ НА УРОЖАЙ 🔥
@@ -2143,6 +2147,8 @@ def api_crack_safe():
             from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
             import time
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            # ИМПОРТИРУЕМ ФУНКЦИЮ УДАЛЕНИЯ
+            from core.scheduler import schedule_message_deletion
             
             all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
             unique_chats = set(all_chats)
@@ -2162,8 +2168,10 @@ def api_crack_safe():
                 
                 for cid in unique_chats:
                     try:
-                        bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
-                        time.sleep(0.3) # Защита от лимитов Telegram
+                        # СОХРАНЯЕМ И ЗАПУСКАЕМ ТАЙМЕР
+                        sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
+                        schedule_message_deletion(cid, sent_msg.message_id, 10800, bot)
+                        time.sleep(0.3) 
                     except: pass
             except: pass
 

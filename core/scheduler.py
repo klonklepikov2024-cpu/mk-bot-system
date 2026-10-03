@@ -385,9 +385,16 @@ def broadcast_teaser(text, button_text, tab_name):
     success_count = 0
     first_error = None
     
+    # scheduler.py -> функция broadcast_teaser
+
     for chat_id in unique_chats:
         try:
-            bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
+            # СОХРАНЯЕМ РЕЗУЛЬТАТ ОТПРАВКИ В ПЕРЕМЕННУЮ sent_msg
+            sent_msg = bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
+            
+            # ДОБАВЛЯЕМ ТАЙМЕР НА УДАЛЕНИЕ (10800 секунд = 3 часа)
+            schedule_message_deletion(chat_id, sent_msg.message_id, 10800, bot)
+            
             success_count += 1
             import time
             time.sleep(0.05) # Пауза от бана Telegram
@@ -676,8 +683,11 @@ def drop_cyber_bomb():
         "💥 **Ошибешься** = Оторвет руки (Мут на 15 минут)\n\n"
         "_Решайся быстрее, пока это не сделал кто-то другой!_"
     )
-    
-    try: bot.send_message(target_chat, msg_text, parse_mode="Markdown", reply_markup=markup)
+       
+    try: 
+        sent_msg = bot.send_message(target_chat, msg_text, parse_mode="Markdown", reply_markup=markup)
+        # Удаляем бомбу через 3 часа
+        schedule_message_deletion(target_chat, sent_msg.message_id, 10800, bot)
     except: pass
 
 def stray_cat_tax():
