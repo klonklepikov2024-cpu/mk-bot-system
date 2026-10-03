@@ -1606,16 +1606,19 @@ def api_inventory_action():
         return jsonify({"success": True, "msg": "🚓 Заявка на арест передана Спецназу Скайнета!"})
 
     elif action == 'hack':
-        target_uid = resolve_uid(data.get('target_info'))
+        target_uid = resolve_target_uid(data.get('target_info'))
         if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
         
         if target_uid == uid: return jsonify({"error": "Нельзя взломать самого себя!"}), 400
         
         user_data = paid_collection.find_one({"uid": uid}) or {}
+        target_data = paid_collection.find_one({"uid": target_uid}) or {}
+        target_karma = target_data.get("social_rating", 0)
         
-        # 🔥 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА (1 час) 🔥
         import time
         now = time.time()
+        
+        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА
         last_hack = user_data.get("last_hack_time", 0)
         if now - last_hack < 3600:
             left_mins = int((3600 - (now - last_hack)) / 60)
@@ -1624,14 +1627,23 @@ def api_inventory_action():
         if user_data.get("bounty_points", 0) < 200:
             return jsonify({"error": "У вас нет 200 💎 для запуска вируса!"}), 400
             
-        target_data = paid_collection.find_one({"uid": target_uid})
-        if not target_data or target_data.get("bounty_points", 0) < 100:
+        if target_data.get("bounty_points", 0) < 100:
             return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
             
-        # 🔥 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ (4 часа) 🔥
+        # 🔥 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ (ЗАВИСИТ ОТ КАРМЫ) 🔥
+        if target_karma >= 50: 
+            imm_time = 21600 # 6 часов для Святых
+            imm_text = "6 часов"
+        elif target_karma <= -50: 
+            imm_time = 7200  # 2 часа для Изгоев (Кормовая база)
+            imm_text = "2 часа"
+        else: 
+            imm_time = 14400 # 4 часа по умолчанию
+            imm_text = "4 часа"
+
         last_hacked = target_data.get("last_hacked_time", 0)
-        if now - last_hacked < 14400: # 4 часа = 14400 сек
-            return jsonify({"error": "Сервер жертвы сейчас под защитой федералов! Попробуйте позже."}), 400
+        if now - last_hacked < imm_time:
+            return jsonify({"error": f"Сервер жертвы под защитой! Из-за её рейтинга защита длится {imm_text}."}), 400
             
         # Списываем 200 очков за попытку и ставим Кулдаун хакеру
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}})
@@ -1649,16 +1661,24 @@ def api_inventory_action():
         import random
         target_achievements = target_data.get("achievements", [])
         hack_chance = 40 if "rat" in target_achievements else 30
+
+        # 🔥 ПРОВЕРКА АНАРХИИ (СУДНАЯ НОЧЬ) 🔥
+        anarchy = db['settings'].find_one({"_id": "anarchy_mode"}) or {}
+        is_anarchy = anarchy.get("active", False) and anarchy.get("end_time", 0) > time.time()
+        
+        extra_msg = ""
+        if is_anarchy:
+            hack_chance = 80 # При Анархии шанс взлома 80% для всех!
+            extra_msg = "\n🏴‍‍☠️ <b>СУДНАЯ НОЧЬ!</b> Брандмауэры отключены, грабеж прошел как по маслу!"
         
         if random.randint(1, 100) <= hack_chance:
             # 🔥 ВЛИЯНИЕ КАРМЫ: ГРАБИМ ИЗГОЕВ СИЛЬНЕЕ 🔥
-            target_karma = target_data.get("social_rating", 0)
             if target_karma <= -50:
                 steal_pct = random.uniform(0.15, 0.30)
-                extra_msg = "\n📉 *Цель неблагонадежна!* Защита сервера была ослаблена из-за плохой кармы, вы украли в 2 раза больше очков!"
+                if not is_anarchy:
+                    extra_msg = "\n📉 *Цель неблагонадежна!* Защита сервера была ослаблена из-за плохой кармы, вы украли в 2 раза больше очков!"
             else:
                 steal_pct = random.uniform(0.05, 0.15)
-                extra_msg = ""
                 
             stolen = int(target_data.get("bounty_points", 0) * steal_pct)
             if stolen < 10: stolen = 10
@@ -3841,6 +3861,80 @@ def elite_amnesty(message):
     
     bot.reply_to(message, f"🕊 <b>ПРАВО ВЕТО ПРИМЕНЕНО!</b>\n\nСвятой гражданин пожертвовал 20 Кармы, чтобы очистить грехи <a href='tg://user?id={target_id}'>{message.reply_to_message.from_user.first_name}</a>!\n\n<i>Тюремные замки открыты. Все блокировки сняты.</i>", parse_mode="HTML")
 
+# ================= ИСКУПЛЕНИЕ ГРЕХОВ (ДЛЯ ИЗГОЕВ) =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!искупление', 'искупление'])
+def redeem_sins(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = user_data.get("social_rating", 0)
+    
+    if karma >= 0:
+        return bot.reply_to(message, "😇 Ваша душа и так чиста. Искупление доступно только грешникам с отрицательной Кармой.")
+        
+    shields = user_data.get("immunity", 0)
+    shards = user_data.get("jackpot_shards", 0)
+    
+    # Пытаемся забрать ресурсы за Карму
+    if shields >= 1:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1, "social_rating": 20}})
+        cost_text = "1 🛡 Щит Иммунитета"
+    elif shards >= 5:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -5, "social_rating": 20}})
+        cost_text = "5 🧩 Осколков"
+    else:
+        return bot.reply_to(message, "⛓ <b>Вам нечем платить за свои грехи!</b>\nДля искупления требуется пожертвовать государству <b>1 🛡 Щит</b> или <b>5 🧩 Осколков</b>.", parse_mode="HTML")
+
+    # 🔥 ЕСЛИ ВЫШЕЛ ИЗ МИНУСА ПОСЛЕ ИСКУПЛЕНИЯ - ВОССТАНАВЛИВАЕМ ТЕГ 🔥
+    if karma <= -50 and (karma + 20) > -50:
+        u_info = db['users'].find_one({"_id": uid}) or {}
+        original_tag = u_info.get("custom_tag", "")
+        try:
+            from handlers.admin import safe_set_tag
+            safe_set_tag(message.chat.id, uid, original_tag)
+        except: pass
+        
+    bot.reply_to(message, f"⛪️ <b>ИСКУПЛЕНИЕ ПРОЙДЕНО!</b>\n\nВы пожертвовали {cost_text} на благо Империи.\nСкайнет списывает часть ваших грехов: <b>+20 к Карме</b>!", parse_mode="HTML")
+
+# ================= ГЛОБАЛЬНЫЙ ИВЕНТ: АНАРХИЯ =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!анархия')
+def trigger_anarchy(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    PRICE = 10000
+    if user_data.get("bounty_points", 0) < PRICE:
+        return bot.reply_to(message, f"💀 Обрушение серверов Скайнета стоит {PRICE} 💎! Копите деньги, мистер Хакер.")
+        
+    import time
+    active_anarchy = db['settings'].find_one({"_id": "anarchy_mode"})
+    if active_anarchy and active_anarchy.get("end_time", 0) > time.time():
+        return bot.reply_to(message, "🔥 Анархия УЖЕ идет! Хватайте вилы и бегите грабить!")
+        
+    # Списываем 10к, запускаем Анархию на 1 час
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
+    db['settings'].update_one({"_id": "anarchy_mode"}, {"$set": {"active": True, "end_time": time.time() + 3600}}, upsert=True)
+    
+    # Оповещаем все чаты
+    def broadcast_anarchy():
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+        all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
+        
+        msg_text = (
+            f"🏴‍☠️ <b>КРИТИЧЕСКИЙ СБОЙ МАТРИЦЫ! АНАРХИЯ!</b> 🏴‍☠️\n\n"
+            f"Хакер <a href='tg://user?id={uid}'>{message.from_user.first_name}</a> сжег 10 000 💎 и обрушил сервера Скайнета на 1 ЧАС!\n\n"
+            f"<b>ПРАВИЛА СУДНОЙ НОЧИ:</b>\n"
+            f"🩸 Кулдаун Взлома сейфов снижен до 15 минут!\n"
+            f"🩸 Шанс успешного Взлома повышен до 80%!\n"
+            f"🩸 Защиты Кармы больше не существует!\n\n"
+            f"<i>Заходите в Web App (Рюкзак -> Взлом) и грабьте соседей, пока система не перезагрузится!</i>"
+        )
+        for cid in all_chats:
+            try: bot.send_message(cid, msg_text, parse_mode="HTML"); time.sleep(0.3)
+            except: pass
+            
+    import threading
+    threading.Thread(target=broadcast_anarchy, daemon=True).start()
+
 # ================= НАРОДНЫЙ СУД (СБОР НА КИЛЛЕРА) =================
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!суд', 'суд')))
 def public_court(message):
@@ -4244,7 +4338,18 @@ def help_commands(message):
         "• `!побег @user` — вытащить друга из мута/тюрьмы\n"
         "• `!кальмар` — запустить игру на выживание (1000 💎)\n"
         "• `!играю` — вступить в Игру в Кальмара\n"
-        "• `+`, `-`, `лайк`, `дизлайк` *(в ответ)* — Карму\n\n"
+        "• `+`, `-`, `лайк`, `дизлайк` *(в ответ)* — Карму\n"
+        "• `!амнистия` *(в ответ)* — снять наказание с друга (Только для Святых)\n"
+        "• `!искупление` — отмыть грехи и карму (за 1 Щит / 5 Осколков)\n"
+        "• `!анархия` — запустить Судную Ночь во всех чатах (10 000 💎)\n\n"
+        "🔮 **ТЕНЕВЫЕ АРТЕФАКТЫ (АУКЦИОН):**\n"
+        "• `!щелчок` — замутить половину чата на 15 мин\n"
+        "• `!развести @user` — расторгнуть чужой брак\n"
+        "• `!рейд @user` — украсть урожай с чужой фермы\n"
+        "• `!глас [текст]` — послание во все чаты сети\n"
+        "• `!гуантанамо @user` — неснимаемый мут на 24ч\n"
+        "• `!вскрыть [синий/красный]` — вскрыть сейф без пин-кода\n"
+        "• `!создать_нпс [слово] [текст]` — создать личную RP-команду\n\n"
         "👤 **ПРОФИЛЬ И ОБЩЕНИЕ:**\n"
         "• `!профиль` *(можно в ответ)* — досье и балансы\n"
         "• `!топ` — топ болтунов чата\n"
@@ -4260,6 +4365,7 @@ def help_commands(message):
     
     bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
 
+# ================= СОЦИАЛЬНЫЙ КРЕДИТ И КАРМА =================
 # ================= СОЦИАЛЬНЫЙ КРЕДИТ И КАРМА =================
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.strip().lower() in ['+', '-', '👍', '👎', 'лайк', 'дизлайк'])
 def handle_karma_vote(message):
@@ -4278,7 +4384,6 @@ def handle_karma_vote(message):
     vote_key = f"karma_{voter_id}_{target_id}"
     last_vote = db['settings'].find_one({"_id": vote_key})
     
-    # Антиспам (1 голос за конкретного человека раз в час)
     if last_vote and (now - last_vote.get('time', 0) < 3600):
         left_mins = int((3600 - (now - last_vote['time'])) / 60)
         return bot.reply_to(message, f"⏳ Вы уже оценивали этого гражданина! Система примет ваш следующий голос через {left_mins} мин.")
@@ -4288,10 +4393,29 @@ def handle_karma_vote(message):
     if vote in ['+', '👍', 'лайк']:
         paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": 1}}, upsert=True)
         new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
+        
+        # 🔥 ВОССТАНАВЛИВАЕМ ОБЫЧНЫЙ ТЕГ (ИЛИ ПУСТОТУ), ЕСЛИ КАРМА ВЫШЛА ИЗ МИНУСА 🔥
+        if new_karma == -49:
+            u_info = db['users'].find_one({"_id": target_id}) or {}
+            original_tag = u_info.get("custom_tag", "")
+            try:
+                from handlers.admin import safe_set_tag
+                safe_set_tag(message.chat.id, target_id, original_tag)
+            except: pass
+            
         bot.reply_to(message, f"📈 **Социальный Кредит повышен!**\nГражданин [{target_name}](tg://user?id={target_id}) получает +1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
     else:
         paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": -1}}, upsert=True)
         new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
+        
+        # 🔥 ВЕШАЕМ НАСТОЯЩЕЕ СИСТЕМНОЕ КЛЕЙМО В ТЕЛЕГРАМЕ 🔥
+        if new_karma <= -50:
+            bad_title = "Опущенный" if new_karma <= -100 else "Изгой"
+            try:
+                from handlers.admin import safe_set_tag
+                safe_set_tag(message.chat.id, target_id, bad_title)
+            except: pass
+            
         bot.reply_to(message, f"📉 **Внимание, нарушение!**\nГражданин [{target_name}](tg://user?id={target_id}) получает -1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!копилка', 'копилка')))
