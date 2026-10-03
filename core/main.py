@@ -1909,6 +1909,10 @@ def api_farm_action():
         update_query = {"$inc": {}}
         msg = "🚜 Урожай собран!"
         
+        # 👇 ИСПРАВЛЕНИЕ: Получаем user_db и karma В САМОМ НАЧАЛЕ сбора урожая 👇
+        user_db = paid_collection.find_one({"uid": uid}) or {}
+        karma = user_db.get("social_rating", 0)
+
         # 🔥 СПЕЦ-ЛОГИКА: КИБЕР-МУХОМОР (Казино)
         if plot['seed_type'] == 'amanita':
             if random.randint(1, 100) <= 50:
@@ -1939,11 +1943,6 @@ def api_farm_action():
         # СТАНДАРТНЫЙ УРОЖАЙ (ВКЛЮЧАЯ ПЕТРУШКУ)
         else:
             reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
-            
-            # 👇 ДОБАВЛЯЕМ ЭТУ СТРОЧКУ 👇
-            user_db = paid_collection.find_one({"uid": uid}) or {}
-            
-            karma = user_db.get("social_rating", 0)
             
             # 🔥 ВЛИЯНИЕ КАРМЫ НА УРОЖАЙ 🔥
             if karma <= -50 and random.randint(1, 100) <= 10:
