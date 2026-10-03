@@ -152,11 +152,14 @@ def finalize_contest_submission(message, active_contest, file_id, nomination_tex
 def handle_contest_moderation(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     
+    from bson.objectid import ObjectId # <--- ИМПОРТИРУЕМ OBJECTID
+    
     parts = call.data.split('_')
     action = parts[1]
     work_id = "_".join(parts[2:]) 
     
-    work = db['contests'].find_one({"_id": work_id})
+    # 🔥 ОБОРАЧИВАЕМ work_id В ObjectId ПРИ ПОИСКЕ 🔥
+    work = db['contests'].find_one({"_id": ObjectId(work_id)})
     if not work or work['status'] != 'pending':
         try: bot.answer_callback_query(call.id, "❌ Работа уже обработана!", show_alert=True)
         except: pass
@@ -166,7 +169,8 @@ def handle_contest_moderation(call):
     safe_title = html.escape(work.get('title', 'Без названия'))
     
     if action == "rej":
-        db['contests'].update_one({"_id": work_id}, {"$set": {"status": "rejected"}})
+        # 🔥 И ЗДЕСЬ ТОЖЕ ОБОРАЧИВАЕМ В ObjectId 🔥
+        db['contests'].update_one({"_id": ObjectId(work_id)}, {"$set": {"status": "rejected"}})
         bot.edit_message_caption(f"{call.message.caption}\n\n❌ <b>ОТКЛОНЕНО</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None, parse_mode="HTML")
         try: bot.send_message(uid, f"❌ Ваша конкурсная работа «{safe_title}» отклонена модератором.", parse_mode="HTML")
         except: pass
@@ -188,16 +192,16 @@ def handle_contest_moderation(call):
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("❤️ Отдать голос (0)", callback_data=f"cvote_{work_id}"))
     
-    # Делаем динамический заголовок конкурса (без хардкода Хэллоуина)
     active_contest = db['active_contest'].find_one({"contest_id": work['contest_id']})
     contest_name = active_contest.get("title", "Конкурс") if active_contest else "Конкурс"
     
     post_caption = f"🏆 <b>{html.escape(contest_name)}</b>\n\n🏷 <i>{safe_title}</i>\n\n👇 Нажми на кнопку, чтобы отдать голос за этот образ!"
     
     try:
-        pub_msg = bot.send_photo(target_chat, work['photo_id'], caption=post_caption, reply_markup=markup, parse_mode="HTML")
+        pub_msg = bot.send_photo(chat_id=target_chat, photo=work['photo_id'], caption=post_caption, reply_markup=markup, parse_mode="HTML")
         
-        db['contests'].update_one({"_id": work_id}, {
+        # 🔥 И ЗДЕСЬ ОБОРАЧИВАЕМ В ObjectId 🔥
+        db['contests'].update_one({"_id": ObjectId(work_id)}, {
             "$set": {
                 "status": "published",
                 "target_chat": target_chat,
@@ -220,7 +224,8 @@ def handle_contest_vote(call):
     work_id = call.data[6:] 
     uid = call.from_user.id
     
-    # 🔥 НОВЫЙ БЛОК: ПРОВЕРКА ДАТ ГОЛОСОВАНИЯ 🔥
+    from bson.objectid import ObjectId # <--- ИМПОРТИРУЕМ СЮДА
+    
     active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
     if active:
         from datetime import datetime
@@ -231,9 +236,9 @@ def handle_contest_vote(call):
             try: bot.answer_callback_query(call.id, "❌ Голосование сейчас закрыто! Сверьтесь с датами.", show_alert=True)
             except: pass
             return
-    # 🔥 КОНЕЦ НОВОГО БЛОКА 🔥
 
-    work = db['contests'].find_one({"_id": work_id})
+    # 🔥 ОБОРАЧИВАЕМ work_id В ObjectId 🔥
+    work = db['contests'].find_one({"_id": ObjectId(work_id)})
     if not work:
         try: bot.answer_callback_query(call.id, "❌ Работа не найдена!", show_alert=True)
         except: pass
@@ -244,7 +249,8 @@ def handle_contest_vote(call):
         except: pass
         return
         
-    db['contests'].update_one({"_id": work_id}, {"$push": {"votes": uid}})
+    # 🔥 И ЗДЕСЬ ОБОРАЧИВАЕМ В ObjectId 🔥
+    db['contests'].update_one({"_id": ObjectId(work_id)}, {"$push": {"votes": uid}})
     new_count = len(work.get('votes', [])) + 1
     
     markup = InlineKeyboardMarkup()
