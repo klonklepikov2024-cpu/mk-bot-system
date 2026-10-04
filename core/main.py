@@ -196,10 +196,14 @@ def buy_ticket():
     username = user_info.get('first_name', 'Аноним')
     
     # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ В РОЗЫГРЫШАХ 🔥
-    user_db = paid_collection.find_one({"uid": uid}) or {}
     chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 50}})
-    if not chat_stat and not user_db.get("is_vip"):
-        return jsonify({"error": "Розыгрыши только для своих! Напишите хотя бы 50 сообщений в чате, чтобы участвовать."}), 400
+    
+    # Достаем статусы VIP и BEYOND из ПРАВИЛЬНОЙ коллекции
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    is_elite = u_info.get("is_vip") or u_info.get("is_queer")
+    
+    if not chat_stat and not is_elite:
+        return jsonify({"error": "Розыгрыши только для своих! Напишите хотя бы 50 сообщений в чате (или получите статус VIP/BEYOND), чтобы участвовать."}), 400
 
     amount = int(data.get('amount', 1))
     giveaway_id = data.get('giveaway_id')
@@ -1256,6 +1260,13 @@ def api_payout():
     parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
+    
+    # === ПАТЧ БЕЗОПАСНОСТИ: Блокировка вывода для нарушителей ===
+    from utils.validators import is_user_locked
+    if is_user_locked(uid):
+        return jsonify({"error": "⛔️ Вывод средств заморожен! Оплатите штраф или снимите блокировку через бота (/start)."}), 400
+    # ============================================================
+    
     username = user_info.get('username', f"ID {uid}")
     
     amount = int(data.get('amount', 0))
