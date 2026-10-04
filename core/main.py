@@ -4899,11 +4899,13 @@ def spawn_auction_lot(message):
 from core.scheduler import schedule_message_deletion
 
 # ================= УБОРЩИК ЗА ЧУЖИМИ БОТАМИ =================
-@bot.message_handler(func=lambda m: m.from_user and m.from_user.username == 'CPBlockerBot', content_types=['text', 'photo', 'video', 'animation', 'document'])
+@bot.message_handler(
+    func=lambda m: m.from_user and m.from_user.id == 7195399721,
+    content_types=['text', 'photo', 'video', 'animation', 'document', 'sticker', 'voice', 'video_note', 'audio']
+)
 def cleanup_lazy_bots(message):
-    # 3600 секунд = 1 час (как и обещал сам бот). 
-    # Если хотите удалять быстрее, поменяйте на 300 (5 минут).
-    schedule_message_deletion(message.chat.id, message.message_id, 3600, bot)
+    # 300 секунд = 5 минут
+    schedule_message_deletion(message.chat.id, message.message_id, 300, bot)
 
 # 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ И СОЦИАЛЬНЫЙ РЕЙТИНГ
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])

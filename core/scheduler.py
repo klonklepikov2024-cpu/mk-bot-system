@@ -47,8 +47,10 @@ def schedule_message_deletion(chat_id, message_id, delay_seconds, bot_instance):
 
 def delete_task_executor(chat_id, message_id):
     from core.bot import bot
-    try: bot.delete_message(chat_id, message_id)
-    except: pass
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        print(f"❌ Не смог удалить msg {message_id} в чате {chat_id}: {e}")
 
 def check_giveaways_task():
     now = datetime.datetime.now()
