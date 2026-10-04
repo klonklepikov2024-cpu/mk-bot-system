@@ -50,7 +50,15 @@ def delete_task_executor(chat_id, message_id):
     try:
         bot.delete_message(chat_id, message_id)
     except Exception as e:
-        print(f"❌ Не смог удалить msg {message_id} в чате {chat_id}: {e}")
+        error_text = f"❌ Не смог удалить msg {message_id} в чате {chat_id}: {e}"
+        print(error_text) # Оставим для логов сервера
+        
+        # 👇 Добавляем отправку в админский чат
+        from config import STAFF_GROUP_ID
+        try:
+            bot.send_message(STAFF_GROUP_ID, error_text)
+        except:
+            pass
 
 def check_giveaways_task():
     now = datetime.datetime.now()
