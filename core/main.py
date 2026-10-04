@@ -1658,11 +1658,17 @@ def api_inventory_action():
         
         import time
         now = time.time()
+
+        # 🔥 ПРОВЕРКА АНАРХИИ (СУДНАЯ НОЧЬ) ПОДНЯТА НАВЕРХ 🔥
+        anarchy = db['settings'].find_one({"_id": "anarchy_mode"}) or {}
+        is_anarchy = anarchy.get("active", False) and anarchy.get("end_time", 0) > time.time()
         
-        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА
+        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА (Учитываем Анархию)
         last_hack = user_data.get("last_hack_time", 0)
-        if now - last_hack < 3600:
-            left_mins = int((3600 - (now - last_hack)) / 60)
+        cooldown_time = 900 if is_anarchy else 3600 # 15 минут при Анархии
+        
+        if now - last_hack < cooldown_time:
+            left_mins = int((cooldown_time - (now - last_hack)) / 60)
             return jsonify({"error": f"Ваш вирус еще компилируется! Ждите {left_mins} мин."}), 400
             
         if user_data.get("bounty_points", 0) < 200:
@@ -1671,26 +1677,28 @@ def api_inventory_action():
         if target_data.get("bounty_points", 0) < 100:
             return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
             
-        # 🔥 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ (ЗАВИСИТ ОТ КАРМЫ) 🔥
-        if target_karma >= 50: 
-            imm_time = 21600 # 6 часов для Святых
-            imm_text = "6 часов"
-        elif target_karma <= -50: 
-            imm_time = 7200  # 2 часа для Изгоев (Кормовая база)
-            imm_text = "2 часа"
-        else: 
-            imm_time = 14400 # 4 часа по умолчанию
-            imm_text = "4 часа"
+        # 🔥 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ 🔥
+        # Во время Анархии защита Кармы и таймеры отключаются полностью!
+        if not is_anarchy:
+            if target_karma >= 50: 
+                imm_time = 21600 # 6 часов для Святых
+                imm_text = "6 часов"
+            elif target_karma <= -50: 
+                imm_time = 7200  # 2 часа для Изгоев (Кормовая база)
+                imm_text = "2 часа"
+            else: 
+                imm_time = 14400 # 4 часа по умолчанию
+                imm_text = "4 часа"
 
-        last_hacked = target_data.get("last_hacked_time", 0)
-        if now - last_hacked < imm_time:
-            return jsonify({"error": f"Сервер жертвы под защитой! Из-за её рейтинга защита длится {imm_text}."}), 400
+            last_hacked = target_data.get("last_hacked_time", 0)
+            if now - last_hacked < imm_time:
+                return jsonify({"error": f"Сервер жертвы под защитой! Из-за её рейтинга защита длится {imm_text}."}), 400
             
         # Списываем 200 очков за попытку и ставим Кулдаун хакеру
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}})
         from core.bot import bot
         
-        # 1. Пробиваем Щит
+        # 1. Пробиваем Щит (Щит работает даже при Анархии)
         if target_data.get("immunity", 0) > 0:
             # Списываем щит и даем жертве иммунитет на 4 часа
             paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}})
@@ -1702,10 +1710,6 @@ def api_inventory_action():
         import random
         target_achievements = target_data.get("achievements", [])
         hack_chance = 40 if "rat" in target_achievements else 30
-
-        # 🔥 ПРОВЕРКА АНАРХИИ (СУДНАЯ НОЧЬ) 🔥
-        anarchy = db['settings'].find_one({"_id": "anarchy_mode"}) or {}
-        is_anarchy = anarchy.get("active", False) and anarchy.get("end_time", 0) > time.time()
         
         extra_msg = ""
         if is_anarchy:
@@ -2189,8 +2193,7 @@ def api_crack_safe():
             from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
             import time
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-            # ИМПОРТИРУЕМ ФУНКЦИЮ УДАЛЕНИЯ
-            from core.scheduler import schedule_message_deletion
+            from core.scheduler import schedule_message_deletion # 👈 Импорт функции удаления
             
             all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
             unique_chats = set(all_chats)
@@ -2210,16 +2213,19 @@ def api_crack_safe():
                 
                 for cid in unique_chats:
                     try:
-                        # СОХРАНЯЕМ И ЗАПУСКАЕМ ТАЙМЕР
+                        # 👈 1. Ловим отправленное сообщение в переменную sent_msg
                         sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
-                        schedule_message_deletion(cid, sent_msg.message_id, 10800, bot)
+                        
+                        # 👈 2. Отправляем его в таймер на 1 час (3600 секунд)
+                        schedule_message_deletion(cid, sent_msg.message_id, 3600, bot)
+                        
                         time.sleep(0.3) 
                     except: pass
             except: pass
 
         import threading
         threading.Thread(target=broadcast_safe_crack, daemon=True).start()
-        
+
         return jsonify({"success": True, "msg": f"ПОЛНЫЙ ДОСТУП!\nВы сорвали куш: {prize} {currency}!", "cracked": True})
         
     else:
@@ -4878,6 +4884,15 @@ def spawn_auction_lot(message):
         "status": "active"
     })
     bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
+
+from core.scheduler import schedule_message_deletion
+
+# ================= УБОРЩИК ЗА ЧУЖИМИ БОТАМИ =================
+@bot.message_handler(func=lambda m: m.from_user and m.from_user.username == 'CPBlockerBot', content_types=['text', 'photo', 'video', 'animation', 'document'])
+def cleanup_lazy_bots(message):
+    # 3600 секунд = 1 час (как и обещал сам бот). 
+    # Если хотите удалять быстрее, поменяйте на 300 (5 минут).
+    schedule_message_deletion(message.chat.id, message.message_id, 3600, bot)
 
 # 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ И СОЦИАЛЬНЫЙ РЕЙТИНГ
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
