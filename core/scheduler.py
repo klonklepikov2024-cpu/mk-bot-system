@@ -34,16 +34,11 @@ CROPS = {
 
 # ================= 1. БАЗОВЫЕ ФУНКЦИИ И РОЗЫГРЫШИ =================
 
-def schedule_message_deletion(chat_id, message_id, delay_seconds, bot_instance):
-    run_date = datetime.datetime.now(tz) + datetime.timedelta(seconds=delay_seconds)
-    scheduler.add_job(
-        delete_task_executor, 
-        'date', 
-        run_date=run_date, 
-        args=[chat_id, message_id],
-        id=f"del_{chat_id}_{message_id}",
-        replace_existing=True
-    )
+def schedule_message_deletion(chat_id, message_id, delay_seconds, bot_instance=None):
+    db['sec_cleanup'].insert_one({
+        "chat_id": chat_id, "msg_id": message_id,
+        "delete_at": time.time() + delay_seconds, "tries": 0
+    })
 
 def delete_task_executor(chat_id, message_id):
     from core.bot import bot

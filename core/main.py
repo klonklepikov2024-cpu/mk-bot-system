@@ -37,7 +37,10 @@ is_setup_done = False
 def setup():
     """Настройка бота"""
     global is_setup_done
-    start_scheduler() 
+    try:
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"❌ Планировщик не запустился: {e}")
     time.sleep(2)
     
     try:
@@ -5007,6 +5010,36 @@ def heartbeat_sec():
         time.sleep(60)
 
 threading.Thread(target=heartbeat_sec, daemon=True).start()
+
+def cleanup_daemon():
+    from telebot.apihelper import ApiTelegramException
+    col = db['sec_cleanup']
+    try: col.create_index("delete_at")
+    except Exception: pass
+    while True:
+        try:
+            for task in col.find({"delete_at": {"$lte": time.time()}}).limit(200):
+                try:
+                    bot.delete_message(task["chat_id"], task["msg_id"])
+                    col.delete_one({"_id": task["_id"]})
+                except ApiTelegramException as e:
+                    if e.error_code == 429:
+                        time.sleep(5); continue
+                    tries = task.get("tries", 0) + 1
+                    if "not found" in str(e).lower() or tries >= 5:
+                        print(f"🧹 Не удалил {task['chat_id']}/{task['msg_id']}: {e}")
+                        col.delete_one({"_id": task["_id"]})
+                    else:
+                        col.update_one({"_id": task["_id"]},
+                                       {"$set": {"tries": tries, "delete_at": time.time() + 300}})
+                except Exception as e:
+                    print(f"🧹 Сбой удаления: {e}")
+                time.sleep(0.05)
+        except Exception as e:
+            print(f"🧹 Ошибка уборщика: {e}")
+        time.sleep(20)
+
+threading.Thread(target=cleanup_daemon, daemon=True).start()
 
 def pay_casino_owner(amount):
     """Пассивный доход Владельца Казино (10% от слива)"""
