@@ -4897,6 +4897,7 @@ def spawn_auction_lot(message):
     bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
 
 from core.scheduler import schedule_message_deletion
+from utils.logger import logger
 
 # ================= УБОРЩИК ЗА ЧУЖИМИ БОТАМИ =================
 @bot.message_handler(
@@ -4904,7 +4905,28 @@ from core.scheduler import schedule_message_deletion
     content_types=['text', 'photo', 'video', 'animation', 'document', 'sticker', 'voice', 'video_note', 'audio']
 )
 def cleanup_lazy_bots(message):
-    # 300 секунд = 5 минут
+    from config import STAFF_GROUP_ID
+    logger.info(f"🧹 ПОЙМАЛ CPBlockerBot! chat={message.chat.id} msg_id={message.message_id}")
+    
+    # Сообщаем в админ-чат, что поймали
+    try:
+        bot.send_message(STAFF_GROUP_ID, f"🧹 Поймал сообщение CPBlockerBot\nchat={message.chat.id}\nmsg_id={message.message_id}")
+    except: pass
+    
+    # Сразу пробуем удалить
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+        logger.info("✅ Удалил сразу")
+        try:
+            bot.send_message(STAFF_GROUP_ID, "✅ Успешно удалил сообщение CPBlockerBot")
+        except: pass
+    except Exception as e:
+        logger.error(f"❌ Не смог удалить сразу: {e}")
+        try:
+            bot.send_message(STAFF_GROUP_ID, f"❌ Не смог удалить: <code>{e}</code>", parse_mode="HTML")
+        except: pass
+    
+    # И на всякий случай ещё через 5 минут
     schedule_message_deletion(message.chat.id, message.message_id, 300, bot)
 
 # 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ И СОЦИАЛЬНЫЙ РЕЙТИНГ
