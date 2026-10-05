@@ -78,21 +78,7 @@ def index():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    raw = request.stream.read().decode('utf-8')
-    update = telebot.types.Update.de_json(raw)
-    
-    # Логируем всё, что приходит
-    try:
-        if update.message and update.message.from_user:
-            u = update.message.from_user
-            logger.info(
-                f"📩 ВХОДЯЩЕЕ: chat={update.message.chat.id} "
-                f"from={u.first_name} (@{u.username}) id={u.id} "
-                f"is_bot={u.is_bot} text={str(update.message.text)[:80] if update.message.text else None}"
-            )
-    except Exception as e:
-        logger.error(f"Ошибка лога вебхука: {e}")
-    
+    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
     bot.process_new_updates([update])
     return 'ok', 200
 
@@ -4912,39 +4898,6 @@ def spawn_auction_lot(message):
         "status": "active"
     })
     bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
-
-from core.scheduler import schedule_message_deletion
-from utils.logger import logger
-
-# ================= УБОРЩИК ЗА ЧУЖИМИ БОТАМИ =================
-@bot.message_handler(
-    func=lambda m: m.from_user and m.from_user.id == 7195399721,
-    content_types=['text', 'photo', 'video', 'animation', 'document', 'sticker', 'voice', 'video_note', 'audio']
-)
-def cleanup_lazy_bots(message):
-    from config import STAFF_GROUP_ID
-    logger.info(f"🧹 ПОЙМАЛ CPBlockerBot! chat={message.chat.id} msg_id={message.message_id}")
-    
-    # Сообщаем в админ-чат, что поймали
-    try:
-        bot.send_message(STAFF_GROUP_ID, f"🧹 Поймал сообщение CPBlockerBot\nchat={message.chat.id}\nmsg_id={message.message_id}")
-    except: pass
-    
-    # Сразу пробуем удалить
-    try:
-        bot.delete_message(message.chat.id, message.message_id)
-        logger.info("✅ Удалил сразу")
-        try:
-            bot.send_message(STAFF_GROUP_ID, "✅ Успешно удалил сообщение CPBlockerBot")
-        except: pass
-    except Exception as e:
-        logger.error(f"❌ Не смог удалить сразу: {e}")
-        try:
-            bot.send_message(STAFF_GROUP_ID, f"❌ Не смог удалить: <code>{e}</code>", parse_mode="HTML")
-        except: pass
-    
-    # И на всякий случай ещё через 5 минут
-    schedule_message_deletion(message.chat.id, message.message_id, 300, bot)
 
 # 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ И СОЦИАЛЬНЫЙ РЕЙТИНГ
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
