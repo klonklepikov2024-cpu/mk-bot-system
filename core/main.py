@@ -78,7 +78,21 @@ def index():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    raw = request.stream.read().decode('utf-8')
+    update = telebot.types.Update.de_json(raw)
+    
+    # Логируем всё, что приходит
+    try:
+        if update.message and update.message.from_user:
+            u = update.message.from_user
+            logger.info(
+                f"📩 ВХОДЯЩЕЕ: chat={update.message.chat.id} "
+                f"from={u.first_name} (@{u.username}) id={u.id} "
+                f"is_bot={u.is_bot} text={str(update.message.text)[:80] if update.message.text else None}"
+            )
+    except Exception as e:
+        logger.error(f"Ошибка лога вебхука: {e}")
+    
     bot.process_new_updates([update])
     return 'ok', 200
 
