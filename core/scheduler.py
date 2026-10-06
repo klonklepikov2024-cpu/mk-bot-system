@@ -479,7 +479,7 @@ def smart_funnel_teaser():
     blue_safe = db['safes_state'].find_one({"_id": "safe_blue"})
     if blue_safe and blue_safe.get("balance", 0) > 4000:
         teasers.append({
-            "text": f"🚨 <b>СЕЙФ ДАННЫХ ПУХНЕТ!</b> 🚨\n\nТам скопилось уже <b>{blue_safe['balance']} 💎</b>!\nДобудьте Синий Ключ на ферме и подберите пин-код из 3 цифр, чтобы забрать всё!",
+            "text": f"🚨 <b>СЕЙФ ДАННЫХ ПУХНЕТ!</b> 🚨\n\nТам скопилось уже <b>{blue_safe['balance']} 💎</b>!\nДобудьте Синий Ключ на ферме и подберите пин-код из 4 цифр, чтобы забрать всё!",
             "btn": "🗄 Взломать Сейф",
             "tab": "farm"
         })

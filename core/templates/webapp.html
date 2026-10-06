@@ -350,8 +350,8 @@
                 <div class="text-4xl mb-1 mt-2">🗄️</div>
                 <p class="text-[9px] text-blue-400 uppercase tracking-widest mb-1">Сейф Данных</p>
                 <div id="blueSafeBal" class="font-black text-blue-400 text-lg mb-2">0 💎</div>
-                <input type="number" id="blueSafeInput" placeholder="* * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-blue-500/30 text-lg mb-2 focus:border-blue-500" maxlength="3">
-                <button id="blueKeyBtn" onclick="crackSafe('blue', 3)" class="w-full bg-blue-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">Взломать (🔑 Синий)</button>
+                <input type="number" id="blueSafeInput" placeholder="* * * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-blue-500/30 text-lg mb-2 focus:border-blue-500" maxlength="4">
+<button id="blueKeyBtn" onclick="crackSafe('blue', 4)" class="w-full bg-blue-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">Взломать (🔑 Синий)</button>
                 <div id="blueSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-blue-900/30 shadow-inner"></div>
             </div>
 
@@ -360,8 +360,8 @@
                 <div class="text-4xl mb-1 mt-2">🏦</div>
                 <p class="text-[9px] text-red-400 uppercase tracking-widest mb-1">Фин. Сейф</p>
                 <div id="redSafeBal" class="font-black text-green-400 text-lg mb-2">0 ₽</div>
-                <input type="number" id="redSafeInput" placeholder="* * * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-red-500/30 text-lg mb-2 focus:border-red-500" maxlength="4">
-                <button id="redKeyBtn" onclick="crackSafe('red', 4)" class="w-full bg-red-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">Взломать (🔑 Красн.)</button>
+                <input type="number" id="redSafeInput" placeholder="* * * * * *" class="w-full text-center tracking-[0.5em] font-mono text-white bg-black/60 rounded-lg p-2 outline-none border border-red-500/30 text-lg mb-2 focus:border-red-500" maxlength="6">
+<button id="redKeyBtn" onclick="crackSafe('red', 6)" class="w-full bg-red-600 py-2 rounded-lg font-bold text-white text-[10px] active:scale-95 transition-transform mb-2">Взломать (🔑 Красн.)</button>
                 <div id="redSafeLogs" class="text-left bg-black/40 rounded p-1.5 font-mono text-[8px] h-14 overflow-y-auto custom-scrollbar text-gray-400 space-y-0.5 mt-auto border border-red-900/30 shadow-inner"></div>
             </div>
         </div>

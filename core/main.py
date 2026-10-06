@@ -2094,13 +2094,13 @@ def api_get_safes():
     import random
     blue_safe = db['safes_state'].find_one({"_id": "safe_blue"})
     if not blue_safe:
-        new_pin = "".join([str(random.randint(0, 9)) for _ in range(3)])
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(4)]) # Было 3
         blue_safe = {"_id": "safe_blue", "pin_code": new_pin, "balance": 15000, "logs": []}
         db['safes_state'].insert_one(blue_safe)
         
     red_safe = db['safes_state'].find_one({"_id": "safe_red"})
     if not red_safe:
-        new_pin = "".join([str(random.randint(0, 9)) for _ in range(4)])
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(6)]) # Было 4
         red_safe = {"_id": "safe_red", "pin_code": new_pin, "balance": 500, "logs": []}
         db['safes_state'].insert_one(red_safe)
 
@@ -2186,7 +2186,7 @@ def api_crack_safe():
             db['ruble_ledger'].insert_one({"uid": uid, "amount": prize, "reason": "Взлом Финансового Сейфа", "timestamp": time.time()})
             
         import random
-        pin_len = 3 if safe_color == 'blue' else 4
+        pin_len = 4 if safe_color == 'blue' else 6 # Было 3 и 4
         new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
         start_balance = 10000 if safe_color == 'blue' else 500
         
@@ -4354,7 +4354,7 @@ def master_key_safe(message):
         currency = "₽"
         
     import random
-    pin_len = 3 if safe_color == 'blue' else 4
+    pin_len = 4 if safe_color == 'blue' else 6 # Было 3 и 4
     new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
     db['safes_state'].update_one({"_id": safe_id}, {"$set": {"pin_code": new_pin, "balance": 10000 if safe_color == 'blue' else 500, "logs": []}})
     
