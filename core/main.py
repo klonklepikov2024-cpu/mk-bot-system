@@ -1770,11 +1770,11 @@ def api_inventory_action():
         import time
         now = time.time()
 
-        # 🔥 ПРОВЕРКА АНАРХИИ (СУДНАЯ НОЧЬ) ПОДНЯТА НАВЕРХ 🔥
+        # Проверка Анархии
         anarchy = db['settings'].find_one({"_id": "anarchy_mode"}) or {}
         is_anarchy = anarchy.get("active", False) and anarchy.get("end_time", 0) > time.time()
         
-        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА (Учитываем Анархию)
+        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА
         last_hack = user_data.get("last_hack_time", 0)
         cooldown_time = 900 if is_anarchy else 3600 # 15 минут при Анархии
         
@@ -1788,36 +1788,40 @@ def api_inventory_action():
         if target_data.get("bounty_points", 0) < 100:
             return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
             
-        # 🔥 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ 🔥
-        # Во время Анархии защита Кармы и таймеры отключаются полностью!
+        # 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ
         if not is_anarchy:
             if target_karma >= 50: 
-                imm_time = 21600 # 6 часов для Святых
+                imm_time = 21600 # 6 часов
                 imm_text = "6 часов"
             elif target_karma <= -50: 
-                imm_time = 7200  # 2 часа для Изгоев (Кормовая база)
+                imm_time = 7200  # 2 часа
                 imm_text = "2 часа"
             else: 
-                imm_time = 14400 # 4 часа по умолчанию
+                imm_time = 14400 # 4 часа
                 imm_text = "4 часа"
 
             last_hacked = target_data.get("last_hacked_time", 0)
             if now - last_hacked < imm_time:
                 return jsonify({"error": f"Сервер жертвы под защитой! Из-за её рейтинга защита длится {imm_text}."}), 400
             
-        # Списываем 200 очков за попытку и ставим Кулдаун хакеру
+        # Списываем 200 очков за попытку
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}})
         from core.bot import bot
         
-        # 1. Пробиваем Щит (Щит работает даже при Анархии)
+        # 3. ПРОБИТИЕ ЩИТА (Анархия дает 50% шанс пробить щит насквозь)
+        shield_broken_by_anarchy = False
         if target_data.get("immunity", 0) > 0:
-            # Списываем щит и даем жертве иммунитет на 4 часа
             paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}})
-            try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `ID {uid}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
-            except: pass
-            return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
             
-        # 2. Если щита нет - бросаем кубик
+            import random
+            if is_anarchy and random.randint(1, 100) <= 50:
+                shield_broken_by_anarchy = True # Щит уничтожен, но атака проходит!
+            else:
+                try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `ID {uid}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
+                except: pass
+                return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
+            
+        # 4. БРОСАЕМ КУБИК НА ВЗЛОМ
         import random
         target_achievements = target_data.get("achievements", [])
         hack_chance = 40 if "rat" in target_achievements else 30
@@ -1825,10 +1829,11 @@ def api_inventory_action():
         extra_msg = ""
         if is_anarchy:
             hack_chance = 80 # При Анархии шанс взлома 80% для всех!
-            extra_msg = "\n🏴‍‍☠️ <b>СУДНАЯ НОЧЬ!</b> Брандмауэры отключены, грабеж прошел как по маслу!"
+            extra_msg = "\n🏴‍☠️ <b>СУДНАЯ НОЧЬ!</b> Брандмауэры отключены, грабеж прошел как по маслу!"
+            if shield_broken_by_anarchy:
+                extra_msg += "\n⚠️ <b>ЩИТ ПРОБИТ!</b> Перегрузка сети разорвала щит жертвы, вирус прошел насквозь!"
         
         if random.randint(1, 100) <= hack_chance:
-            # 🔥 ВЛИЯНИЕ КАРМЫ: ГРАБИМ ИЗГОЕВ СИЛЬНЕЕ 🔥
             if target_karma <= -50:
                 steal_pct = random.uniform(0.15, 0.30)
                 if not is_anarchy:
@@ -1836,17 +1841,46 @@ def api_inventory_action():
             else:
                 steal_pct = random.uniform(0.05, 0.15)
                 
+            # Крадем с личного счета
             stolen = int(target_data.get("bounty_points", 0) * steal_pct)
             if stolen < 10: stolen = 10
             
-            # Крадем очки и вешаем иммунитет жертве
             paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": -stolen}, "$set": {"last_hacked_time": now}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": stolen}})
             
-            try: bot.send_message(target_uid, f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `ID {uid}` пробил вашу защиту и украл **{stolen} 💎**!\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._", parse_mode="Markdown")
+            victim_msg = f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `ID {uid}` пробил вашу защиту и украл **{stolen} 💎** с личного счета!"
+            
+            # 🔥 5. ВЗЛОМ СЕМЕЙНОЙ КОПИЛКИ ВО ВРЕМЯ АНАРХИИ 🔥
+            family_stolen = 0
+            partner_id = target_data.get("partner_id")
+            
+            if is_anarchy and partner_id:
+                family_id = f"family_{min(target_uid, partner_id)}_{max(target_uid, partner_id)}"
+                fam_db = db['family_banks'].find_one({"_id": family_id}) or {}
+                fam_balance = fam_db.get("balance", 0)
+                
+                if fam_balance > 0:
+                    # Крадем от 10% до 25% из семейного общака
+                    fam_steal_pct = random.uniform(0.10, 0.25)
+                    family_stolen = int(fam_balance * fam_steal_pct)
+                    if family_stolen < 1: family_stolen = 1
+                    
+                    db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": -family_stolen}})
+                    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": family_stolen}})
+                    
+                    extra_msg += f"\n🏦 <b>ВЗЛОМ КОПИЛКИ!</b> Вирус добрался до семейного счета жертвы и выкачал оттуда еще {family_stolen} 💎!"
+                    victim_msg += f"\n\n🏦 <b>ВНИМАНИЕ!</b> Вирус проник в ваш Семейный Фонд и вывел оттуда **{family_stolen} 💎**!"
+                    
+                    # Инфарктное уведомление партнеру
+                    try: bot.send_message(partner_id, f"🚨 **СЕМЕЙНЫЙ СЧЕТ ВЗЛОМАН!**\nВ рамках Судной Ночи хакер атаковал вашу семью и украл **{family_stolen} 💎** из вашей общей копилки!", parse_mode="Markdown")
+                    except: pass
+
+            victim_msg += "\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._"
+            try: bot.send_message(target_uid, victim_msg, parse_mode="Markdown")
             except: pass
             
-            return jsonify({"success": True, "msg": f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {stolen} 💎 у жертвы!{extra_msg}"})
+            total_loot = stolen + family_stolen
+            return jsonify({"success": True, "msg": f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {total_loot} 💎 у жертвы!{extra_msg}"})
         else:
             return jsonify({"success": True, "msg": "📉 Атака провалилась. Брандмауэр жертвы выстоял, вирус стерт. Вы потеряли 200 💎."})
 
