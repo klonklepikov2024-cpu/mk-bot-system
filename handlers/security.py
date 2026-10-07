@@ -136,9 +136,10 @@ def handle_forge_main(call):
     shields = user_data.get("immunity", 0)
     shards = user_data.get("jackpot_shards", 0)
     orders = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+    tag_coupons = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0})
     
     # 🔥 1. ДОСТАЕМ ЛИЧНЫЕ ПРОМОКОДЫ ЮЗЕРА 🔥
-    user_promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
+    user_promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0, "type": {"$ne": "artifact"}}))
     promo_text = ""
     if user_promos:
         promo_text = "\n\n🎟 **Ваши личные промокоды:**\n"
@@ -171,13 +172,16 @@ def handle_forge_main(call):
         markup.add(InlineKeyboardButton(f"👼 Призвать Ангела (Сжечь 1 щит)", callback_data="inv_use_angel"))
     if orders > 0:
         markup.add(InlineKeyboardButton(f"🚓 Использовать Ордер", callback_data="inv_use_arrest"))
+    if tag_coupons > 0:
+        markup.add(InlineKeyboardButton(f"🏷 Назначить тег ({tag_coupons})", callback_data="tagc_inv"))
         
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
     
     text = (
         "⚒ **ИНВЕНТАРЬ И ТЕНЕВОЙ ЛОМБАРД**\n\n"
         f"🛡 Щиты Иммунитета: **{shields} шт.**\n"
-        f"🚓 Ордера на арест: **{orders} шт.**"
+        f"🚓 Ордера на арест: **{orders} шт.**\n"
+        f"🏷 Купоны на тег: **{tag_coupons} шт.**"
         f"{promo_text}\n\n"
         "Здесь вы можете использовать свои артефакты, переплавить ненужные промокоды обратно в ресурсы или скрафтить элитный статус."
     )
@@ -889,12 +893,15 @@ def handle_btn_inventory(call):
     
     # Ищем ордера юзера в базе промокодов
     orders = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+    tag_coupons = db['promocodes'].count_documents({"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0})
     
     markup = InlineKeyboardMarkup(row_width=1)
     if shields > 0:
         markup.add(InlineKeyboardButton(f"👼 Использовать Ангела-Хранителя (Сжечь 1 щит)", callback_data="inv_use_angel"))
     if orders > 0:
         markup.add(InlineKeyboardButton(f"🚓 Использовать Ордер на арест", callback_data="inv_use_arrest"))
+    if tag_coupons > 0:
+        markup.add(InlineKeyboardButton(f"🏷 Назначить тег ({tag_coupons})", callback_data="tagc_inv"))
         
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
     

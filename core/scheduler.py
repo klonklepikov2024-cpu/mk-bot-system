@@ -895,6 +895,10 @@ def start_scheduler():
         
         # 🔥 10. КОЛЛЕКТОРЫ СКАЙНЕТА (Каждые 30 минут проверяют должников) 🔥
         scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
+
+        from handlers.artifacts import expire_temp_tags, promo_expiry_job
+        scheduler.add_job(expire_temp_tags, 'interval', minutes=5, id='expire_temp_tags', replace_existing=True)
+        scheduler.add_job(promo_expiry_job, 'cron', hour=11, minute=0, id='promo_expiry', replace_existing=True)
         
         scheduler.start()
         print("⏰ APScheduler запущен (Воронка + Ферма + Розыгрыши + Пуши + Коты + Коллекторы)!")

@@ -161,9 +161,13 @@
         <h2 class="font-bold text-2xl mb-4">Рюкзак & Наковальня</h2>
         
         <div class="flex space-x-2 mb-4">
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[10px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[10px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
-            <div class="surface rounded-xl p-3 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[10px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
+            <div class="flex space-x-2 mb-4">
+            <!-- Чуть уменьшили p-3 до p-2 и текст, чтобы влезло 4 блока -->
+            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[9px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
+            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[9px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
+            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[9px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
+            <!-- 👇 НОВЫЙ БЛОК ДЛЯ ТЕГОВ 👇 -->
+            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🏷</div><div class="text-[9px] text-gray-400 uppercase">Теги</div><div class="font-bold text-lg" id="invTags">0</div></div>
         </div>
 
         <div class="grid grid-cols-3 gap-2 mb-6">
@@ -1387,6 +1391,7 @@
                 document.getElementById('invShields').innerText = data.shields;
                 document.getElementById('invShards').innerText = `${data.shards}/50`;
                 document.getElementById('invOrders').innerText = data.orders;
+                document.getElementById('invTags').innerText = data.tags || 0; // <--- ДОБАВЛЯЕМ ОБНОВЛЕНИЕ СЧЕТЧИКА
 
                 const promoCont = document.getElementById('promos-container');
                 if (data.promos.length === 0) { promoCont.innerHTML = '<p class="text-gray-400 text-sm">Нет активных купонов.</p>'; } 

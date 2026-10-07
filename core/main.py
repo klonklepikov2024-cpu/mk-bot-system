@@ -25,6 +25,7 @@ import handlers.security
 import handlers.admin
 import handlers.casino
 import handlers.payments
+import handlers.artifacts
 import handlers.polls
 import handlers.contests
 import handlers.market
@@ -318,7 +319,9 @@ def api_get_market():
     result = []
     for lot in lots:
         # 1. Правильные названия
-        if lot.get('type') == 'artifact' and lot.get('target') == 'mute':
+        if lot.get('type') == 'artifact' and lot.get('target') == 'tag':
+            title_str = "🏷 Купон на личный тег"
+        elif lot.get('type') == 'artifact' and lot.get('target') == 'mute':
             title_str = "🚓 Ордер на Арест (1 час)"
         else:
             t_name = "Штраф" if lot.get('target') == 'fine' else "Рекламу" if lot.get('target') == 'ads' else "VIP" if lot.get('target') == 'vip' else "Любую услугу"
@@ -604,13 +607,13 @@ def api_spin_roulette():
         prize_id, prize_name = "jackpot", "ДЖЕКПОТ VIP"
 
     elif val in [7, 21, 35]:
-        prize_msg = "🌟 СУПЕР-РЕДКИЙ ДРОП!\nВы выиграли право установить Личный Тег!\nНажмите кнопку 'Рюкзак -> Ваши промокоды' или проверьте ЛС бота."
+        from handlers.artifacts import mint_tag_coupon, tag_prize_markup
+        code = mint_tag_coupon(uid)
+        prize_msg = "🌟 СУПЕР-РЕДКИЙ ДРОП!\nКупон на Личный Тег добавлен в Рюкзак (бот → Рюкзак → «Назначить тег»)."
         prize_id, prize_name = "custom_tag", "Личный Тег"
         try:
             from core.bot import bot
-            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Заказать свой тег", callback_data="claim_custom_tag"))
-            bot.send_message(uid, "👑 Вы выиграли купон на создание Личного Статуса!", reply_markup=markup)
+            bot.send_message(uid, "👑 Вы выиграли Купон на личный тег!", reply_markup=tag_prize_markup(code))
         except: pass
 
     elif val in [1, 22, 43]:
@@ -775,18 +778,19 @@ def api_get_inventory():
     
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
     orders_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "mute")
+    # 👇 ДОБАВЛЯЕМ ПОДСЧЕТ ТЕГОВ 👇
+    tags_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "tag")
     
     regular_promos = []
     for p in promos:
         if p.get("type") != "artifact":
-            t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Услугу"
-            val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
-            regular_promos.append({"id": p["_id"], "desc": f"Скидка {val} на {t_name}"})
+            # ... (формирование regular_promos)
             
     return jsonify({
         "shields": shields,
         "shards": shards,
         "orders": orders_count,
+        "tags": tags_count, # <--- ПЕРЕДАЕМ НА ФРОНТЕНД
         "promos": regular_promos
     })
 
@@ -1403,7 +1407,10 @@ def api_get_my_promos():
         elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
         
         # Считаем Рекомендованную цену (60% от номинала)
-        if p.get('type') == 'artifact' and target_type == 'mute':
+        if p.get('type') == 'artifact' and target_type == 'tag':
+            real_value = 500
+            name_str = "🏷 Купон на личный тег"
+        elif p.get('type') == 'artifact' and target_type == 'mute':
             real_value = 500
             name_str = "🚓 Ордер на Арест"
         else:
@@ -1635,30 +1642,12 @@ def api_inventory_action():
     elif action == 'arrest':
         target_info = data.get('target_info')
         if not target_info or len(target_info) < 3: return jsonify({"error": "Укажите цель и причину!"}), 400
-        
         promo = db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
         if not promo: return jsonify({"error": "У вас нет Ордеров!"}), 400
-        
-        code = promo["_id"]
-        db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
-        
-        from core.bot import bot
-        from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        import html
-        
-        markup = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("✅ Замутить", callback_data=f"arrest_done_{uid}"),
-            InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}")
-        )
-        try:
-            bot.send_message(
-                STAFF_GROUP_ID, 
-                f"🚓 <b>ПРИМЕНЕНИЕ ОРДЕРА (WEB APP)</b>\n\n👤 От: {first_name} (<code>{uid}</code>)\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{html.escape(target_info)}</code>", 
-                parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
-            )
-        except Exception as e: logger.error(f"Ошибка ордера: {e}")
-        return jsonify({"success": True, "msg": "🚓 Заявка на арест передана Спецназу Скайнета!"})
+        from handlers.artifacts import execute_arrest
+        ok, text = execute_arrest(uid, first_name, promo["_id"], target_info)
+        if not ok: return jsonify({"error": text}), 400
+        return jsonify({"success": True, "msg": text})
 
     elif action == 'hack':
         target_uid = resolve_target_uid(data.get('target_info'))

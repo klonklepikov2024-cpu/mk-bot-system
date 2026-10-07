@@ -1043,23 +1043,8 @@ def handle_admin_replies(message):
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
-    uid = call.from_user.id
-    
-    # 👇 ЗАМОК НА ТЕГИ 👇
-    if is_user_locked(uid):
-        try: bot.answer_callback_query(call.id, "⛔️ Установка личного статуса невозможна при активной блокировке!", show_alert=True)
-        except: pass
-        return
-        
-    try: bot.answer_callback_query(call.id)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
-    try:
-        msg = bot.send_message(call.message.chat.id, "✍️ **Создание личного тега**\n\nПридумайте и напишите ваш новый статус (максимум 15 символов).\n_Внимание: Тег будет проверен модератором!_")
-        bot.register_next_step_handler(msg, process_tag_input)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    from handlers.artifacts import legacy_claim
+    legacy_claim(call)
 
 def process_tag_input(message):
     if not message.text:
@@ -1113,16 +1098,19 @@ def handle_admin_tag_decision(call):
         return
         
     tag_text = tag_data["tag"]
+    coupon = tag_data.get("coupon")
     if action == "ok":
         db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text}}, upsert=True)
+        if coupon: db['promocodes'].delete_one({"_id": coupon})
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЕРДИКТ: ОДОБРЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(target_uid, f"🎉 **Поздравляем!**\nВаш личный тег **«{tag_text}»** успешно одобрен и установлен во всех чатах сети!")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     elif action == "rej":
+        if coupon: db['promocodes'].update_one({"_id": coupon}, {"$inc": {"used_count": -1}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ВЕРДИКТ: ОТКЛОНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Придумать другой тег", callback_data="claim_custom_tag"))
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Придумать другой тег", callback_data=f"tagc_menu_{coupon}" if coupon else "claim_custom_tag"))
         try: bot.send_message(target_uid, f"❌ **Ваш тег «{tag_text}» был отклонен модератором.**\nПожалуйста, придумайте что-то другое, не нарушающее правила.", reply_markup=markup)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     db['temp_tags'].delete_one({"uid": target_uid})
@@ -1222,32 +1210,8 @@ def handle_use_arrest(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_arrest_claim(message, code):
-    if not message.text:
-        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
-        bot.register_next_step_handler(msg, process_tag_input)
-        return
-        
-    if message.text == '/start':
-        from handlers.start_menu import send_welcome
-        send_welcome(message)
-        return
-        
-    uid, name, username = message.from_user.id, message.from_user.first_name, f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
-    db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
-    
-    from config import PRIZES_THREAD_ID
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}"))
-    try:
-        safe_cause = html.escape(message.text)
-        bot.send_message(
-            STAFF_GROUP_ID, 
-            f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{safe_cause}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", 
-            parse_mode="HTML", 
-            reply_markup=markup,
-            message_thread_id=PRIZES_THREAD_ID # Отправляем в папку призов
-        )
-        bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    from handlers.artifacts import process_arrest_claim as _run
+    _run(message, code)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('arrest_'))
 def handle_arrest_decision(call):
