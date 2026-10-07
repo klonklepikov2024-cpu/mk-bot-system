@@ -1043,43 +1043,14 @@ def handle_admin_replies(message):
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
 def handle_claim_tag(call):
-    from handlers.artifacts import legacy_claim
-    legacy_claim(call)
-
-def process_tag_input(message):
-    if not message.text:
-        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
-        bot.register_next_step_handler(msg, process_tag_input)
-        return
-        
-    if message.text == '/start':
-        from handlers.start_menu import send_welcome
-        send_welcome(message)
-        return
-        
-    tag_text = message.text.strip()
-    if len(tag_text) > 15:
-        try: bot.send_message(message.chat.id, "❌ **Слишком длинный тег!** Максимум 15 символов. Нажмите на кнопку в сообщении с выигрышем еще раз.")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        return
-        
-    uid = message.from_user.id
-    name = message.from_user.first_name
-    db['temp_tags'].update_one({"uid": uid}, {"$set": {"tag": tag_text, "name": name}}, upsert=True)
-    
-    try: bot.send_message(message.chat.id, f"⏳ Ваш тег **«{tag_text}»** отправлен на проверку администраторам. Ожидайте!")
+    try: bot.answer_callback_query(call.id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    
-    markup = InlineKeyboardMarkup(row_width=2).add(InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"), InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}"))
-    from config import PRIZES_THREAD_ID
-    try: 
-        bot.send_message(
-            STAFF_GROUP_ID, 
-            f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ</b>\n\n👤 От: {name} (<code>{uid}</code>)\n📝 Желаемый тег: <b>{tag_text}</b>\n\nОдобрить установку?", 
-            parse_mode="HTML", 
-            reply_markup=markup, 
-            message_thread_id=PRIZES_THREAD_ID # Отправляем в папку призов
-        )
+    try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    try:
+        msg = bot.send_message(call.message.chat.id, "✍️ **Создание личного тега**\n\nПридумайте и напишите ваш новый статус (максимум 15 символов).\n_Внимание: Тег будет проверен модератором!_")
+        bot.register_next_step_handler(msg, process_tag_input)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
@@ -1210,30 +1181,35 @@ def handle_use_arrest(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_arrest_claim(message, code):
-    from handlers.artifacts import process_arrest_claim as _run
-    _run(message, code)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('arrest_'))
-def handle_arrest_decision(call):
-    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
-    try: bot.answer_callback_query(call.id)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    parts = call.data.split('_')
-    action = parts[1]
+    if not message.text:
+        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
+        bot.register_next_step_handler(msg, process_arrest_claim, code=code)
+        return
+        
+    if message.text == '/start':
+        from handlers.start_menu import send_welcome
+        send_welcome(message)
+        return
+        
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     
-    if action == "done":
-        target_uid = int(parts[2])
-        try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ИСПОЛНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        try: bot.send_message(target_uid, "⚖️ Ваш ордер на арест успешно исполнен. Нарушитель наказан!")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    elif action == "rej":
-        code, target_uid = parts[2], int(parts[3])
-        db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": -1}})
-        try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Код возвращен юзеру)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        try: bot.send_message(target_uid, f"❌ Администрация отклонила применение ордера (возможно, вы попытались замутить админа). Ваш ордер `{code}` снова активен!")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
+    
+    from config import PRIZES_THREAD_ID
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}"))
+    try:
+        safe_cause = html.escape(message.text)
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            f"🚓 <b>ПРИМЕНЕНИЕ АРТЕФАКТА (ОРДЕР)</b> 🚓\n\n👤 Исполнитель: {name} ({username})\n🔑 Код: <code>{code}</code>\n🎯 Цель и причина:\n<code>{safe_cause}</code>\n\nАдмины, проверьте цель и выдайте мут на 1 час!", 
+            parse_mode="HTML", 
+            reply_markup=markup,
+            message_thread_id=PRIZES_THREAD_ID
+        )
+        bot.send_message(message.chat.id, "✅ Ордер передан Администрации! Если всё верно, цель скоро получит мут.")
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def parse_time_string(time_str):
     """Парсит строку времени (1h, 30m) в секунды"""
