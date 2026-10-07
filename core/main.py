@@ -778,13 +778,16 @@ def api_get_inventory():
     
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
     orders_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "mute")
-    # 👇 ДОБАВЛЯЕМ ПОДСЧЕТ ТЕГОВ 👇
+    
+    # 👇 ПОДСЧЕТ ТЕГОВ 👇
     tags_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "tag")
     
     regular_promos = []
     for p in promos:
         if p.get("type") != "artifact":
-            # ... (формирование regular_promos)
+            t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Услугу"
+            val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
+            regular_promos.append({"id": p["_id"], "desc": f"Скидка {val} на {t_name}"})
             
     return jsonify({
         "shields": shields,
