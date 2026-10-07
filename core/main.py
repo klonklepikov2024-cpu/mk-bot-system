@@ -630,7 +630,12 @@ def api_spin_roulette():
         if has_cactus:
             lost_points = int(updated_user.get("bounty_points", 0) * 0.1) 
             
-        if lost_points < 10: lost_points = 10
+        # 🔥 ИСПРАВЛЕНИЕ МАТЕМАТИКИ: Отменяем жесткий лимит для Кактуса!
+        if lost_points < 10 and not has_cactus: 
+            lost_points = 10
+        elif has_cactus and lost_points < 1:
+            lost_points = 1 # Минимум 1 очко, если есть кактус
+
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
         db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
         

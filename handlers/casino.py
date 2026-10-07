@@ -247,13 +247,32 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
         )
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("♻️ Разобрать щит (+5 Осколков)", callback_data="trade_shield_shards_5"))
 
-    # 5. 💀 НАЛОГОВАЯ / СКАМ (Сектор Риска — val: 10, 20, 40, 50)
     elif val in [10, 20, 40, 50]:
-        lost_points = int(points * 0.3)
-        if lost_points < 10: lost_points = 10
+        # 🔥 ВЛИЯНИЕ КАРМЫ: ШТРАФ 50% ДЛЯ ИЗГОЕВ 🔥
+        tax_pct = 0.5 if user_data.get("social_rating", 0) <= -50 else 0.3
+        
+        lost_points = int(points * tax_pct)
+        has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
+        if has_cactus:
+            lost_points = int(points * 0.1)
+            
+        # 🔥 ИСПРАВЛЕНИЕ МАТЕМАТИКИ: Отменяем жесткий лимит для Кактуса!
+        if lost_points < 10 and not has_cactus: 
+            lost_points = 10
+        elif has_cactus and lost_points < 1:
+            lost_points = 1 # Минимум 1 очко, если есть кактус
+
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
-        msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!** 💀\n\nВы попали на сектор риска! Налоговая инспекция списывает 30% ваших сбережений.\n_Потеряно: {lost_points} очков._"
-        pm_msg = None
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
+        
+        # 🔥 ИСПРАВЛЕНИЕ КРАША: Заменили prize_msg на msg 🔥
+        if has_cactus:
+            msg = f"🌵 **НАЛОГОВАЯ ПРОВЕРКА!**\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
+        else:
+            if tax_pct == 0.5:
+                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано 50% баланса (-{lost_points} очков)."
+            else:
+                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nСписано 30% баланса (-{lost_points} очков)."
 
     # 6. 🚓 ОРДЕР НА АРЕСТ (Социальный артефакт — val: 5, 17, 29)
     elif val in [5, 17, 29]:
