@@ -1411,10 +1411,10 @@ def api_get_my_promos():
         
         # Считаем Рекомендованную цену (60% от номинала)
         if p.get('type') == 'artifact' and target_type == 'tag':
-            real_value = 500
+            real_value = 50
             name_str = "🏷 Купон на личный тег"
         elif p.get('type') == 'artifact' and target_type == 'mute':
-            real_value = 500
+            real_value = 50
             name_str = "🚓 Ордер на Арест"
         else:
             val = p.get('value', 0)
@@ -1466,7 +1466,10 @@ def api_add_market_lot():
     
     # 🔥 НОВАЯ АДЕКВАТНАЯ ОЦЕНКА 🔥
     if promo.get("type") == "artifact":
-        max_price = 500 # Ордера можно продавать до 500 рублей
+        if promo.get("target") == "tag":
+            max_price = 50  # Для тегов жесткий потолок 50 рублей
+        else:
+            max_price = 50 # Для ордеров на арест потолок 500 рублей
     elif promo.get("type") == "percent":
         # Реальная ценность скидки в рублях
         real_value = int(base_price * (promo.get("value", 0) / 100))
