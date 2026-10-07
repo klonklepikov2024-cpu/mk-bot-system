@@ -2158,6 +2158,8 @@ def api_farm_action():
         })
         
         return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nОставшееся время до созревания сокращено в 2 раза."})
+    
+    return jsonify({"error": "Неизвестное действие"}), 400
 
 # ================= КАРТОФЕЛЬНОЕ ПОЛЕ (БЭКЕНД) =================
 
@@ -2217,6 +2219,8 @@ def api_potato_action():
         if cells[index] != -1: return jsonify({"error": "Здесь нет жука!"}), 400
         db['potato_fields'].update_one({"uid": uid}, {"$set": {f"cells.{index}": 0}})
         return jsonify({"success": True})
+    
+    return jsonify({"error": "Неизвестное действие"}), 400
 
 # ================= 🗄 КИБЕР-СЕЙФЫ: БЭКЕНД =================
 
