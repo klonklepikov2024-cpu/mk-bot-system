@@ -1747,6 +1747,9 @@
                 }
                 
                 data.plots.forEach(plot => {
+                    // ФИКС ИМЕНИ: Берем всё после первого пробела (отрезаем эмодзи), чтобы названия не обрезались
+                    let cleanName = plot.name.includes(' ') ? plot.name.split(' ').slice(1).join(' ') : plot.name;
+
                     if (plot.status === 'empty') {
                         html += `
                         <div onclick="document.getElementById('seedCatalog').scrollIntoView({behavior: 'smooth'})" class="bg-[#1a1b1f] border border-dashed border-gray-600 rounded-xl p-4 text-center flex flex-col justify-center items-center h-28 opacity-70 cursor-pointer active:scale-95 transition-transform hover:bg-gray-800/50">
@@ -1760,10 +1763,11 @@
                         <div onclick="farmAction('chase_pest', ${plot.slot_id})" class="surface border border-red-500 rounded-xl p-3 text-center flex flex-col shadow-[0_0_15px_rgba(239,68,68,0.4)] relative bg-red-900/20 overflow-hidden cursor-pointer active:scale-95 transition-transform">
                             <div class="absolute inset-0 bg-red-500/10 animate-pulse rounded-xl"></div>
                             <div class="flex justify-between items-center w-full mb-1 relative z-10">
-                                <span class="text-xs font-bold text-red-400">${plot.name.split(' ')[1] || plot.name}</span>
+                                <span class="text-xs font-bold text-red-400">${cleanName}</span>
                                 <span class="text-[9px] text-red-500 font-black uppercase drop-shadow">ОПАСНОСТЬ!</span>
                             </div>
                             <div class="text-4xl animate-bounce mb-1 mt-2 relative z-10 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]">${plot.pest.emoji}</div>
+                            <p class="text-[9px] text-red-300 font-bold mb-2 relative z-10 leading-tight">${plot.pest.name} жрет урожай!</p>
                             <button class="bg-red-600 w-full py-1.5 rounded-lg text-xs font-black text-white shadow-[0_0_10px_rgba(239,68,68,0.6)] mt-auto relative z-10 border border-red-400">👞 ПРОГНАТЬ!</button>
                         </div>`;
                     }
@@ -1777,18 +1781,19 @@
                         let mins = Math.floor((left % 3600) / 60);
                         let timeStr = left > 0 ? `${hrs}ч ${mins}м` : "Созревает...";
                         
-                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="flex-1 bg-blue-900/40 text-blue-400 text-[10px] py-1.5 rounded border border-blue-700/50 active:scale-90 font-bold shadow-sm">💧 Полить</button>` : '';
-                        let fertBtn = !plot.fertilized ? `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[10px] text-purple-400 font-bold bg-purple-900/40 px-2 py-1.5 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>` : '';
-                        let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[10px] text-red-400 font-bold bg-red-900/40 px-2 py-1.5 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
+                        // ВОЗВРАЩАЕМ КРАСИВЫЕ КОМПАКТНЫЕ КНОПКИ ИЗ СТАРОГО ДИЗАЙНА
+                        let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[10px] text-blue-400 font-bold bg-blue-900/30 px-2 py-1 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
+                        let fertBtn = !plot.fertilized ? `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[10px] text-purple-400 font-bold bg-purple-900/30 px-2 py-1 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>` : `<button class="text-[10px] text-gray-500 bg-gray-800/80 px-2 py-1 rounded shadow-sm border border-gray-700 cursor-not-allowed" disabled>🧪 Макс</button>`;
+                        let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[10px] text-red-400 font-bold bg-red-900/30 px-2 py-1 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
 
                         html += `
                         <div class="surface border border-green-700/50 rounded-xl p-3 text-center flex flex-col shadow-[0_0_10px_rgba(34,197,94,0.1)] relative">
                             <div class="flex justify-between items-center w-full mb-1">
-                                <span class="text-xs font-bold">${plot.name.split(' ')[1] || plot.name}</span>
+                                <span class="text-xs font-bold">${cleanName}</span>
                                 <span class="text-[9px] text-gray-400">${timeStr}</span>
                             </div>
-                            <div class="text-3xl animate-pulse mb-1 mt-1 drop-shadow-md">🌱</div>
-                            <div class="w-full bg-black/50 rounded-full h-1.5 mb-2 mt-1">
+                            <div class="text-3xl animate-pulse mb-1">🌿</div>
+                            <div class="w-full bg-black/50 rounded-full h-1.5 mb-2">
                                 <div class="bg-green-500 h-1.5 rounded-full transition-all duration-1000" style="width: ${percent}%"></div>
                             </div>
                             <div class="flex justify-center items-center gap-1 mt-auto w-full">
@@ -1813,13 +1818,13 @@
                         let isDecor = ['chestnut', 'rhododendron', 'cactus'].includes(plot.seed_type);
                         let actionCall = isDecor ? `farmActionCheck('dig_up', ${plot.slot_id})` : `farmAction('harvest', ${plot.slot_id})`;
                         
-                        let statusBadge = isDecor ? `<div class="bg-purple-900/50 w-full py-1 rounded text-[9px] font-bold text-purple-300 border border-purple-700/50 mt-1 mb-1 uppercase tracking-wider">Пассив</div>` : `<div class="text-[10px] font-black text-yellow-500 mb-1 uppercase tracking-widest mt-1">Готово!</div>`;
+                        let statusBadge = isDecor ? `<div class="bg-purple-900/50 w-full py-1.5 rounded text-[10px] font-bold text-purple-300 border border-purple-700/50 mt-1 mb-1">Пассивный бонус</div>` : `<div class="text-[10px] font-black text-yellow-500 mb-1 uppercase tracking-widest">Готово!</div>`;
                         let harvestBtn = isDecor ? `<button class="bg-red-900/80 w-full py-1.5 rounded text-[10px] font-bold text-gray-300 shadow-md active:scale-95 border border-red-700 mt-1">⛏ Выкопать</button>` : `<button class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">Собрать</button>`;
 
                         html += `
-                        <div onclick="${actionCall}" class="surface border border-yellow-500/50 rounded-xl p-3 text-center flex flex-col justify-center items-center shadow-[0_0_15px_rgba(234,179,8,0.2)] cursor-pointer active:scale-95 transition-transform relative hover:bg-yellow-900/20">
+                        <div onclick="${actionCall}" class="surface border border-yellow-500/50 rounded-xl p-3 text-center flex flex-col justify-between shadow-[0_0_15px_rgba(234,179,8,0.2)] cursor-pointer active:scale-95 transition-transform relative hover:bg-yellow-900/20">
                             ${isDecor ? '' : statusBadge}
-                            <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)] mb-1 mt-1 z-10">${cropIcon}</div>
+                            <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)] mb-1">${cropIcon}</div>
                             ${isDecor ? statusBadge : ''}
                             ${harvestBtn}
                         </div>`;
@@ -1827,8 +1832,8 @@
                     else if (plot.status === 'withered') {
                         html += `
                         <div onclick="farmAction('clear', ${plot.slot_id})" class="surface border border-red-900/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 opacity-80 cursor-pointer active:scale-95 transition-transform hover:bg-red-900/20">
-                            <div class="text-xs font-bold text-gray-500 mb-1">${plot.name.split(' ')[1] || plot.name}</div>
-                            <div class="text-3xl grayscale opacity-50 drop-shadow-md">🥀</div>
+                            <div class="text-xs font-bold text-gray-500 mb-1">${cleanName}</div>
+                            <div class="text-3xl grayscale opacity-50">🥀</div>
                             <button class="bg-red-900/80 w-full py-1.5 rounded text-[10px] font-bold text-gray-300 shadow-md mt-1 border border-red-700">🗑 Очистить</button>
                         </div>`;
                     }
