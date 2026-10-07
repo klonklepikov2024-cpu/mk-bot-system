@@ -169,21 +169,23 @@
             <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🏷</div><div class="text-[9px] text-gray-400 uppercase">Теги</div><div class="font-bold text-lg" id="invTags">0</div></div>
         </div>
 
-        <div class="grid grid-cols-3 gap-2 mb-6">
+        <div class="grid grid-cols-4 gap-2 mb-6">
             <button onclick="openModal('angel')" class="surface p-3 rounded-xl border border-yellow-500/30 active:scale-95 transition-transform shadow-md">
                 <div class="text-2xl mb-1">👼</div>
-                <div class="font-bold text-sm text-yellow-500">Ангел</div>
-                <div class="text-[9px] text-gray-400">Сжечь 1 щит</div>
+                <div class="font-bold text-xs text-yellow-500">Ангел</div>
             </button>
             <button onclick="openModal('arrest')" class="surface p-3 rounded-xl border border-red-500/30 active:scale-95 transition-transform shadow-md">
                 <div class="text-2xl mb-1">🚓</div>
-                <div class="font-bold text-sm text-red-500">Ордер</div>
-                <div class="text-[9px] text-gray-400">Мут на 1 час</div>
+                <div class="font-bold text-xs text-red-500">Ордер</div>
             </button>
             <button onclick="openModal('hack')" class="surface p-3 rounded-xl border border-blue-500/30 active:scale-95 transition-transform shadow-md bg-blue-900/10">
                 <div class="text-2xl mb-1">💻</div>
-                <div class="font-bold text-sm text-blue-500">Взлом</div>
-                <div class="text-[9px] text-gray-400">Украсть очки</div>
+                <div class="font-bold text-xs text-blue-500">Взлом</div>
+            </button>
+            <!-- 👇 НОВАЯ КНОПКА ТЕГА 👇 -->
+            <button onclick="openModal('tag')" class="surface p-3 rounded-xl border border-pink-500/30 active:scale-95 transition-transform shadow-md bg-pink-900/10">
+                <div class="text-2xl mb-1">🏷</div>
+                <div class="font-bold text-xs text-pink-500">Тег</div>
             </button>
         </div>
 
@@ -1442,6 +1444,12 @@
                 desc.innerText = "Укажите @username (или ID) нарушителя и кратко опишите причину:"; 
                 input.placeholder = "Например: @spammer реклама казино"; 
                 submitBtn.onclick = () => submitModalAction('arrest', input.value); 
+            }
+            else if(type === 'tag') {
+                title.innerText = "🏷 Назначить Тег"; 
+                desc.innerText = "Формат: @username (или ID) ВашТег Время\nВремя в конце: 1h (час), 1d (день), 7d (неделя). По умолчанию: 1h.\nПример: 123456789 Легенда 7d"; 
+                input.placeholder = "Например: 123456789 Легенда 7d"; 
+                submitBtn.onclick = () => submitModalAction('tag', input.value);
             }
             else if(type === 'hack') {
                 title.innerText = "💻 Кибер-Атака"; 

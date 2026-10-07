@@ -2126,14 +2126,14 @@ def handle_req_manual_pay(call):
             )
         except: pass
 
-# ================= РУЧНАЯ ВЫДАЧА (АДМИН) =================
+# ================= РУЧНОЕ ВЫСТАВЛЕНИЕ СЧЕТА (АДМИН) =================
 @bot.message_handler(commands=['give'])
 def handle_give_cmd(message):
     if str(message.chat.id) != str(STAFF_GROUP_ID): return
         
     args = message.text.split()
     if len(args) != 4:
-        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards] [сумма]`\n\n*Пример:* `/give 123456789 points 100`", parse_mode="Markdown")
+        try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/give [ID] [points/shards/tags] [сумма]`\n\n*Пример:* `/give 123456789 tags 2`", parse_mode="Markdown")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
@@ -2153,8 +2153,18 @@ def handle_give_cmd(message):
             bot.reply_to(message, f"✅ Выдано **{amount} Осколков** пользователю `{target_uid}`.", parse_mode="Markdown")
             try: bot.send_message(target_uid, f"🧩 **Бонус от администрации!**\nВам начислено: **{amount} Осколков рулетки**.", parse_mode="Markdown")
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        # 👇 НОВЫЙ БЛОК ДЛЯ КОМПЕНСАЦИИ ТЕГОВ 👇
+        elif currency in ['tags', 'теги']:
+            from handlers.artifacts import mint_tag_coupon
+            for _ in range(amount):
+                mint_tag_coupon(target_uid) # Генерируем купоны в цикле
+            bot.reply_to(message, f"✅ Выдано **{amount} Купонов на Тег** пользователю `{target_uid}`.", parse_mode="Markdown")
+            try: bot.send_message(target_uid, f"🏷 **Компенсация от администрации!**\nВам начислено: **{amount} Купон(ов) на Личный Тег**.\nПроверьте Рюкзак в Игровом Кабинете!", parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
         else:
-            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки) или `shards` (осколки).")
+            bot.reply_to(message, "❌ Неизвестная валюта. Используйте `points` (очки), `shards` (осколки) или `tags` (теги).")
     except ValueError:
         try: bot.reply_to(message, "❌ Ошибка: ID пользователя и сумма должны быть числами.")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")

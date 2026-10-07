@@ -1652,8 +1652,105 @@ def api_inventory_action():
         if not ok: return jsonify({"error": text}), 400
         return jsonify({"success": True, "msg": text})
 
+    elif action == 'tag':
+        target_info = data.get('target_info')
+        if not target_info or " " not in target_info.strip():
+            return jsonify({"error": "Укажите цель и тег! (Например: @user Бариста 1d)"}), 400
+            
+        parts = target_info.strip().split()
+        target_user_str = parts[0]
+        
+        # Пытаемся вытащить время из последнего слова (1h, 12h, 1d, 7d, 30d)
+        time_str = parts[-1].lower()
+        duration = 3600 # по умолчанию 1 час
+        duration_text = "1 час"
+        has_time_flag = False
+        
+        import re
+        match = re.match(r"^(\d+)([hd])$", time_str) # h - часы, d - дни
+        if match:
+            val = int(match.group(1))
+            unit = match.group(2)
+            if unit == 'h': 
+                duration = val * 3600
+                duration_text = f"{val} ч."
+            elif unit == 'd': 
+                duration = val * 86400
+                duration_text = f"{val} дн."
+            has_time_flag = True
+            
+        # Формируем сам тег (склеиваем слова между целью и временем)
+        if has_time_flag:
+            tag_text = " ".join(parts[1:-1])[:15]
+        else:
+            tag_text = " ".join(parts[1:])[:15]
+            
+        if not tag_text:
+            return jsonify({"error": "Тег не может быть пустым!"}), 400
+            
+        # Если юзер ввел "себе" или "me", вешаем на него
+        if target_user_str.lower() in ["себе", "me", "я"]:
+            target_uid = uid
+        else:
+            target_uid = resolve_uid(target_user_str)
+            
+        if not target_uid:
+            return jsonify({"error": "Пользователь не найден!"}), 400
+            
+        promo = db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0})
+        if not promo:
+            return jsonify({"error": "У вас нет купонов на тег!"}), 400
+            
+        # 1. ВЕШАЕМ НА СЕБЯ (ОТПРАВЛЯЕМ НА МОДЕРАЦИЮ АДМИНАМ)
+        if target_uid == uid:
+            db['temp_tags'].update_one({"uid": uid}, {"$set": {"tag": tag_text, "name": first_name, "coupon": promo["_id"]}}, upsert=True)
+            
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            markup = InlineKeyboardMarkup(row_width=2).add(
+                InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"), 
+                InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}")
+            )
+            try: 
+                from core.bot import bot
+                bot.send_message(
+                    STAFF_GROUP_ID, 
+                    f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ (Web App)</b>\n\n👤 От: {first_name} (<code>{uid}</code>)\n📝 Желаемый тег: <b>{tag_text}</b>\n\nОдобрить установку?", 
+                    parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+                )
+            except Exception: pass
+            
+            return jsonify({"success": True, "msg": "⏳ Ваш тег отправлен на модерацию админам. Ожидайте!"})
+        
+        # 2. ВЕШАЕМ НА ДРУГОГО (ТРОЛЛИНГ ИЛИ ПОДАРОК НА ВРЕМЯ)
+        else:
+            db['promocodes'].update_one({"_id": promo["_id"]}, {"$inc": {"used_count": 1}})
+            
+            # Сохраняем старый тег жертвы, чтобы потом вернуть
+            target_data = db['users'].find_one({"_id": target_uid}) or {}
+            old_tag = target_data.get("custom_tag", "")
+            
+            import time
+            expire_time = int(time.time()) + duration 
+            
+            db['temp_troll_tags'].insert_one({
+                "uid": target_uid,
+                "old_tag": old_tag,
+                "expire_at": expire_time
+            })
+            
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text}}, upsert=True)
+            
+            try:
+                from core.bot import bot
+                bot.send_message(uid, f"🏷 Вы успешно повесили статус «{tag_text}» на {duration_text}!")
+                bot.send_message(target_uid, f"✨ <b>НОВЫЙ СТАТУС!</b>\nКто-то из участников подарил вам временный тег <b>«{tag_text}»</b>!\nОн исчезнет автоматически через {duration_text}.", parse_mode="HTML")
+            except Exception: pass
+            
+            return jsonify({"success": True, "msg": f"🏷 Статус «{tag_text}» успешно повешен на {duration_text}!"})
+
     elif action == 'hack':
-        target_uid = resolve_target_uid(data.get('target_info'))
+        target_uid = resolve_uid(data.get('target_info')) 
         if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
         
         if target_uid == uid: return jsonify({"error": "Нельзя взломать самого себя!"}), 400

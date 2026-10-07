@@ -1,5 +1,6 @@
 import random
 import datetime
+import time
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.mongo import db
 from core.bot import bot
@@ -67,7 +68,27 @@ def execute_arrest(uid, first_name, promo_id, target_info):
 
 def expire_temp_tags():
     """Фоновая задача: Снимает временные клейма (Троллинг-теги)"""
-    pass
+    now = int(time.time())
+    
+    # Находим все протухшие теги (время которых истекло)
+    expired = list(db['temp_troll_tags'].find({"expire_at": {"$lte": now}}))
+    
+    for t in expired:
+        target_uid = t['uid']
+        old_tag = t.get('old_tag', "")
+        
+        # Возвращаем старый тег (или удаляем кастомный тег вообще, если его не было)
+        if old_tag:
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": old_tag}})
+        else:
+            db['users'].update_one({"_id": target_uid}, {"$unset": {"custom_tag": ""}})
+            
+        # Очищаем запись из темп-базы
+        db['temp_troll_tags'].delete_one({"_id": t['_id']})
+        
+        try:
+            bot.send_message(target_uid, "✨ Время действия временного статуса истекло! Ваш старый тег восстановлен.")
+        except: pass
 
 def promo_expiry_job():
     """Фоновая задача: Сжигает протухшие элитные промокоды (например, на VIP)"""
