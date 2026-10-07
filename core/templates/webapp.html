@@ -1917,6 +1917,50 @@
             });
         }
 
+        // --- ФУНКЦИИ УПРАВЛЕНИЯ ЭЛИТНЫМИ ГРЯДКАМИ ---
+        function farmAction(action, slotId, seedType = null) {
+            safeHaptic('impact', 'light');
+            let payload = { action: action, slot_id: slotId };
+            if (seedType) payload.seed_type = seedType;
+            
+            apiCall('/api/farm_action', payload).then(data => {
+                if (data.error) {
+                    customAlert(data.error, "Упс!", "⚠️");
+                } else {
+                    if(action === 'harvest' || action.includes('buy')) safeHaptic('notify', 'success');
+                    if(action === 'chase_pest') safeHaptic('impact', 'heavy');
+                    
+                    // Если это не покупка семян/слота, не показываем алерт, просто обновляем (для плавности)
+                    if (action === 'buy_slot' || action === 'plant' || action === 'chase_pest' || action === 'harvest' || action.includes('fertilize')) {
+                        let icon = action === 'harvest' ? '🚜' : (action === 'chase_pest' ? '👞' : '🌱');
+                        if (action === 'buy_slot') icon = '🚜';
+                        if (action === 'fertilize') icon = '🧪';
+                        customAlert(data.msg, "Ферма", icon);
+                    }
+                    loadFarm();
+                    loadProfile(); 
+                }
+            });
+        }
+
+        function farmActionCheck(action, slotId) {
+            let msg = action === 'dig_up' ? "Уверены, что хотите ВЫКОПАТЬ растение?\nОно исчезнет навсегда!" : "Подтверждаете действие?";
+            customConfirm(msg, function(c) {
+                if(c) farmAction(action, slotId);
+            });
+        }
+
+        function buySeed(seedType, cost, name) {
+            let emptySlot = window.currentPlots.find(p => p.status === 'empty');
+            if (!emptySlot) {
+                customAlert("Нет свободных грядок для посадки!", "Внимание", "⚠️");
+                return;
+            }
+            customConfirm(`Посадить ${name} за ${cost} 💎 в Слот #${emptySlot.slot_id}?`, function(c) {
+                if(c) farmAction('plant', emptySlot.slot_id, seedType);
+            });
+        }
+
         // --- ЕЖЕДНЕВНЫЙ БОНУС ---
         function claimDailyBonus() {
             const btn = document.getElementById('bonusBtn');
