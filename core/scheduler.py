@@ -29,7 +29,8 @@ CROPS = {
     "sunflower": {"name": "🌻 Подсолнух", "grow_time": 24*3600, "water_req": True},
     "watermelon": {"name": "🍉 Арбуз", "grow_time": 48*3600, "water_req": True},
     "chestnut": {"name": "🌳 К. Каштан", "grow_time": 7*24*3600, "water_req": True},
-    "rhododendron": {"name": "🌸 Рододендрон", "grow_time": 3*24*3600, "water_req": True}
+    "rhododendron": {"name": "🌸 Рододендрон", "grow_time": 3*24*3600, "water_req": True},
+    "potato": {"name": "🥔 Картоха", "grow_time": 8*3600, "water_req": True}
 }
 
 # ================= 1. БАЗОВЫЕ ФУНКЦИИ И РОЗЫГРЫШИ =================
@@ -249,7 +250,8 @@ def personal_farm_notifications():
         {"id": "caterpillar", "emoji": "🐛", "name": "Троянская Гусеница", "targets": ["radish", "mizuna", "tomato", "parsley"]},
         {"id": "locust", "emoji": "🚁", "name": "Дрон-Саранча", "targets": ["sunflower", "rhododendron"]},
         {"id": "mole", "emoji": "⛏", "name": "Крипто-Крот", "targets": ["money_tree", "watermelon", "tomato"]},
-        {"id": "miner", "emoji": "🪲", "name": "Жук-Майнер", "targets": ["ALL"]}
+        {"id": "colorado", "emoji": "🪲", "name": "Колорадский Жук", "targets": ["potato"]},
+        {"id": "miner", "emoji": "👾", "name": "Жук-Майнер", "targets": ["ALL"]}
     ]
     
     for plot in growing_plots:
@@ -316,6 +318,40 @@ def personal_farm_notifications():
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
             try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел!", parse_mode="HTML", reply_markup=markup)
             except: pass
+
+def colorado_beetle_invasion():
+    """Расползание Колорадского Жука по картофельному полю"""
+    fields = db['potato_fields'].find()
+    import time, random
+    now = int(time.time())
+    
+    for field in fields:
+        cells = field['cells']
+        updated = False
+        
+        for i in range(100):
+            # Если тут жук, он пытается перепрыгнуть на соседнюю клетку (шанс 20%)
+            if cells[i] == -1 and random.randint(1, 100) <= 20:
+                valid_neighbors = []
+                if i % 10 != 0: valid_neighbors.append(i-1)  # Лево
+                if i % 10 != 9: valid_neighbors.append(i+1)  # Право
+                if i >= 10: valid_neighbors.append(i-10)     # Верх
+                if i < 90: valid_neighbors.append(i+10)      # Низ
+                
+                target = random.choice(valid_neighbors)
+                # Жук съедает растущую картошку
+                if cells[target] > 0:
+                    cells[target] = -1
+                    updated = True
+                    
+            # Если тут картошка и она еще растет, есть 1% шанс, что жук прилетит сам
+            elif cells[i] > 0 and (now - cells[i] < 8 * 3600):
+                if random.randint(1, 100) <= 1:
+                    cells[i] = -1
+                    updated = True
+                    
+        if updated:
+            db['potato_fields'].update_one({"_id": field["_id"]}, {"$set": {"cells": cells}})
 
 def daily_bonus_reminder():
     """Вечернее пуш-уведомление для тех, кто забыл забрать Ежедневный Бонус"""
@@ -895,6 +931,9 @@ def start_scheduler():
         
         # 🔥 10. КОЛЛЕКТОРЫ СКАЙНЕТА (Каждые 30 минут проверяют должников) 🔥
         scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
+
+        # 11. Набег Колорадского Жука на картофельные поля (Каждые 30 мин)
+        scheduler.add_job(colorado_beetle_invasion, 'interval', minutes=30, id='colorado_invasion', replace_existing=True)
 
         from handlers.artifacts import expire_temp_tags, promo_expiry_job
         scheduler.add_job(expire_temp_tags, 'interval', minutes=5, id='expire_temp_tags', replace_existing=True)
