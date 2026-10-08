@@ -309,10 +309,12 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
         elif has_cactus and lost_points < 1:
             lost_points = 1 # Минимум 1 очко, если есть кактус
 
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
-        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
+        # ⬇ было: update_one(-lost_points) и безусловный +lost_points в синий сейф
+        from utils.validators import take_points_capped
+        lost_points = take_points_capped(uid, lost_points)  # не глубже 0
+        if lost_points > 0:
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
         
-        # 🔥 ИСПРАВЛЕНИЕ КРАША: Заменили prize_msg на msg 🔥
         if has_cactus:
             msg = f"🌵 **НАЛОГОВАЯ ПРОВЕРКА!**\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
         else:
@@ -619,8 +621,8 @@ def handle_claim_airdrop(call):
         steal_percent = random.uniform(0.10, 0.20)
         stolen = int(current_points * steal_percent)
         if stolen < 10: stolen = 10
-        
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+        from utils.validators import take_points_capped
+        stolen = take_points_capped(uid, stolen)   # было: update_one(-stolen)
         
         alert_msg = f"🐈‍⬛ МЯУ! ВЫ СХВАТИЛИ ДИКОГО КОТА!\n\nВместо припасов из ящика выпрыгнул кот! Он расцарапал вам руки и украл {stolen} ваших очков, пока убегал! 🩸"
         try: bot.answer_callback_query(call.id, alert_msg, show_alert=True)

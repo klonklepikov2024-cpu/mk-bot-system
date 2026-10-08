@@ -6,7 +6,7 @@ import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from core.bot import bot
-from utils.validators import is_user_locked
+from utils.validators import is_user_locked, can_withdraw, take_points_capped
 from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 from database.mongo import paid_collection, db
 from utils.logger import logger
@@ -209,7 +209,14 @@ def handle_craft_beyond(call):
         return
         
     # Списываем ресы в любом случае
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}})
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": CRAFT_POINTS}, "immunity": {"$gte": CRAFT_SHIELDS}},
+        {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}}
+    )
+    if not charged:
+        try: bot.answer_callback_query(call.id, "❌ Не хватает ресурсов!", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В инвентарь", callback_data="forge_main"))
     
@@ -253,7 +260,12 @@ def handle_reward_purchase(call):
     try: bot.answer_callback_query(call.id, "Покупка...") 
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price}})
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": price}},
+        {"$inc": {"bounty_points": -price}}
+    )
+    if not charged or price <= 0:
+        return
     
     code_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
     promo_code = f"AGENT-{code_suffix}"
@@ -301,8 +313,9 @@ def handle_cashback_request(call):
     uid = call.from_user.id
     
     # 👇 ЗАМОК НА ВЫВОД СРЕДСТВ 👇
-    if is_user_locked(uid):
-        try: bot.answer_callback_query(call.id, "⛔️ Вывод средств заморожен! Оплатите штраф или снимите блокировку через /start.", show_alert=True)
+    ok, reason = can_withdraw(uid)
+    if not ok:
+        try: bot.answer_callback_query(call.id, f"⛔️ Вывод заморожен: {reason}", show_alert=True)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
@@ -355,6 +368,12 @@ def handle_crypto_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('paymeth_') and 'cryptomenu' not in call.data)
 def handle_payout_method(call):
     parts = call.data.split('_')
+    # ⬇ новое
+    ok, reason = can_withdraw(call.from_user.id)
+    if not ok:
+        try: bot.answer_callback_query(call.id, f"⛔️ Вывод заморожен: {reason}", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     method = parts[1]
     cb_balance = int(parts[2])
     
@@ -390,15 +409,23 @@ def process_payout_details(message, cb_balance, method):
     uid = message.from_user.id
     details = message.text
     
-    user_data = paid_collection.find_one({"uid": uid}) or {}
-    current_balance = user_data.get("cashback_balance", 0)
-    
-    if current_balance < cb_balance:
-        bot.send_message(message.chat.id, "❌ Ошибка: ваш баланс изменился. Попробуйте снова.")
+    # ⬇ новое: финальная проверка именно в момент списания
+    ok, reason = can_withdraw(uid)
+    if not ok:
+        bot.send_message(message.chat.id, f"⛔️ Вывод заморожен: {reason}")
+        return
+    if not details or cb_balance < 500 or (method == "card" and cb_balance < 3500):
+        bot.send_message(message.chat.id, "❌ Некорректная заявка. Начните заново.")
         return
 
-    # 1. Списываем баланс
-    paid_collection.update_one({"uid": uid}, {"$set": {"cashback_balance": current_balance - cb_balance}})
+    # ⬇ было: find_one + проверка + $set current_balance - cb_balance
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": cb_balance}},
+        {"$inc": {"cashback_balance": -cb_balance}}
+    )
+    if not charged:
+        bot.send_message(message.chat.id, "❌ Ошибка: ваш баланс изменился. Попробуйте снова.")
+        return
     
     # 👇 ФИКС: РАСШИРИЛИ СПИСОК СЕТЕЙ 👇
     method_names = {
@@ -493,11 +520,13 @@ def handle_payout_decision(call):
         except Exception as e: logger.warning(f"Не удалось уведомить {target_uid} о выплате: {e}")
             
     elif action == "cancel":
-        # 👇 ОТКЛОНЯЕМ ВЫПЛАТУ НА САЙТЕ 👇
-        db['withdrawals'].update_many(
-            {"user_id": target_uid, "amount": amount, "status": "pending"}, 
+        # ⬇ было: update_many(...) и затем $inc без проверки результата
+        res = db['withdrawals'].update_one(
+            {"_id": pending_wd["_id"], "status": "pending"},
             {"$set": {"status": "rejected"}}
         )
+        if res.modified_count == 0:
+            return  # уже обработано соседним кликом
         paid_collection.update_one({"uid": target_uid}, {"$inc": {"cashback_balance": amount}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО (Деньги возвращены)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -827,7 +856,8 @@ def handle_admin_report_decision(call):
         user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0, "immunity": 0}
         
         if user_data.get("immunity", 0) > 0:
-            paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"immunity": -1, "bounty_points": -10}, "$unset": {"topic_type": ""}})
+            paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}})
+            take_points_capped(reporter_uid, 10)   # было: "bounty_points": -10 в том же $inc
             try: bot.send_message(reporter_uid, "⛔️ **Ложный донос!**\nВы использовали систему не по назначению. Списано **-10 очков**.\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен._", parse_mode="Markdown")
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             try: bot.edit_message_text(f"{call.message.text}\n\n🛡 *ЗАКРЫТО: Юзер спасен Иммунитетом! Страйк поглощен щитом.* ", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
@@ -837,7 +867,8 @@ def handle_admin_report_decision(call):
             return
 
         new_strikes = user_data.get("strikes", 0) + 1
-        paid_collection.update_one({"uid": reporter_uid}, {"$set": {"strikes": new_strikes}, "$inc": {"bounty_points": -10}, "$unset": {"topic_type": ""}}, upsert=True)
+        paid_collection.update_one({"uid": reporter_uid}, {"$set": {"strikes": new_strikes}, "$unset": {"topic_type": ""}}, upsert=True)
+        take_points_capped(reporter_uid, 10)       # было: "$inc": {"bounty_points": -10}
         try: bot.send_message(reporter_uid, f"🚨 **Внимание! Ложный донос.**\nВы использовали систему не по назначению. Списано **-10 очков**. Выдан страйк ({new_strikes}/3).", parse_mode="Markdown")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_text(f"{call.message.text}\n\n🚨 *ЗАКРЫТО: Выдан страйк за ложный донос.*", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=None)
@@ -1010,8 +1041,15 @@ def handle_buy_chest(call):
         return
         
     # 1. Списываем базовую цену сундука
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
-    remaining_points = points - PRICE
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}}
+    )
+    if not charged:
+        try: bot.answer_callback_query(call.id, "❌ Не хватает очков!", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+    remaining_points = charged.get("bounty_points", 0) - PRICE
     
     # 2. ГАЧА-РАНДОМ!
     chance = random.randint(1, 100)
@@ -1023,7 +1061,7 @@ def handle_buy_chest(call):
         stolen = int(remaining_points * steal_percent)
         
         if stolen > 0:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen}})
+            stolen = take_points_capped(uid, stolen)   # было: update_one(-stolen)
             
         msg = (
             f"🐈‍⬛ **МЯУ! ЭТО КОТ В МЕШКЕ!**\n\n"

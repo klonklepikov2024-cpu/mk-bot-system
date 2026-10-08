@@ -339,18 +339,24 @@ def handle_support_payment(call):
     user_data = paid_collection.find_one({"uid": uid}) or {}
 
     if is_points:
-        if user_data.get("bounty_points", 0) < cost:
+        if cost <= 0: return
+        # ⬇ было: precheck + update_one
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": cost}},
+            {"$inc": {"bounty_points": -cost}, "$set": {"status": 1, "strikes": 0}}
+        )
+        if not charged:
             bot.send_message(call.message.chat.id, "❌ Недостаточно очков!")
             return
-        # 👇 ДОБАВЛЯЕМ "strikes": 0 ВОТ СЮДА 👇
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -cost}, "$set": {"status": 1, "strikes": 0}})
         currency = "очков"
     else:
-        if user_data.get("cashback_balance", 0) < cost:
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "cashback_balance": {"$gte": cost}},
+            {"$inc": {"cashback_balance": -cost}, "$set": {"status": 1, "strikes": 0}}
+        )
+        if not charged:
             bot.send_message(call.message.chat.id, "❌ Недостаточно рублей!")
             return
-        # 👇 И ВОТ СЮДА 👇
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -cost}, "$set": {"status": 1, "strikes": 0}})
         currency = "₽"
 
     try: bot.delete_message(call.message.chat.id, call.message.message_id)

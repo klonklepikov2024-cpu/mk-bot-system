@@ -268,13 +268,24 @@ def handle_market_buy(call):
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
 
-    # АТОМАРНАЯ ТРАНЗАКЦИЯ (Защита от двойной покупки)
+    # АТОМАРНАЯ ТРАНЗАКЦИЯ: сначала платит покупатель, потом забираем лот
+    if price <= 0: return
+    field = "cashback_balance" if currency_type == "cb" else "bounty_points"
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, field: {"$gte": price}},
+        {"$inc": {field: -price}}
+    )
+    if not charged:
+        try: bot.answer_callback_query(call.id, "❌ Недостаточно средств!", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+
     lot = db['market_orders'].find_one_and_update(
         {"_id": ObjectId(lot_id_str), "status": "active"},
         {"$set": {"status": "sold", "buyer_uid": uid}}
     )
-    
     if not lot:
+        paid_collection.update_one({"uid": uid}, {"$inc": {field: price}})   # возврат
         try: bot.answer_callback_query(call.id, "❌ Упс! Лот уже куплен кем-то другим или снят с продажи.", show_alert=True)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
@@ -282,13 +293,6 @@ def handle_market_buy(call):
     try: bot.answer_callback_query(call.id, "✅ Покупка оформлена!")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
-    # Списываем средства
-    if currency_type == "cb":
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -price}})
-    else:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -price}})
-        
-    # Выдаем промокод покупателю
     promo_id = lot['promo_id']
     db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
     

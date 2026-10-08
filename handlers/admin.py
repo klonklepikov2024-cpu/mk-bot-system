@@ -16,7 +16,7 @@ from config import GROQ_API_KEY, GROQ_API_KEYS
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from core.bot import bot
-from utils.validators import is_user_locked
+from utils.validators import is_user_locked, take_points_capped
 from config import STAFF_GROUP_ID, OWNER_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
@@ -2151,7 +2151,11 @@ def handle_give_cmd(message):
         amount = int(args[3])
         
         if currency in ['points', 'очки']:
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+            # ⬇ было: $inc на amount без проверки знака
+            if amount >= 0:
+                paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
+            else:
+                amount = -take_points_capped(target_uid, -amount)   # списание не глубже нуля
             bot.reply_to(message, f"✅ Выдано **{amount} Очков Бдительности** пользователю `{target_uid}`.", parse_mode="Markdown")
             try: bot.send_message(target_uid, f"🎁 **Бонус от администрации!**\nВам начислено: **{amount} Очков Бдительности**.", parse_mode="Markdown")
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")

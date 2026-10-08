@@ -90,7 +90,15 @@ def handle_checkout(call):
             except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             return
             
-        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"cashback_balance": -cost_rub}})
+        # ⬇ было: precheck + update_one (рубли)
+        charged = paid_collection.find_one_and_update(
+            {"uid": call.from_user.id, "cashback_balance": {"$gte": cost_rub}},
+            {"$inc": {"cashback_balance": -cost_rub}}
+        )
+        if not charged:
+            try: bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽.", show_alert=True)
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+            return
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
         
@@ -113,15 +121,14 @@ def handle_checkout(call):
     # 5. Оплата полностью ОЧКАМИ РУЛЕТКИ (НОВОЕ!)
     elif action == "points":
         cost_points = original_amount * 5
-        user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
-        current_balance = user_data.get("bounty_points", 0)
-        
-        if current_balance < cost_points:
-            try: bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {cost_points}, а у вас {current_balance}.", show_alert=True)
+        charged = paid_collection.find_one_and_update(
+            {"uid": call.from_user.id, "bounty_points": {"$gte": cost_points}},
+            {"$inc": {"bounty_points": -cost_points}}
+        )
+        if not charged:
+            try: bot.answer_callback_query(call.id, f"❌ Недостаточно очков! Нужно {cost_points}.", show_alert=True)
             except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             return
-            
-        paid_collection.update_one({"uid": call.from_user.id}, {"$inc": {"bounty_points": -cost_points}})
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
         

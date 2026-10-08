@@ -21,6 +21,7 @@ from core.scheduler import start_scheduler
 from utils.logger import logger
 
 # Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
+from utils.validators import take_points_capped, can_withdraw
 import handlers.security
 import handlers.admin
 import handlers.casino
@@ -449,18 +450,30 @@ def api_buy_market():
     
     # === 1. СПИСАНИЕ С ПОКУПАТЕЛЯ ===
     if currency == "rub":
-        if user_db.get("cashback_balance", 0) < buyer_price_rub:
-            return jsonify({"error": "Недостаточно рублей (кэшбэка)!"}), 400
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -buyer_price_rub}})
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "cashback_balance": {"$gte": buyer_price_rub}},
+            {"$inc": {"cashback_balance": -buyer_price_rub}}
+        )
+        if not charged: return jsonify({"error": "Недостаточно рублей (кэшбэка)!"}), 400
     elif currency == "pts":
-        if user_db.get("bounty_points", 0) < buyer_price_pts:
-            return jsonify({"error": "Недостаточно очков!"}), 400
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -buyer_price_pts}})
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": buyer_price_pts}},
+            {"$inc": {"bounty_points": -buyer_price_pts}}
+        )
+        if not charged: return jsonify({"error": "Недостаточно очков!"}), 400
         pts_commission = buyer_price_pts - int(buyer_price_pts * 0.9)
         db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": pts_commission}})
     else: return jsonify({"error": "Ошибка валюты!"}), 400
         
-    db['market_orders'].update_one({"_id": ObjectId(lot_id)}, {"$set": {"status": "sold", "buyer_uid": uid}})
+    # ⬇ было: update_one(... {"$set": {"status": "sold", ...}})
+    claimed = db['market_orders'].find_one_and_update(
+        {"_id": ObjectId(lot_id), "status": "active"},
+        {"$set": {"status": "sold", "buyer_uid": uid}}
+    )
+    if not claimed:   # лот успели купить: возвращаем деньги
+        if currency == "rub": paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": buyer_price_rub}})
+        else: paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": buyer_price_pts}})
+        return jsonify({"error": "Лот уже куплен!"}), 400
     
     # === 2. РАСЧЕТ ВЫПЛАТЫ ПРОДАВЦУ И СУБСИДИИ ===
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
@@ -651,8 +664,11 @@ def api_spin_roulette():
         elif has_cactus and lost_points < 1:
             lost_points = 1 # Минимум 1 очко, если есть кактус
 
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -lost_points}})
-        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
+        # ⬇ было: update_one(-lost_points) и безусловный +lost_points в синий сейф
+        from utils.validators import take_points_capped
+        lost_points = take_points_capped(uid, lost_points)  # не глубже 0
+        if lost_points > 0:
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
         
         if has_cactus:
             prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
@@ -878,10 +894,12 @@ def api_craft():
                 return jsonify({"success": True, "msg": "🎰 СУПЕР-ПРИЗ!\nФонд Premium сейчас копится, поэтому Наковальня выдала вам 3000 💎 и 5 Осколков обратно!"})
 
     elif action == 'beyond':
-        if user_data.get("bounty_points", 0) < 3000 or user_data.get("immunity", 0) < 2:
-            return jsonify({"error": "Нужно 3000 очков и 2 щита!"}), 400
-            
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -3000, "immunity": -2}})
+        # ⬇ было: precheck и отдельный update_one
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 3000}, "immunity": {"$gte": 2}},
+            {"$inc": {"bounty_points": -3000, "immunity": -2}}
+        )
+        if not paid: return jsonify({"error": "Нужно 3000 очков и 2 щита!"}), 400
         u_info = db['users'].find_one({"_id": uid}) or {}
         
         import random
@@ -914,12 +932,16 @@ def api_open_chest():
     
     if points < PRICE: return jsonify({"error": "Нужно 1000 очков!"}), 400
 
+    # ⬇ было: tasks_progress.update_one(...) затем update_one(-PRICE), remaining = points - PRICE
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}}
+    )
+    if not charged: return jsonify({"error": "Нужно 1000 очков!"}), 400
+    remaining = charged.get("bounty_points", 0) - PRICE
     import datetime
     today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
     db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"chest_opened": 1}}, upsert=True)
-    
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
-    remaining = points - PRICE
     
     import random
     chance = random.randint(1, 100)
@@ -953,7 +975,7 @@ def api_open_chest():
         steal_pct = random.uniform(0.15, 0.35) if remaining >= 10000 else random.uniform(0.10, 0.25)
         stolen_pts = int(remaining * steal_pct)
         if stolen_pts > 0: 
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -stolen_pts}})
+            stolen_pts = take_points_capped(uid, stolen_pts)   # было: update_one(-stolen_pts)
             db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": stolen_pts}})
             
         return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen_pts} очков, пока убегал!"})
@@ -1309,11 +1331,13 @@ def api_payout():
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
-    # === ПАТЧ БЕЗОПАСНОСТИ: Блокировка вывода для нарушителей ===
-    from utils.validators import is_user_locked
-    if is_user_locked(uid):
-        return jsonify({"error": "⛔️ Вывод средств заморожен! Оплатите штраф или снимите блокировку через бота (/start)."}), 400
-    # ============================================================
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+
+    # ⬇ было: is_user_locked(uid) or bounty_points < 0
+    from utils.validators import can_withdraw
+    ok, reason = can_withdraw(uid)
+    if not ok:
+        return jsonify({"error": f"⛔️ Вывод средств заморожен: {reason}"}), 400
     
     username = user_info.get('username', f"ID {uid}")
     
@@ -1864,10 +1888,17 @@ def api_inventory_action():
 
             last_hacked = target_data.get("last_hacked_time", 0)
             if now - last_hacked < imm_time:
-                return jsonify({"error": f"Сервер жертвы под защитой! Из-за её рейтинга защита длится {imm_text}."}), 400
+                return jsonify({"error": f"Сервер жертвы под защитой! ..."}), 400
             
-        # Списываем 200 очков за попытку
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}})
+        # Списываем 200 очков за попытку  ⬇ атомарно + защита от двойного тапа
+        from utils.validators import take_points_capped
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 200},
+             "$or": [{"last_hack_time": {"$exists": False}}, {"last_hack_time": {"$lte": now - cooldown_time}}]},
+            {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}}
+        )
+        if not paid:
+            return jsonify({"error": "Вирус ещё компилируется или нет 200 💎!"}), 400
         from core.bot import bot
         
         # 3. ПРОБИТИЕ ЩИТА (Анархия дает 50% шанс пробить щит насквозь)
@@ -1906,8 +1937,9 @@ def api_inventory_action():
             # Крадем с личного счета
             stolen = int(target_data.get("bounty_points", 0) * steal_pct)
             if stolen < 10: stolen = 10
-            
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": -stolen}, "$set": {"last_hacked_time": now}})
+            # ⬇ было: update_one(-stolen) жертве и +stolen хакеру
+            stolen = take_points_capped(target_uid, stolen)   # жертва не уйдёт в минус
+            paid_collection.update_one({"uid": target_uid}, {"$set": {"last_hacked_time": now}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": stolen}})
             
             victim_msg = f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `ID {uid}` пробил вашу защиту и украл **{stolen} 💎** с личного счета!"
@@ -3498,8 +3530,14 @@ def handle_marriage_response(call):
         bot.edit_message_text("❌ Свадьба отменяется: у инициатора закончились деньги на оплату пошлины!", call.message.chat.id, call.message.message_id)
         return
         
-    # Списываем деньги и женим!
-    paid_collection.update_one({"uid": initiator_id}, {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id}})
+    # Списываем деньги и женим!  ⬇ атомарно: баланс + оба свободны
+    charged = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "partner_id": {"$exists": False}, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id}}
+    )
+    if not charged:
+        bot.edit_message_text("❌ Свадьба отменяется: у инициатора нет средств или он уже в браке!", call.message.chat.id, call.message.message_id)
+        return
     paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id}})
     
     bot.edit_message_text(f"🎊 **НОВЫЙ СИНДИКАТ ЗАРЕГИСТРИРОВАН!** 🎊\n\nСкайнет официально объявляет вас Кибер-Партнерами!\n\n_Пошлина {PRICE} 💎 уплачена. Теперь вы одна семья!_", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
@@ -3516,9 +3554,15 @@ def divorce(message):
         
     PENALTY = 1000
     
-    # Разводим в базе
-    paid_collection.update_one({"uid": uid}, {"$unset": {"partner_id": ""}, "$inc": {"bounty_points": -PENALTY}})
-    paid_collection.update_one({"uid": partner_id}, {"$unset": {"partner_id": ""}})
+    # ⬇ было: precheck + два update_one
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "partner_id": partner_id, "bounty_points": {"$gte": PENALTY}},
+        {"$unset": {"partner_id": ""}, "$inc": {"bounty_points": -PENALTY}}
+    )
+    if not charged:
+        bot.reply_to(message, f"💸 Госпошлина за развод — {PENALTY} 💎. У вас недостаточно средств.")
+        return
+    paid_collection.update_one({"uid": partner_id, "partner_id": uid}, {"$unset": {"partner_id": ""}})
     
     bot.reply_to(message, f"💔 **СИНДИКАТ РАСПАЛСЯ!**\n\nВы расторгли Кибер-Брак с [{partner_id}](tg://user?id={partner_id}).\n_За развод в одностороннем порядке с вас удержан штраф в размере {PENALTY} 💎._", parse_mode="Markdown")
 
@@ -3791,6 +3835,15 @@ def handle_duel_response(call):
     commission = int((bet * 2) * 0.05)
     if commission < 1: commission = 1
     prize = (bet * 2) - commission
+    # ⬇ новое: до любых выплат
+    loser_paid = paid_collection.find_one_and_update(
+        {"uid": loser_id, "bounty_points": {"$gte": bet}},
+        {"$inc": {"bounty_points": -bet}}
+    )
+    if not loser_paid:
+        db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "error"}})
+        bot.edit_message_text("❌ У проигравшего не хватило очков. Дуэль аннулирована.", call.message.chat.id, call.message.message_id)
+        return
     pay_casino_owner(int(bet * 0.10))
     
     # Транзакции и ТРЕКЕРЫ
@@ -3804,9 +3857,9 @@ def handle_duel_response(call):
     
     l_data = paid_collection.find_one({"uid": loser_id}) or {}
     if l_data.get("daily_duel_date") != now_date:
-        paid_collection.update_one({"uid": loser_id}, {"$set": {"daily_duel_losses": bet, "daily_duel_date": now_date, "duel_win_streak": 0}, "$inc": {"bounty_points": -bet}})
+        paid_collection.update_one({"uid": loser_id}, {"$set": {"daily_duel_losses": bet, "daily_duel_date": now_date, "duel_win_streak": 0}})
     else:
-        paid_collection.update_one({"uid": loser_id}, {"$inc": {"bounty_points": -bet, "daily_duel_losses": bet}, "$set": {"duel_win_streak": 0}})
+        paid_collection.update_one({"uid": loser_id}, {"$inc": {"daily_duel_losses": bet}, "$set": {"duel_win_streak": 0}})
 
     w_data = paid_collection.find_one({"uid": winner_id})
     if w_data.get("duel_win_streak", 0) == 10:
@@ -4058,8 +4111,13 @@ def handle_adopt_response(call):
     if (paid_collection.find_one({"uid": child_id}) or {}).get("parent_id"):
         return bot.edit_message_text("❌ Ребенка уже забрала другая семья!", call.message.chat.id, call.message.message_id)
         
-    # Жесткая запись в базу: списываем деньги, ставим parent_id ребенку, добавляем child_id в массив родителя
-    paid_collection.update_one({"uid": parent_id}, {"$inc": {"bounty_points": -PRICE}, "$push": {"children": child_id}})
+    # Жесткая запись в базу: списываем деньги, ставим parent_id ребенку...
+    charged = paid_collection.find_one_and_update(
+        {"uid": parent_id, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}, "$push": {"children": child_id}}
+    )
+    if not charged:
+        return bot.edit_message_text("❌ У опекуна кончились деньги! Усыновление отменено.", call.message.chat.id, call.message.message_id)
     paid_collection.update_one({"uid": child_id}, {"$set": {"parent_id": parent_id}})
     
     # ТРЕКЕР: Патриарх
@@ -4247,7 +4305,12 @@ def trigger_anarchy(message):
         return bot.reply_to(message, "🔥 Анархия УЖЕ идет! Хватайте вилы и бегите грабить!")
         
     # Списываем 10к, запускаем Анархию на 1 час
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -PRICE}})
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}}
+    )
+    if not charged:
+        return bot.reply_to(message, f"💀 Обрушение серверов Скайнета стоит {PRICE} 💎!")
     db['settings'].update_one({"_id": "anarchy_mode"}, {"$set": {"active": True, "end_time": time.time() + 3600}}, upsert=True)
     
     # Оповещаем все чаты
@@ -4297,7 +4360,12 @@ def public_court(message):
         return bot.reply_to(message, "💸 У вас нет стартовых 100 💎 для открытия дела!")
         
     # Списываем 100 💎 у инициатора
-    paid_collection.update_one({"uid": initiator_id}, {"$inc": {"bounty_points": -100}})
+    charged = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "bounty_points": {"$gte": 100}},
+        {"$inc": {"bounty_points": -100}}
+    )
+    if not charged:
+        return bot.reply_to(message, "💸 У вас нет стартовых 100 💎 для открытия дела!")
 
     # ТРЕКЕР: Крыса
     paid_collection.update_one({"uid": initiator_id}, {"$addToSet": {"sued_users": target_id}})
@@ -4360,9 +4428,22 @@ def handle_court_funding(call):
         return bot.answer_callback_query(call.id, "Не хватает 100 💎 на балансе!", show_alert=True)
         
     # Списываем бабки и плюсуем в котел
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -100}})
-    new_collected = court['collected'] + 100
-    db['active_courts'].update_one({"_id": court_id}, {"$set": {"collected": new_collected}, "$push": {"investors": uid}})
+    from pymongo import ReturnDocument
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": 100}},
+        {"$inc": {"bounty_points": -100}}
+    )
+    if not charged:
+        return bot.answer_callback_query(call.id, "Не хватает 100 💎 на балансе!", show_alert=True)
+    joined = db['active_courts'].find_one_and_update(
+        {"_id": court_id, "investors": {"$ne": uid}},
+        {"$inc": {"collected": 100}, "$push": {"investors": uid}},
+        return_document=ReturnDocument.AFTER
+    )
+    if not joined:   # уже в котле: возвращаем
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 100}})
+        return bot.answer_callback_query(call.id, "Вы уже внесли свою долю!", show_alert=True)
+    new_collected = joined["collected"]
     
     if new_collected >= court['goal']:
         # ПРИГОВОР ИСПОЛНЕН! Выдаем мут на 1 час
@@ -4410,10 +4491,17 @@ def bribe_court(message):
         return bot.reply_to(message, f"💸 У вас нет {bribe_amount} 💎 для взятки! Вас посадят.")
         
     # Списываем взятку
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -bribe_amount}})
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": bribe_amount}},
+        {"$inc": {"bounty_points": -bribe_amount}}
+    )
+    if not charged:
+        return bot.reply_to(message, f"💸 У вас нет {bribe_amount} 💎 для взятки! Вас посадят.")
     
     # Удаляем суд
-    db['active_courts'].delete_one({"_id": court["_id"]})
+    if db['active_courts'].delete_one({"_id": court["_id"]}).deleted_count == 0:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": bribe_amount}})
+        return bot.reply_to(message, "⚖️ Суд уже закрыт.")
     
     # Взятка + собранные народом деньги улетают в Синий Сейф Скайнета (коррупция!)
     total_to_safe = bribe_amount + collected
@@ -4787,10 +4875,13 @@ def family_piggy_bank(message):
             return bot.reply_to(message, "⚠️ Укажите сумму: `!копилка снять 500`")
             
         amount = int(parts[2])
-        if amount > current_bank:
+        # ⬇ было: if amount > current_bank + два отдельных update_one
+        taken = db['family_banks'].find_one_and_update(
+            {"_id": family_id, "balance": {"$gte": amount}},
+            {"$inc": {"balance": -amount}}
+        )
+        if not taken:
             return bot.reply_to(message, f"📉 В копилке нет столько денег! Там всего {current_bank} 💎.")
-            
-        db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": -amount}})
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}})
         bot.reply_to(message, f"💸 Вы забрали **{amount} 💎** из семейного фонда!\n_Остаток: {current_bank - amount} 💎_", parse_mode="Markdown")
         
@@ -4800,10 +4891,13 @@ def family_piggy_bank(message):
         if amount < 10:
             return bot.reply_to(message, "📉 Минимальный вклад: 10 💎")
             
-        if user_data.get("bounty_points", 0) < amount:
+        # ⬇ было: precheck + update_one(-amount)
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": amount}},
+            {"$inc": {"bounty_points": -amount}}
+        )
+        if not charged:
             return bot.reply_to(message, "❌ У вас нет столько Очков на руках!")
-            
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -amount}})
         db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": amount}}, upsert=True)
         bot.reply_to(message, f"🏦 Вы положили **{amount} 💎** в семейный фонд!\n_Всего накоплено: {current_bank + amount} 💎_", parse_mode="Markdown")
 
@@ -4819,10 +4913,13 @@ def pay_debt_chat(message):
     if user_db.get("bounty_points", 0) < debt:
         return bot.reply_to(message, f"❌ У вас недостаточно Очков! Для погашения кредита требуется **{debt} 💎**.")
         
-    paid_collection.update_one({"uid": uid}, {
-        "$inc": {"bounty_points": -debt},
-        "$unset": {"debt": "", "debt_deadline": "", "debt_notified": ""}
-    })
+        # ⬇ было: precheck + update_one без условия
+    paid = paid_collection.find_one_and_update(
+        {"uid": uid, "debt": debt, "bounty_points": {"$gte": debt}},
+        {"$inc": {"bounty_points": -debt}, "$unset": {"debt": "", "debt_deadline": "", "debt_notified": ""}}
+    )
+    if not paid:
+        return bot.reply_to(message, "❌ Не удалось погасить кредит. Проверьте баланс и попробуйте ещё раз.")
     db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": time.time()})
     
     bot.reply_to(message, f"✅ **КРЕДИТ ПОГАШЕН!**\n\nВы выплатили МФО **{debt} 💎**.\nДолгов нет, арест со счетов снят, коллекторы отозваны.", parse_mode="Markdown")
@@ -4969,11 +5066,13 @@ def start_squid_game(message):
             else:
                 return bot.reply_to(message, f"🦑 Набор уже открыт! Пишите <code>!играю</code> (Собрано {len(game['players'])}/10)", parse_mode="HTML")
 
-        user_data = paid_collection.find_one({"uid": uid}) or {}
-        if user_data.get("bounty_points", 0) < 1000:
+                # ⬇ было: precheck + update_one(-1000)
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 1000}},
+            {"$inc": {"bounty_points": -1000}}
+        )
+        if not charged:
             return bot.reply_to(message, "💸 Участнику нужно 1000 💎 для входа в Игру в Кальмара!")
-
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -1000}})
 
         import time
         db['active_squid_games'].insert_one({
@@ -5001,12 +5100,19 @@ def join_squid_game(message):
         if any(p['id'] == uid for p in game['players']):
             return bot.reply_to(message, "🦑 Ты уже в игре. Назад дороги нет.")
 
-        user_data = paid_collection.find_one({"uid": uid}) or {}
-        if user_data.get("bounty_points", 0) < 1000:
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 1000}},
+            {"$inc": {"bounty_points": -1000}}
+        )
+        if not charged:
             return bot.reply_to(message, "💸 У тебя нет 1000 💎. Ты не подходишь для Игры.")
-
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -1000}})
-        db['active_squid_games'].update_one({"_id": chat_id}, {"$push": {"players": {"id": uid, "name": message.from_user.first_name}}})
+        joined = db['active_squid_games'].update_one(
+            {"_id": chat_id, "status": "recruiting", "players.id": {"$ne": uid}, "players.9": {"$exists": False}},
+            {"$push": {"players": {"id": uid, "name": message.from_user.first_name}}}
+        )
+        if joined.modified_count == 0:   # дубль, мест нет или набор закрыт
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}})
+            return bot.reply_to(message, "🦑 Ты уже в игре или набор закрыт.")
 
         current_players = len(game['players']) + 1
 
@@ -5138,7 +5244,7 @@ def join_heist(message):
     else:
         # ПРОВАЛ! Полиция вяжет всех.
         for m in heist['members']:
-            paid_collection.update_one({"uid": m['id']}, {"$inc": {"bounty_points": -500}})
+            take_points_capped(m['id'], 500)   # было: update_one(-500)
             mute_user(chat_id, m['id'], 7200, "Пойман полицией на ограблении")
             
         from core.scheduler import schedule_message_deletion
@@ -5233,8 +5339,9 @@ def track_global_activity(message):
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
         else:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -5}})
-            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 5}})
+            taken = take_points_capped(uid, 5)   # было: update_one(-5) и безусловные +5 в сейф
+            if taken:
+                db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": taken}})
 
     # 📵 4. ПЕЙДЖЕР-РЕЖИМ (Карма <= -50, запрет медиа)
     if karma <= -50 and message.content_type != 'text':
