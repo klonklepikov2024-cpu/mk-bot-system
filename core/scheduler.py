@@ -224,11 +224,15 @@ def auto_spawn_auction_lot():
     )
     
     try:
+        from core.scheduler import schedule_message_deletion
         bot_username = bot.get_me().username
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🕷 Перейти к торгам", url=f"https://t.me/{bot_username}?start=app_auction"))
         
         for cid in all_chats:
-            try: bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup); time.sleep(0.3)
+            try: 
+                sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
+                schedule_message_deletion(cid, sent_msg.message_id, 172800, bot)
+                time.sleep(0.3)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
@@ -887,9 +891,11 @@ def collectors_task():
         
         try:
             from core.bot import bot
+            from core.scheduler import schedule_message_deletion
             from config import chat_ids_mk # или любой главный чат
             for chat_id in chat_ids_mk.values():
-                bot.send_message(chat_id, f"🚨 **КОЛЛЕКТОРЫ НА МЕСТЕ!** 🚨\n\nПользователь `ID {uid}` просрочил выплату кредита в МФО Скайнета!\nСумма долга: **{debt_amount} 💎**.\n\n_Имущество арестовано, должник лишен права голоса (МУТ), пока кто-нибудь не скинет ему Очки или он не задонатит!_", parse_mode="Markdown")
+                sent_msg = bot.send_message(chat_id, f"🚨 **КОЛЛЕКТОРЫ НА МЕСТЕ!** 🚨\n\nПользователь `ID {uid}` просрочил выплату кредита в МФО Скайнета!\nСумма долга: **{debt_amount} 💎**.\n\n_Имущество арестовано, должник лишен права голоса (МУТ), пока кто-нибудь не скинет ему Очки или он не задонатит!_", parse_mode="Markdown")
+                schedule_message_deletion(chat_id, sent_msg.message_id, 3600, bot)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # Не забудь добавить в start_scheduler():

@@ -3291,15 +3291,19 @@ def handle_defuse(call):
     correct_wire = random.choice(['red', 'blue', 'green'])
     color_emoji = {"red": "🔴 Красный", "blue": "🔵 Синий", "green": "🟢 Зеленый"}[color]
     
+    from core.scheduler import schedule_message_deletion
+    
     if color == correct_wire:
         # УГАДАЛ!
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}}, upsert=True)
         text = f"✅ **БОМБА ОБЕЗВРЕЖЕНА!**\n\nГерой [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель и сорвал куш в **1000 💎**!\n\n_Чат спасен._"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        schedule_message_deletion(call.message.chat.id, call.message.message_id, 120, bot)
     else:
         # БАБАХ!
         text = f"💥 **БАБАХ!** 💥\n\nХакер [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель... ОШИБКА!\n\nЕму оторвало руки, он отправляется в реанимацию (Мут на 15 минут)."
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        schedule_message_deletion(call.message.chat.id, call.message.message_id, 120, bot)
         mute_user(call.message.chat.id, uid, 15 * 60, "Провал в разминировании бомбы")
 
 # ================= УБИЙЦА ИРИСА (МОДУЛЬ 1: РОЛПЛЕЙ И РАЗДАЧИ) =================
@@ -3534,6 +3538,8 @@ def russian_roulette(message):
     
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
+    from core.scheduler import schedule_message_deletion
+    
     if random.randint(1, 6) == 1:
         # УВЕЛИЧИВАЕМ СЧЕТЧИК СМЕРТЕЙ
         paid_collection.update_one({"uid": uid}, {"$inc": {"roulette_deaths_streak": 1}}, upsert=True)
@@ -3541,9 +3547,11 @@ def russian_roulette(message):
         
         if user_data.get("immunity", 0) > 0:
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
-            bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
+            sent_msg = bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
         else:
-            bot.reply_to(message, "💥 **БАБАХ!**\nВы словили пулю. Скайнет отправляет вас в реанимацию на 1 час.\n_F._", parse_mode="Markdown")
+            sent_msg = bot.reply_to(message, "💥 **БАБАХ!**\nВы словили пулю. Скайнет отправляет вас в реанимацию на 1 час.\n_F._", parse_mode="Markdown")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
             mute_user(message.chat.id, uid, 3600, "Смерть в русской рулетке")
             
         # ПРОВЕРЯЕМ АЧИВКУ (3 смерти подряд)
@@ -3564,7 +3572,8 @@ def russian_roulette(message):
             bonus_text = "\n🌟 _Бонус за Отличную Карму (x2)!_"
             
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}, "$set": {"roulette_deaths_streak": 0}}, upsert=True)
-        bot.reply_to(message, f"😅 *Щелк...* Осечка!\n[{name}](tg://user?id={uid}) выживает и получает **+{reward} 💎**.{bonus_text}", parse_mode="Markdown")
+        sent_msg = bot.reply_to(message, f"😅 *Щелк...* Осечка!\n[{name}](tg://user?id={uid}) выживает и получает **+{reward} 💎**.{bonus_text}", parse_mode="Markdown")
+        schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
 
 # 2. РЕЙТИНГ АКТИВНОСТИ ЧАТА
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!топ', 'топ чата', '/top'])
@@ -3588,7 +3597,9 @@ def grant_achievement(uid, ach_id, ach_name, ach_icon, chat_id):
         paid_collection.update_one({"uid": uid}, {"$push": {"achievements": ach_id}})
         try:
             from core.bot import bot
-            bot.send_message(chat_id, f"🏆 **ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!**\nВы получили значок: {ach_icon} **«{ach_name}»**!", parse_mode="Markdown")
+            from core.scheduler import schedule_message_deletion
+            sent_msg = bot.send_message(chat_id, f"🏆 **ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!**\nВы получили значок: {ach_icon} **«{ach_name}»**!", parse_mode="Markdown")
+            schedule_message_deletion(chat_id, sent_msg.message_id, 300, bot)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return True
     return False
@@ -3818,7 +3829,9 @@ def handle_duel_response(call):
         f"💰 Забрал(а) куш: **{prize} 💎** _(Комиссия: {commission} 💎)_"
     )
     
+    from core.scheduler import schedule_message_deletion
     bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    schedule_message_deletion(call.message.chat.id, call.message.message_id, 300, bot)
 
 # 2. Пользовательские Аирдропы (Замена Мешкам Ириса)
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!раздача', '/раздача', 'раздача')))
@@ -4240,6 +4253,8 @@ def trigger_anarchy(message):
     # Оповещаем все чаты
     def broadcast_anarchy():
         from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+        from core.scheduler import schedule_message_deletion # 👈 ДОБАВИЛИ ИМПОРТ
+        
         all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
         
         msg_text = (
@@ -4253,11 +4268,13 @@ def trigger_anarchy(message):
             f"<i>Заходите в Web App (Рюкзак -> Взлом) и грабьте соседей, пока система не перезагрузится!</i>"
         )
         for cid in all_chats:
-            try: bot.send_message(cid, msg_text, parse_mode="HTML"); time.sleep(0.3)
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-            
-    import threading
-    threading.Thread(target=broadcast_anarchy, daemon=True).start()
+            try: 
+                # 👇 ЛОВИМ СООБЩЕНИЕ И СТАВИМ ТАЙМЕР НА 3600 СЕКУНД (1 ЧАС)
+                sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML")
+                schedule_message_deletion(cid, sent_msg.message_id, 3600, bot)
+                time.sleep(0.3)
+            except Exception as e: 
+                logger.debug(f"Игнор ошибки: {e}")
 
 # ================= НАРОДНЫЙ СУД (СБОР НА КИЛЛЕРА) =================
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!суд', 'суд')))
@@ -5029,7 +5046,9 @@ def run_squid_game(chat_id):
     db['active_squid_games'].delete_one({"_id": chat_id})
 
     try:
-        bot.send_message(chat_id, f"🏆 <b>ИГРА В КАЛЬМАРА ЗАВЕРШЕНА!</b> 🏆\n\nВыживший: <a href='tg://user?id={winner['id']}'>{html.escape(winner['name'])}</a>!\nОн забирает весь куш: <b>{pot} 💎</b>!\n\n<i>Поздравляем. Остальные отправлены в морг.</i>", parse_mode="HTML")
+        from core.scheduler import schedule_message_deletion
+        sent_msg = bot.send_message(chat_id, f"🏆 <b>ИГРА В КАЛЬМАРА ЗАВЕРШЕНА!</b> 🏆\n\nВыживший: <a href='tg://user?id={winner['id']}'>{html.escape(winner['name'])}</a>!\nОн забирает весь куш: <b>{pot} 💎</b>!\n\n<i>Поздравляем. Остальные отправлены в морг.</i>", parse_mode="HTML")
+        schedule_message_deletion(chat_id, sent_msg.message_id, 600, bot)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= КРИМИНАЛ: ОГРАБЛЕНИЕ КАЗИНО =================
@@ -5108,7 +5127,9 @@ def join_heist(message):
             paid_collection.update_one({"uid": m['id']}, {"$inc": {"cashback_balance": share}})
             db['ruble_ledger'].insert_one({"uid": m['id'], "amount": share, "reason": "Успешное ограбление", "timestamp": time.time()})
             
-        bot.send_message(message.chat.id, f"💰 **ОГРАБЛЕНИЕ УДАЛОСЬ!**\n\nСигнализация отключена, Сейф вскрыт болгаркой!\nБанда вынесла **{total_loot} ₽** наличными!\n\nГерои дня: {names_str}\n_Каждый получает свою долю: {share} ₽._", parse_mode="Markdown")
+        from core.scheduler import schedule_message_deletion
+        sent_msg = bot.send_message(message.chat.id, f"💰 **ОГРАБЛЕНИЕ УДАЛОСЬ!**\n\nСигнализация отключена, Сейф вскрыт болгаркой!\nБанда вынесла **{total_loot} ₽** наличными!\n\nГерои дня: {names_str}\n_Каждый получает свою долю: {share} ₽._", parse_mode="Markdown")
+        schedule_message_deletion(message.chat.id, sent_msg.message_id, 300, bot)
         
     else:
         # ПРОВАЛ! Полиция вяжет всех.
@@ -5116,7 +5137,9 @@ def join_heist(message):
             paid_collection.update_one({"uid": m['id']}, {"$inc": {"bounty_points": -500}})
             mute_user(chat_id, m['id'], 7200, "Пойман полицией на ограблении")
             
-        bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СПЕЦНАЗ НА МЕСТЕ!**\n\nКто-то нажал тревожную кнопку. Полиция повязала всю банду прямо в хранилище!\n\nАрестованы: {names_str}\n\n_Суд был скорым: конфискация 500 💎 у каждого и 2 часа тюрьмы (Мут)._", parse_mode="Markdown")
+        from core.scheduler import schedule_message_deletion
+        sent_msg = bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СПЕЦНАЗ НА МЕСТЕ!**\n\nКто-то нажал тревожную кнопку. Полиция повязала всю банду прямо в хранилище!\n\nАрестованы: {names_str}\n\n_Суд был скорым: конфискация 500 💎 у каждого и 2 часа тюрьмы (Мут)._", parse_mode="Markdown")
+        schedule_message_deletion(message.chat.id, sent_msg.message_id, 300, bot)
 
 
 # ==============================================================================
@@ -5165,6 +5188,7 @@ def spawn_auction_lot(message):
 def track_global_activity(message):
     if message.text and message.text.startswith(('!', '/')): return
     
+    from core.scheduler import schedule_message_deletion
     uid = message.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
     karma = user_data.get("social_rating", 0)
@@ -5178,7 +5202,8 @@ def track_global_activity(message):
         mute_user(message.chat.id, uid, 172800, "Цифровой ГУЛАГ (Карма <= -100)")
         paid_collection.update_one({"uid": uid}, {"$set": {"social_rating": -50}}) # Сброс до -50
         try:
-            bot.send_message(message.chat.id, f"🚨 <b>ВРАГ НАРОДА УСТРАНЕН!</b>\nГражданин {message.from_user.first_name} лишен голоса на 48 часов за достижение Кармы -100. Рейтинг принудительно сброшен до -50.", parse_mode="HTML")
+            sent_msg = bot.send_message(message.chat.id, f"🚨 <b>ВРАГ НАРОДА УСТРАНЕН!</b>\nГражданин {message.from_user.first_name} лишен голоса на 48 часов за достижение Кармы -100. Рейтинг принудительно сброшен до -50.", parse_mode="HTML")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
@@ -5199,7 +5224,8 @@ def track_global_activity(message):
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             mute_user(message.chat.id, uid, 43200, "Налог на слова: исчерпан баланс")
             try:
-                bot.send_message(message.chat.id, f"🔇 <b>БАЛАНС СЛОВ ИСЧЕРПАН.</b>\nУ гражданина нет 5 💎 на оплату сообщения. Выдан мут на 12 часов. Молчание — золото.", parse_mode="HTML")
+                sent_msg = bot.send_message(message.chat.id, f"🔇 <b>БАЛАНС СЛОВ ИСЧЕРПАН.</b>\nУ гражданина нет 5 💎 на оплату сообщения. Выдан мут на 12 часов. Молчание — золото.", parse_mode="HTML")
+                schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
         else:
@@ -5210,7 +5236,8 @@ def track_global_activity(message):
     if karma <= -50 and message.content_type != 'text':
         try:
             bot.delete_message(message.chat.id, message.message_id)
-            bot.send_message(message.chat.id, f"📵 <b>ПЕЙДЖЕР-РЕЖИМ!</b>\nГражданину {message.from_user.first_name} запрещено отправлять фото, стикеры и войсы (Карма ниже -50). Только текст!", parse_mode="HTML")
+            sent_msg = bot.send_message(message.chat.id, f"📵 <b>ПЕЙДЖЕР-РЕЖИМ!</b>\nГражданину {message.from_user.first_name} запрещено отправлять фото, стикеры и войсы (Карма ниже -50). Только текст!", parse_mode="HTML")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 

@@ -297,10 +297,15 @@ def generate_and_send_daily_poll(is_test=False):
             pass
 
     # ================= 5. ОТЧЕТ АДМИНАМ =================
+    from core.scheduler import schedule_message_deletion
     report_text = f"✅ **Авто-Опрос запущен!**\nТема: {selected_holiday}\nСкайнет разослал его в {success_count} чатов."
-    try: bot.send_message(DONOR_GROUP_ID, report_text, parse_mode="Markdown")
+    try: 
+        sent_donor = bot.send_message(DONOR_GROUP_ID, report_text, parse_mode="Markdown")
+        schedule_message_deletion(DONOR_GROUP_ID, sent_donor.message_id, 86400, bot)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    try: bot.send_message(STAFF_GROUP_ID, report_text, parse_mode="Markdown")
+    try: 
+        sent_staff = bot.send_message(STAFF_GROUP_ID, report_text, parse_mode="Markdown")
+        schedule_message_deletion(STAFF_GROUP_ID, sent_staff.message_id, 86400, bot)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 scheduler.add_job(
