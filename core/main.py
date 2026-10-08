@@ -3862,6 +3862,7 @@ def handle_user_airdrop(message):
     piece = total_amount // max_users
     drop_id = f"userdrop_{int(time.time())}_{uid}"
     
+    # 👇 ДОБАВЛЕНО ПОЛЕ created_at
     db['active_airdrops'].insert_one({
         "_id": drop_id,
         "sponsor_id": uid,
@@ -3869,11 +3870,13 @@ def handle_user_airdrop(message):
         "total": total_amount,
         "piece": piece,
         "max_users": max_users,
-        "claimed_by": []
+        "claimed_by": [],
+        "created_at": time.time() 
     })
     
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"🎁 Забрать {piece} 💎", callback_data=f"claim_udrop_{drop_id}"))
+    # 👇 ДОБАВЛЕН СЧЕТЧИК (0/max_users) В КНОПКУ
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"🎁 Забрать {piece} 💎 (0/{max_users})", callback_data=f"claim_udrop_{drop_id}"))
     
     bot.send_message(
         message.chat.id, 
@@ -3894,11 +3897,13 @@ def handle_claim_userdrop(call):
         bot.answer_callback_query(call.id, "Мешок уже пуст или исчез!", show_alert=True)
         return
         
-    if uid in drop['claimed_by']:
+    claimed_by_list = drop.get('claimed_by', [])
+    if uid in claimed_by_list:
         bot.answer_callback_query(call.id, "Вы уже взяли свою долю из этого мешка!", show_alert=True)
         return
         
-    if len(drop['claimed_by']) >= drop['max_users']:
+    current_claimed = len(claimed_by_list)
+    if current_claimed >= drop['max_users']:
         bot.answer_callback_query(call.id, "Слишком поздно! Мешок уже расхватали.", show_alert=True)
         return
         
@@ -3913,13 +3918,25 @@ def handle_claim_userdrop(call):
     
     bot.answer_callback_query(call.id, f"✅ Вы урвали {drop['piece']} 💎!", show_alert=True)
     
+    new_claimed_count = current_claimed + 1
+    
     # Если мешок опустел - меняем сообщение в чате
-    if len(drop['claimed_by']) + 1 >= drop['max_users']:
+    if new_claimed_count >= drop['max_users']:
         bot.edit_message_text(
             f"🎒 **МЕШОК ПУСТ!**\n\n[{drop['sponsor_name']}](tg://user?id={drop['sponsor_id']}) раздал {drop['total']} 💎!\nВсе {drop['max_users']} долей успешно разобраны.",
             call.message.chat.id, call.message.message_id, parse_mode="Markdown"
         )
         db['active_airdrops'].delete_one({"_id": drop_id})
+    else:
+        # 👇 НОВОЕ: ОБНОВЛЯЕМ ПРОГРЕСС В КНОПКЕ 👇
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        markup = InlineKeyboardMarkup().add(
+            InlineKeyboardButton(f"🎁 Забрать {drop['piece']} 💎 ({new_claimed_count}/{drop['max_users']})", callback_data=f"claim_udrop_{drop_id}")
+        )
+        try:
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        except Exception:
+            pass
 
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!донат', '!чаевые', '!перевести', '!pay', 'донат', 'чаевые', 'перевести', 'pay')))
 def p2p_transfer(message):

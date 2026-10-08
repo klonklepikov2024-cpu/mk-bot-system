@@ -895,6 +895,42 @@ def collectors_task():
 # Не забудь добавить в start_scheduler():
 # scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
 
+def refund_expired_user_airdrops():
+    """Возвращает остатки из неразобранных мешков пользователей (старше 24 часов)"""
+    import time
+    now = time.time()
+    
+    # Ищем пользовательские дропы (начинаются с userdrop_), которым больше 24 часов
+    expired_drops = list(db['active_airdrops'].find({
+        "_id": {"$regex": "^userdrop_"},
+        "created_at": {"$lte": now - 86400} 
+    }))
+    
+    for drop in expired_drops:
+        claimed_count = len(drop.get("claimed_by", []))
+        max_users = drop.get("max_users", 1)
+        piece = drop.get("piece", 0)
+        sponsor_id = drop.get("sponsor_id")
+        
+        # Считаем, сколько очков не забрали
+        leftover = (max_users - claimed_count) * piece
+        
+        if leftover > 0 and sponsor_id:
+            # Возвращаем остаток спонсору
+            paid_collection.update_one({"uid": sponsor_id}, {"$inc": {"bounty_points": leftover}})
+            try:
+                from core.bot import bot
+                bot.send_message(
+                    sponsor_id, 
+                    f"🎒 **ВОЗВРАТ СРЕДСТВ:** Ваш мешок на {drop.get('total', 0)} 💎 не был разобран полностью.\nНеиспользованный остаток (**{leftover} 💎**) возвращен на ваш баланс!", 
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+        
+        # Удаляем протухший мешок
+        db['active_airdrops'].delete_one({"_id": drop["_id"]})
+
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
 def start_scheduler():
@@ -936,6 +972,9 @@ def start_scheduler():
 
         # 11. Набег Колорадского Жука на картофельные поля (Каждые 30 мин)
         scheduler.add_job(colorado_beetle_invasion, 'interval', minutes=30, id='colorado_invasion', replace_existing=True)
+
+        # Авто-возврат остатков из мешков юзеров (Каждый час)
+        scheduler.add_job(refund_expired_user_airdrops, 'interval', minutes=60, id='refund_user_airdrops', replace_existing=True)
 
         from handlers.artifacts import expire_temp_tags, promo_expiry_job
         scheduler.add_job(expire_temp_tags, 'interval', minutes=5, id='expire_temp_tags', replace_existing=True)
