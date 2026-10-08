@@ -4275,6 +4275,10 @@ def trigger_anarchy(message):
                 time.sleep(0.3)
             except Exception as e: 
                 logger.debug(f"Игнор ошибки: {e}")
+                
+    # 👇 ВОТ ЭТИ ДВЕ СТРОЧКИ Я ПОТЕРЯЛ В ПРОШЛЫЙ РАЗ 👇
+    import threading
+    threading.Thread(target=broadcast_anarchy, daemon=True).start()
 
 # ================= НАРОДНЫЙ СУД (СБОР НА КИЛЛЕРА) =================
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!суд', 'суд')))

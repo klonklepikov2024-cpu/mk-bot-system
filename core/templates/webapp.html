@@ -225,7 +225,7 @@
             <div class="absolute -right-4 -top-4 text-6xl opacity-10">🏦</div>
             <p class="text-xs text-gray-300 mb-3 relative z-10">Мгновенные займы без проверок! Одобрение 100%.</p>
             
-            <input type="number" id="loanAmount" placeholder="Сумма (до 10000 💎)" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-red-900 focus:border-red-500 relative z-10">
+            <input type="number" id="loanAmount" oninput="calcLoan()" placeholder="Сумма (до 10000 💎)" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-red-900 focus:border-red-500 relative z-10">
             
             <select id="loanDays" onchange="calcLoan()" class="w-full text-white bg-black/50 rounded-lg p-3 mb-2 outline-none border border-red-900 focus:border-red-500 relative z-10 appearance-none">
                 <option value="1">Срок: 1 день (+20%)</option>
@@ -1938,10 +1938,12 @@
                     if(action === 'chase_pest') safeHaptic('impact', 'heavy');
                     
                     // Если это не покупка семян/слота, не показываем алерт, просто обновляем (для плавности)
-                    if (action === 'buy_slot' || action === 'plant' || action === 'chase_pest' || action === 'harvest' || action.includes('fertilize')) {
+                    // Показываем уведомление (в том числе для полива)
+                    if (action === 'buy_slot' || action === 'plant' || action === 'chase_pest' || action === 'harvest' || action.includes('fertilize') || action === 'water') {
                         let icon = action === 'harvest' ? '🚜' : (action === 'chase_pest' ? '👞' : '🌱');
                         if (action === 'buy_slot') icon = '🚜';
                         if (action === 'fertilize') icon = '🧪';
+                        if (action === 'water') icon = '💧';
                         customAlert(data.msg, "Ферма", icon);
                     }
                     loadFarm();
