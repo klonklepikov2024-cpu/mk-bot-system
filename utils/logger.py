@@ -20,8 +20,8 @@ def notify_admin_on_error(bot, e, context="Критический сбой"):
     log_error(e, context)
     error_trace = traceback.format_exc()
     
-    # Обрезаем трейсбек, чтобы влез в лимит Telegram (4096 символов)
-    safe_trace = html.escape(error_trace[-3500:])
+    # Сначала экранируем, потом режем, чтобы влез в лимит Telegram (4096 символов)
+    safe_trace = html.escape(error_trace)[-3500:]
     error_msg = f"🚨 <b>СИСТЕМНАЯ ОШИБКА ({context})</b>\n\n<pre>{safe_trace}</pre>"
     
     try:

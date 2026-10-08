@@ -127,14 +127,14 @@ def handle_user_query(call):
                 if m_vip.status in ['member', 'administrator', 'creator'] or (m_vip.status == 'restricted' and getattr(m_vip, 'is_member', False)):
                     is_elite = True
                     db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
             try:
                 m_beyond = bot.get_chat_member(BEYOND_CHAT_ID, uid)
                 if m_beyond.status in ['member', 'administrator', 'creator'] or (m_beyond.status == 'restricted' and getattr(m_beyond, 'is_member', False)):
                     is_elite = True
                     db['users'].update_one({"_id": uid}, {"$set": {"is_queer": True}}, upsert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
         # 👇 3. ЕСЛИ ЭЛИТА - АВТО-ИСЦЕЛЕНИЕ БЕЗ ОТКРЫТИЯ ТИКЕТА 👇
         if is_elite:
@@ -330,7 +330,7 @@ def handle_user_query(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('support_rub_') or call.data.startswith('support_pts_'))
 def handle_support_payment(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     is_points = call.data.startswith('support_pts_')
     cost = int(call.data.split('_')[2])
@@ -354,7 +354,7 @@ def handle_support_payment(call):
         currency = "₽"
 
     try: bot.delete_message(call.message.chat.id, call.message.message_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     bot.send_message(
         call.message.chat.id,

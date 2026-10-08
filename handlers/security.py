@@ -100,7 +100,7 @@ def handle_game_club(call):
         f"Выберите раздел:"
     )
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= 🛒 ПАПКА: МАГАЗИН СКИДОК =================
 @bot.callback_query_handler(func=lambda call: call.data == 'shop_rewards_menu')
@@ -126,7 +126,7 @@ def handle_shop_rewards_menu(call):
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
     
     try: bot.edit_message_text("🛒 **Магазин Скидок и Услуг**\nОбменивайте заработанные очки на полезные купоны:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ⚒ ПАПКА: ИНВЕНТАРЬ И ЛОМБАРД (КРАФТ) =================
 @bot.callback_query_handler(func=lambda call: call.data == 'forge_main')
@@ -186,7 +186,7 @@ def handle_forge_main(call):
         "Здесь вы можете использовать свои артефакты, переплавить ненужные промокоды обратно в ресурсы или скрафтить элитный статус."
     )
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == 'forge_craft_beyond')
 def handle_craft_beyond(call):
@@ -205,7 +205,7 @@ def handle_craft_beyond(call):
     
     if points < CRAFT_POINTS or shields < CRAFT_SHIELDS:
         try: bot.answer_callback_query(call.id, f"❌ Не хватает ресурсов!\nНужно: {CRAFT_POINTS} очков и {CRAFT_SHIELDS} щита.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # Списываем ресы в любом случае
@@ -225,12 +225,12 @@ def handle_craft_beyond(call):
         msg = "💸 **КРАФТ УСПЕШЕН!**\n\nТак как у вас уже есть статусы BEYOND и VIP, кузница переплавила ресурсы в чистые деньги!\nВы получили **1000 рублей кэшбэка** на баланс! 💰\n\n_Их можно вывести на карту или потратить на оплату._"
     
     try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == 'forge_pawn_promo')
 def handle_pawn_promo(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     msg = bot.send_message(call.message.chat.id, "♻️ **Ломбард Промокодов**\n\nОтправьте мне любой рабочий промокод (например, на VIP или Рекламу), и я переплавлю его в **Осколки Джекпота**:")
     bot.register_next_step_handler(msg, process_pawn_promo)
 
@@ -303,7 +303,7 @@ def handle_cashback_request(call):
     # 👇 ЗАМОК НА ВЫВОД СРЕДСТВ 👇
     if is_user_locked(uid):
         try: bot.answer_callback_query(call.id, "⛔️ Вывод средств заморожен! Оплатите штраф или снимите блокировку через /start.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     user_data = paid_collection.find_one({"uid": uid}) or {}
@@ -477,7 +477,7 @@ def handle_payout_decision(call):
                 chat_id=call.message.chat.id, 
                 message_id=call.message.message_id
             )
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return # ⛔️ Останавливаем выполнение, чтобы ничего не дублировалось
     # 👆 ================================================ 👆
     
@@ -518,18 +518,23 @@ def handle_shards_exchange(call):
     try: bot.answer_callback_query(call.id, "Сборка джекпота...")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
-    # Списываем 50 осколков
-    paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
+    # Атомарно списываем 50 осколков: сработает только если их хватает прямо сейчас
+    spent = paid_collection.find_one_and_update(
+        {"uid": uid, "jackpot_shards": {"$gte": 50}},
+        {"$inc": {"jackpot_shards": -50}}
+    )
+    if not spent:
+        return
     
     # 🔥 НОВАЯ МЕХАНИКА ШАНСОВ (60% VIP, 30% Щит, 10% TG Premium) 🔥
     chance = random.randint(1, 100)
     
     if chance <= 60:
         # 60% ШАНС: VIP-БИЛЕТ СО СГОРАНИЕМ (72 часа)
-        code = f"JACKPOT-{random.randint(1000, 9999)}"
         import datetime
-        db['promocodes'].insert_one({
-            "_id": code, "type": "percent", "value": 100, "target": "vip",
+        from handlers.casino import create_unique_promo
+        code = create_unique_promo("JACKPOT", {
+            "type": "percent", "value": 100, "target": "vip",
             "usage_limit": 1, "used_count": 0, "is_active": True,
             "expires_at": datetime.datetime.now() + datetime.timedelta(hours=72), # ⏳ ТАЙМЕР СМЕРТИ
             "owner_uid": uid # <--- ТЕПЕРЬ ОН ЗНАЕТ ХОЗЯИНА
@@ -907,12 +912,12 @@ def handle_btn_inventory(call):
     
     text = f"🎒 **Ваш Инвентарь Артефактов**\n\n🛡 Щиты Иммунитета: **{shields} шт.**\n🚓 Ордера на арест: **{orders} шт.**\n\n_Щиты срабатывают автоматически при нарушениях, но вы также можете потратить их, чтобы разбанить друга!_"
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == 'inv_use_angel')
 def handle_inv_angel(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     msg = bot.send_message(call.message.chat.id, "👼 **Ангел-Хранитель**\n\nНапишите ID пользователя (друга), с которого нужно снять все блокировки и страйки за счет вашего Щита:")
     bot.register_next_step_handler(msg, process_angel_id)
 
@@ -920,7 +925,7 @@ def handle_inv_angel(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'dummy_shards')
 def handle_dummy_shards(call):
     try: bot.answer_callback_query(call.id, "🧩 Крутите рулетку, чтобы собрать 50 осколков для джекпота!", show_alert=True)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # 🔥 ФИКС ЗАЛИПАНИЯ КНОПКИ ОРДЕРА 🔥
 @bot.callback_query_handler(func=lambda call: call.data == 'inv_use_arrest')
@@ -930,11 +935,11 @@ def handle_inv_use_arrest(call):
     
     if not promo:
         try: bot.answer_callback_query(call.id, "❌ У вас нет активных Ордеров на арест!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     code = promo["_id"]
     try:
@@ -963,7 +968,7 @@ def process_angel_id(message):
     
     bot.send_message(message.chat.id, f"👼 **Магия сработала!** Вы спасли пользователя `{target_uid}`. Приказ передан Скайнету!", parse_mode="Markdown")
     try: bot.send_message(target_uid, "👼 **ЧУДО!** Кто-то из друзей пожертвовал своим Щитом, чтобы спасти вас! Все блокировки сняты.")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ⚒ ТЕНЕВОЙ ЛОМБАРД И КУЗНИЦА =================
 def process_pawn_promo(message):
@@ -991,7 +996,7 @@ def process_pawn_promo(message):
 @bot.callback_query_handler(func=lambda call: call.data == 'buy_secret_chest')
 def handle_buy_chest(call):
     try: bot.answer_callback_query(call.id, "Открываем сундук со скрипом...")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     uid = call.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
@@ -1001,7 +1006,7 @@ def handle_buy_chest(call):
     
     if points < PRICE:
         try: bot.answer_callback_query(call.id, f"❌ Не хватает очков! Сундук стоит {PRICE}, а у вас {points}.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # 1. Списываем базовую цену сундука
@@ -1046,7 +1051,7 @@ def handle_buy_chest(call):
         
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В магазин", callback_data="shop_rewards_menu"))
     try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ВАЛЮТНЫЙ ОБМЕННИК (КЭШБЕК В ОЧКИ) =================
 @bot.callback_query_handler(func=lambda call: call.data == 'exchange_cb_menu')
@@ -1071,7 +1076,7 @@ def handle_exchange_cb_menu(call):
         f"Чем крупнее пакет, тем выгоднее курс обмена!"
     )
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('do_exchange_'))
 def handle_do_exchange(call):
@@ -1089,11 +1094,11 @@ def handle_do_exchange(call):
     # Если база ничего не вернула, значит рублей не хватило
     if not updated_user:
         try: bot.answer_callback_query(call.id, f"❌ Недостаточно средств! Нужно {cost_rub}₽.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
     
     try: bot.answer_callback_query(call.id, f"✅ Успешный обмен! Вы получили {pts_reward} очков.", show_alert=True)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # Перерисовываем меню, чтобы баланс обновился на глазах
     handle_exchange_cb_menu(call)

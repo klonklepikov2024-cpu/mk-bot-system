@@ -7,6 +7,7 @@ import json
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from core.bot import bot
 from database.mongo import db, paid_collection
+from utils.logger import logger
 from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_rainbow, chat_ids_gayznak, CONTESTS_THREAD_ID
 
 # --- 1. ПРИЕМ РАБОТ ---
@@ -162,7 +163,7 @@ def handle_contest_moderation(call):
     work = db['contests'].find_one({"_id": ObjectId(work_id)})
     if not work or work['status'] != 'pending':
         try: bot.answer_callback_query(call.id, "❌ Работа уже обработана!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     uid = work['uid']
@@ -173,7 +174,7 @@ def handle_contest_moderation(call):
         db['contests'].update_one({"_id": ObjectId(work_id)}, {"$set": {"status": "rejected"}})
         bot.edit_message_caption(f"{call.message.caption}\n\n❌ <b>ОТКЛОНЕНО</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None, parse_mode="HTML")
         try: bot.send_message(uid, f"❌ Ваша конкурсная работа «{safe_title}» отклонена модератором.", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     target_chat = None
@@ -186,7 +187,7 @@ def handle_contest_moderation(call):
         
     if not target_chat:
         try: bot.answer_callback_query(call.id, f"❌ Ошибка! Чат '{chat_name}' не найден в базе ЦУПа!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
     
     markup = InlineKeyboardMarkup()
@@ -224,11 +225,11 @@ def handle_contest_moderation(call):
             # Выдаем бонус (только за первое фото!)
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 200, "immunity": 1, "jackpot_shards": 1}}, upsert=True)
             try: bot.send_message(uid, f"🎉 <b>Ваша работа одобрена и опубликована в {chat_name}!</b>\n\nСкайнет начислил вам бонус за смелость: <b>200 💎, 1 🛡 Щит и 1 🧩 Осколок!</b>", parse_mode="HTML")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         else:
             # Бонус уже был, просто уведомляем о публикации еще одного фото
             try: bot.send_message(uid, f"🎉 <b>Ваша дополнительная работа одобрена и опубликована в {chat_name}!</b>\n\n<i>Желаем удачи в голосовании!</i>", parse_mode="HTML")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     except Exception as e:
         bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации: {e}. Бот точно админ в этом чате?")
@@ -249,19 +250,19 @@ def handle_contest_vote(call):
         
         if today_str < active.get('vote_start', '') or today_str > active.get('vote_end', ''):
             try: bot.answer_callback_query(call.id, "❌ Голосование сейчас закрыто! Сверьтесь с датами.", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
 
     # 🔥 ОБОРАЧИВАЕМ work_id В ObjectId 🔥
     work = db['contests'].find_one({"_id": ObjectId(work_id)})
     if not work:
         try: bot.answer_callback_query(call.id, "❌ Работа не найдена!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     if uid in work.get('votes', []):
         try: bot.answer_callback_query(call.id, "Вы уже отдали свой голос за эту работу! ❤️", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # 🔥 И ЗДЕСЬ ОБОРАЧИВАЕМ В ObjectId 🔥
@@ -274,9 +275,9 @@ def handle_contest_vote(call):
     try:
         bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
         bot.answer_callback_query(call.id, "Ваш голос учтен! ✨")
-    except:
+    except Exception:
         try: bot.answer_callback_query(call.id, "Голос учтен, обновляю счетчик...")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # --- 4. ПОДВЕДЕНИЕ ИТОГОВ И РАЗДАЧА ПРИЗОВ ---
 @bot.message_handler(commands=['end_contest'])
@@ -331,7 +332,7 @@ def end_contest_cmd(message):
         })
         
         try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nПо итогам зрительского голосования ваш образ «{safe_title}» занял <b>{place} место</b>!\n\nВаша награда: <b>{prize_text}</b>.\n<i>Заявка на выдачу приза передана администрации. С вами скоро свяжутся в ЛС, либо приз будет начислен вам на баланс!</i>", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
     db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})

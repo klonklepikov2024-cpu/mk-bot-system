@@ -27,7 +27,7 @@ def handle_market_main(call):
     
     if is_user_locked(uid):
         try: bot.answer_callback_query(call.id, "❌ Доступ на Рынок закрыт! У вас активные ограничения или штраф.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # Фейсконтроль: Пускаем только тех, кто заработал 100+ очков за всё время (или VIP/Квир)
@@ -35,11 +35,11 @@ def handle_market_main(call):
     user_data = paid_collection.find_one({"uid": uid}) or {}
     if user_data.get("bounty_points", 0) < 50 and not (u_info.get("is_vip") or u_info.get("is_queer")):
         try: bot.answer_callback_query(call.id, "🛑 Фейсконтроль: Рынок доступен только опытным пользователям (Накопите 50 очков или получите VIP).", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     active_lots_count = db['market_orders'].count_documents({"status": "active"})
 
@@ -58,7 +58,7 @@ def handle_market_main(call):
         "Комиссия рынка: 10% с каждой успешной сделки._"
     )
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ВЫСТАВЛЕНИЕ ЛОТА =================
 
@@ -71,11 +71,11 @@ def handle_market_sell_list(call):
     
     if not user_promos:
         try: bot.answer_callback_query(call.id, "🪹 У вас нет артефактов или купонов для продажи!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     markup = InlineKeyboardMarkup(row_width=1)
     for p in user_promos:
@@ -87,7 +87,7 @@ def handle_market_sell_list(call):
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="market_main"))
     
     try: bot.edit_message_text("➕ **ВЫБОР ЛОТА**\n\nВыберите артефакт из вашего инвентаря, который хотите продать:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('market_price_'))
 def handle_market_set_price(call):
@@ -97,17 +97,17 @@ def handle_market_set_price(call):
     promo = db['promocodes'].find_one({"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0})
     if not promo:
         try: bot.answer_callback_query(call.id, "❌ Этот промокод уже недоступен!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     base_price = get_base_price_rub(promo.get("target", "all"))
     max_price = int(base_price * 1.2) # Максимум 120%
     
     try: bot.delete_message(call.message.chat.id, call.message.message_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     msg = bot.send_message(
         call.message.chat.id, 
@@ -174,11 +174,11 @@ def handle_market_showcase(call):
     
     if total_lots == 0:
         try: bot.answer_callback_query(call.id, "🪹 Витрина пуста. Никто ничего не продает.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     # Зацикливаем страницы (чтобы с последней кидало на первую и наоборот)
     if page < 0: page = total_lots - 1
@@ -223,7 +223,7 @@ def handle_market_showcase(call):
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="market_main"))
 
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('market_buy_'))
 def handle_market_buy(call):
@@ -238,9 +238,9 @@ def handle_market_buy(call):
     # 1. Если покупка ЗВЕЗДАМИ — кидаем инвойс (транзакция пройдет в payments.py)
     if currency_type == "stars":
         try: bot.answer_callback_query(call.id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
         try:
             bot.send_invoice(
@@ -260,12 +260,12 @@ def handle_market_buy(call):
     if currency_type == "cb":
         if user_data.get("cashback_balance", 0) < price:
             try: bot.answer_callback_query(call.id, "❌ Недостаточно рублей на балансе!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
     elif currency_type == "pts":
         if user_data.get("bounty_points", 0) < price:
             try: bot.answer_callback_query(call.id, "❌ Недостаточно Очков Бдительности!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
 
     # АТОМАРНАЯ ТРАНЗАКЦИЯ (Защита от двойной покупки)
@@ -276,11 +276,11 @@ def handle_market_buy(call):
     
     if not lot:
         try: bot.answer_callback_query(call.id, "❌ Упс! Лот уже куплен кем-то другим или снят с продажи.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id, "✅ Покупка оформлена!")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     # Списываем средства
     if currency_type == "cb":
@@ -304,12 +304,12 @@ def handle_market_buy(call):
             call.message.chat.id, call.message.message_id, parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В инвентарь", callback_data="forge_main"))
         )
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     # Уведомляем продавца
     try:
         bot.send_message(seller_uid, f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (с учетом 10% комиссии).", parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= УПРАВЛЕНИЕ СВОИМИ ЛОТАМИ =================
 
@@ -319,12 +319,12 @@ def handle_market_my_lots(call):
     my_lots = list(db['market_orders'].find({"seller_uid": uid, "status": "active"}))
     
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     if not my_lots:
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="market_main"))
         try: bot.edit_message_text("📦 Вы ничего не продаете в данный момент.", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     markup = InlineKeyboardMarkup(row_width=1)
@@ -334,7 +334,7 @@ def handle_market_my_lots(call):
         
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="market_main"))
     try: bot.edit_message_text("📦 **ВАШИ АКТИВНЫЕ ЛОТЫ**\n\nНажмите на лот, чтобы снять его с продажи и вернуть артефакт в инвентарь:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('market_cancel_'))
 def handle_market_cancel_lot(call):
@@ -352,14 +352,14 @@ def handle_market_cancel_lot(call):
         
         if not lot:
             try: bot.answer_callback_query(call.id, "❌ Лот уже продан или снят!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
             
         # 2. Возвращаем промокод законному владельцу
         db['promocodes'].update_one({"_id": lot['promo_id']}, {"$set": {"owner_uid": uid}})
         
         try: bot.answer_callback_query(call.id, "✅ Лот снят с продажи! Артефакт возвращен в инвентарь.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
         # 3. Перерисовываем список ваших лотов
         handle_market_my_lots(call)
@@ -367,4 +367,4 @@ def handle_market_cancel_lot(call):
     except Exception as e:
         logger.error(f"Ошибка отмены лота на рынке: {e}")
         try: bot.answer_callback_query(call.id, "❌ Системная ошибка при снятии лота.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")

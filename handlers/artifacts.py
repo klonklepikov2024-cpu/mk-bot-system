@@ -5,6 +5,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.mongo import db
 from core.bot import bot
 from config import STAFF_GROUP_ID
+from utils.logger import logger
 
 def mint_tag_coupon(uid):
     """Создает купон на личный тег и кладет его в базу с защитой от дубликатов"""
@@ -59,8 +60,13 @@ def execute_arrest(uid, first_name, promo_id, target_info):
     if target_uid in ADMIN_CHAT_IDS or target_uid == OWNER_ID:
         return False, "❌ Ошибка доступа: Цель обладает дипломатической неприкосновенностью (Админ)!"
 
-    # 3. Блокируем ордер
-    db['promocodes'].update_one({"_id": promo_id}, {"$inc": {"used_count": 1}})
+    # 3. Атомарно «сжигаем» ордер: сработает только один раз и только у владельца
+    claimed = db['promocodes'].find_one_and_update(
+        {"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0},
+        {"$inc": {"used_count": 1}}
+    )
+    if not claimed:
+        return False, "Этот ордер уже использован!"
 
     # 4. МГНОВЕННЫЙ АРЕСТ НА 1 ЧАС! (ПРОБИВАЕТ ЩИТЫ)
     import time
@@ -81,7 +87,7 @@ def execute_arrest(uid, first_name, promo_id, target_info):
             f"🚓 **ОРДЕР НА АРЕСТ!**\n\nГражданин {first_name} применил против вас артефакт.\nСкайнет лишил вас права голоса во всех чатах сети на **1 ЧАС**.\n\n_⚠️ Ордер пробивает любые Щиты Иммунитета! Ограничения будут сняты автоматически._", 
             parse_mode="Markdown"
         )
-    except: pass
+    except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
     
     # 6. Отчет админам в ЦУП (Тихо)
     try:
@@ -90,7 +96,7 @@ def execute_arrest(uid, first_name, promo_id, target_info):
             f"🚓 <b>ХАОС: ПРИМЕНЕНИЕ ОРДЕРА (WEB APP)</b>\n\n👤 Исполнитель: {first_name} (<code>{uid}</code>)\n🎯 Жертва: <code>{target_uid}</code>\n\n✅ <i>Жертва отправлена в мут на 1 час (Щиты пробиты).</i>", 
             parse_mode="HTML"
         )
-    except: pass
+    except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
 
     return True, "🚓 АРЕСТ ПРОШЕЛ УСПЕШНО!\nЖертва отправлена в мут на 1 час (Щиты пробиты!)."
 
@@ -116,7 +122,7 @@ def expire_temp_tags():
         
         try:
             bot.send_message(target_uid, "✨ Время действия временного статуса истекло! Ваш старый тег восстановлен.")
-        except: pass
+        except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
 
 def promo_expiry_job():
     """Фоновая задача: Сжигает протухшие элитные промокоды (например, на VIP)"""

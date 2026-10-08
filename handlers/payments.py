@@ -250,6 +250,10 @@ def successful_payment(message):
     # 👇 НОВОЕ: Запоминаем уникальный ID чека для возможных возвратов 👇
     charge_id = message.successful_payment.telegram_payment_charge_id
     import time
+    # Защита от повторной обработки одного и того же платежа
+    if db['star_transactions'].find_one({"charge_id": charge_id}):
+        logger.warning(f"Повторный платёж проигнорирован: {charge_id}")
+        return
     db['star_transactions'].insert_one({
         "uid": uid,
         "amount": amount,
@@ -478,9 +482,9 @@ def successful_payment(message):
         user_data = paid_collection.find_one({"uid": uid})
         if user_data and "thread_id" in user_data:
             try: bot.send_message(STAFF_GROUP_ID, f"📜 **КИТ КУПИЛ ИНДУЛЬГЕНЦИЮ ({amount}⭐️)!**\nСкайнет получил приказ на полный разбан, выдачу тега, 10 щитов и Режим Бога. Тикет закрыт.", message_thread_id=user_data["thread_id"], parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
             try: bot.close_forum_topic(STAFF_GROUP_ID, user_data["thread_id"])
-            except: pass
+            except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
 
         # 6. Уведомляем юзера и выдаем стандартные ссылки для возврата
         success_text = (
@@ -537,7 +541,7 @@ def successful_payment(message):
         try:
             bot.send_message(uid, f"🎉 **СДЕЛКА УСПЕШНА!**\nВы купили артефакт на Черном Рынке.\nВаш промокод: `{promo_id}`\n_Он уже добавлен в ваш Инвентарь._", parse_mode="Markdown")
             bot.send_message(seller_uid, f"💸 **НОВОСТИ С РЫНКА!**\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}₽** (с учетом 10% комиссии).", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
 
 # ================= АУДИТ КАЗИНО =================
 @bot.message_handler(commands=['bank'])

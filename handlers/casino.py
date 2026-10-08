@@ -1,4 +1,5 @@
 import random
+import secrets
 import datetime
 from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -8,6 +9,41 @@ from core.scheduler import scheduler, schedule_message_deletion
 from config import STAFF_GROUP_ID
 from database.mongo import paid_collection, db
 from utils.logger import logger
+
+
+def create_unique_promo(prefix, fields):
+    """Создаёт промокод со случайным кодом и гарантирует, что он не совпадёт с другим"""
+    from pymongo.errors import DuplicateKeyError
+    for _ in range(10):
+        code = f"{prefix}-{secrets.token_hex(3).upper()}"
+        try:
+            db['promocodes'].insert_one({"_id": code, **fields})
+            return code
+        except DuplicateKeyError:
+            continue
+    raise RuntimeError("Не удалось создать уникальный промокод")
+
+
+# ===== Ежедневный бонус: день считается по Москве =====
+from zoneinfo import ZoneInfo
+MSK = ZoneInfo("Europe/Moscow")
+
+def msk_today():
+    """Сегодняшняя дата по Москве"""
+    return datetime.datetime.now(MSK).date()
+
+def msk_day_of(dt):
+    """Московская дата для datetime из базы (в базе время хранится в UTC)"""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(MSK).date()
+
+def msk_time_left():
+    """Сколько (часов, минут) осталось до ближайшей полуночи по Москве"""
+    now = datetime.datetime.now(MSK)
+    midnight = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    secs = int((midnight - now).total_seconds())
+    return secs // 3600, (secs % 3600) // 60
 
 # ================= АНТИ-СПАМ СМАЙЛИКАМИ В ЧАТАХ =================
 @bot.message_handler(content_types=['dice'], func=lambda message: message.chat.type in ['group', 'supergroup'])
@@ -128,7 +164,7 @@ def handle_spin_for_cashback(call):
     user_data = paid_collection.find_one({"uid": uid}) or {}
     if user_data.get("cashback_balance", 0) < SPIN_PRICE:
         try: bot.answer_callback_query(call.id, "❌ Недостаточно кэшбека!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # Транзакция: списываем рубли, начисляем очки
@@ -138,11 +174,11 @@ def handle_spin_for_cashback(call):
     )
     
     try: bot.answer_callback_query(call.id, "✅ Кэшбек обменян! Запускаем барабан...")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # Убираем сообщение с кнопкой, чтобы не кликали дважды
     try: bot.delete_message(call.message.chat.id, call.message.message_id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # Элегантно перезапускаем функцию рулетки от имени пользователя
     call.message.from_user = call.from_user
@@ -158,9 +194,16 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
     premium_cost_stars = 1500 
 
-    if val == 63 and bank_data.get("balance", 0) >= premium_cost_stars:
-        # 1. 🏆 ГЛАВНЫЙ СУПЕР-ПРИЗ (Фонд позволяет)
-        db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
+    # Деньги забираем из фонда атомарно: сработает, только если их хватает прямо сейчас
+    premium_won = False
+    if val == 63:
+        premium_won = bool(db['casino_bank'].find_one_and_update(
+            {"_id": "premium_fund", "balance": {"$gte": premium_cost_stars}},
+            {"$inc": {"balance": -premium_cost_stars}}
+        ))
+
+    if val == 63 and premium_won:
+        # 1. 🏆 ГЛАВНЫЙ СУПЕР-ПРИЗ (Фонд позволяет, звёзды уже списаны)
         msg = f"🏆 **ГЛАВНЫЙ СУПЕР-ПРИЗ!!!** 🏆\n\nНевероятно! Барабан остановился на счастливой звезде!\n🎁 **Приз:** Telegram Premium на 3 месяца!\n\n_🎁 Инструкция отправлена в ЛС!_"
         pm_msg = f"💎 **ВЫ ВЫИГРАЛИ TELEGRAM PREMIUM (3 мес.)!** 💎\n\nНажмите кнопку ниже, чтобы забрать ваш приз напрямую у администрации!"
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎁 Забрать Premium", callback_data="claim_premium"))
@@ -177,10 +220,15 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
     # === НОВЫЙ БЛОК: УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ (Вероятность как у Premium) ===
     cert_cost_stars = 1250 # Это эквивалент 1000 рублей
     
-    if val == 62 and bank_data.get("balance", 0) >= cert_cost_stars:
-        # Фонд позволяет: списываем звезды, выдаем сертификат!
-        db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cert_cost_stars}})
-        
+    cert_won = False
+    if val == 62:
+        cert_won = bool(db['casino_bank'].find_one_and_update(
+            {"_id": "premium_fund", "balance": {"$gte": cert_cost_stars}},
+            {"$inc": {"balance": -cert_cost_stars}}
+        ))
+
+    if val == 62 and cert_won:
+        # Фонд позволяет: звёзды уже списаны, выдаем сертификат!        
         msg = f"🛍 **СУПЕР-ПРИЗ!!!** 🛍\n\nНевероятно! Барабан остановился на счастливом секторе!\n🎁 **Приз:** Универсальный Сертификат на 1000 ₽!\n_(Можно потратить на продукты, Ozon, Я.Еду и еще 150+ магазинов)_\n\n_🎁 Заявка отправлена администраторам!_"
         pm_msg = f"🛍 **ВЫ ВЫИГРАЛИ УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ (1000 ₽)!** 🛍\n\nНажмите кнопку ниже, чтобы забрать ваш приз напрямую у администрации!"
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎁 Забрать Сертификат", callback_data="claim_premium")) # Используем ту же кнопку, она идеально подходит
@@ -190,7 +238,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
                 STAFF_GROUP_ID, 
                 f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ (СЕРТИФИКАТ)!** 🚨\n\nПользователь `{uid}` (@{username}) выбил **Универсальный Сертификат на 1000₽**! Из фонда казино списано {cert_cost_stars}⭐️.\n\n_Ожидайте заявку в ЦУП для выдачи приза!_"
             )
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val == 62:
         # Фонд пуст: выдаем утешительный мини-джекпот
@@ -200,8 +248,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     # 2. 🎰 ЛЕГЕНДАРНЫЙ ДЖЕКПОТ (7️⃣7️⃣7️⃣ — val: 64)
     elif val == 64:
-        code = f"JACKPOT-{random.randint(1000, 9999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        code = create_unique_promo("JACKPOT", {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
         msg = f"🚨 **ДЖЕКПОТ!!! 7️⃣7️⃣7️⃣** 🚨\n\n🎟 **Приз:** Золотой Билет (VIP) + 💰 300 очков!\n_🎁 Промокод отправлен в ЛС!_"
         
@@ -276,8 +323,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     # 6. 🚓 ОРДЕР НА АРЕСТ (Социальный артефакт — val: 5, 17, 29)
     elif val in [5, 17, 29]:
-        code = f"ARREST-{random.randint(100, 999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        code = create_unique_promo("ARREST", {"type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         msg = f"🚓 **СОЦИАЛЬНЫЙ АРТЕФАКТ!**\n\nВы нашли **Ордер на Арест**! Теперь у вас есть власть над другими.\n_🎁 Инструкция в ЛС!_"
         
         pm_msg = (
@@ -316,8 +362,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
             {"target": "all", "value": 15, "prefix": "ALL15", "name": "15% на Любую услугу"}
         ]
         drop = random.choice(promos)
-        code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        code = create_unique_promo(drop['prefix'], {"type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         
         if drop['target'] == 'vip': instruction = "📖 **Как применить:** Перейдите в [@Elitepost_bot](https://t.me/Elitepost_bot) -> «Вступить в VIP чат». После одобрения кружка, при выставлении счета нажмите **«🎫 У меня есть промокод»**."
         elif drop['target'] == 'ads': instruction = "📖 **Как применить:** В боте публикации рекламы [@PostGoldBot_bot](https://t.me/PostGoldBot_bot) начните создавать объявление. Выберите сеть, город и отправьте текст. Бот выдаст меню тарифов — нажмите в нём **«🎫 У меня есть промокод»**."
@@ -333,10 +378,13 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
         win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
         cost_in_stars = win_rub // 2 
         
-        # Проверяем, есть ли деньги в кассе казино
-        if bank_data.get("balance", 0) >= cost_in_stars:
-            # Деньги есть: списываем из фонда, даем реальные рубли
-            db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
+        # Проверяем и забираем деньги из кассы казино одним атомарным действием
+        fund_paid = db['casino_bank'].find_one_and_update(
+            {"_id": "premium_fund", "balance": {"$gte": cost_in_stars}},
+            {"$inc": {"balance": -cost_in_stars}}
+        )
+        if fund_paid:
+            # Деньги есть: уже списаны из фонда, даем реальные рубли
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
             
             msg = f"✨ **РЕДКИЙ ДРОП: ДЕНЕЖНЫЙ КУПОН!** ✨\n\nВы выиграли **{win_rub} руб.** на внутренний счет!\n\n_🎁 Баланс обновлен, подробности в ЛС._"
@@ -371,7 +419,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
             logger.warning(f"Не удалось отправить приз в ЛС юзеру {uid}: {e}")
             try:
                 bot.send_message(chat_id, f"⚠️ @{username}, я не смог отправить вам приз в ЛС. Напишите мне в личные сообщения /start!", parse_mode="Markdown") # Использовали username и chat_id
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ЕЖЕДНЕВНЫЙ БОНУС =================
 @bot.message_handler(commands=['bonus', 'бонус'])
@@ -380,16 +428,14 @@ def handle_daily_bonus(message):
     user_data = paid_collection.find_one({"uid": uid}) or {}
 
     last_bonus = user_data.get("last_bonus_date")
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.timezone.utc)
 
     # Проверка: прошло ли 24 часа?
     if last_bonus:
-        time_diff = (now - last_bonus).total_seconds()
-        if time_diff < 86400: # 86400 секунд = 24 часа
-            hours_left = int((86400 - time_diff) // 3600)
-            minutes_left = int(((86400 - time_diff) % 3600) // 60)
+        if msk_day_of(last_bonus) == msk_today(): # уже забирали сегодня (день считается по Москве)
+            hours_left, minutes_left = msk_time_left()
             try: bot.reply_to(message, f"⏳ Вы уже забирали бонус сегодня!\nВозвращайтесь через **{hours_left} ч. {minutes_left} мин.**")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
 
     # Выдача награды: от 15 до 50 очков
@@ -408,7 +454,7 @@ def handle_daily_bonus(message):
     reply_text += "\n\n_Возвращайтесь завтра за новой наградой!_"
 
     try: bot.reply_to(message, reply_text, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= АНГЕЛ-ХРАНИТЕЛЬ =================
 @bot.message_handler(commands=['angel', 'ангел'])
@@ -418,13 +464,13 @@ def handle_guardian_angel(message):
     
     if len(args) != 2:
         try: bot.reply_to(message, "👼 **Ангел-Хранитель**\n\nПозволяет снять блокировку с любого пользователя (друга) за счет вашего Щита Иммунитета!\n\n**Использование:** `/angel [ID_пользователя]`\n_Пример:_ `/angel 123456789`\n\nСвой ID можно узнать у бота [@getmyid_bot](https://t.me/getmyid_bot)", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     target_id_str = args[1]
     if not target_id_str.isdigit():
         try: bot.reply_to(message, "❌ ID пользователя должен состоять только из цифр!")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     target_uid = int(target_id_str)
@@ -432,7 +478,7 @@ def handle_guardian_angel(message):
     user_data = paid_collection.find_one({"uid": uid}) or {}
     if user_data.get("immunity", 0) < 1:
         try: bot.reply_to(message, "❌ У вас нет активных **🛡 Щитов Иммунитета** для призыва Ангела!\nКупите щит в магазине или выиграйте в рулетку.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # Списываем щит у спасателя
@@ -453,10 +499,10 @@ def handle_guardian_angel(message):
     db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
     
     try: bot.reply_to(message, f"👼 **Магия сработала!**\n\nВы пожертвовали своим Щитом, чтобы спасти пользователя `{target_uid}`. Приказ на снятие всех ограничений передан Скайнету!", parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     try: bot.send_message(target_uid, "👼 **ЧУДО! АНГЕЛ-ХРАНИТЕЛЬ СНИЗОШЕЛ С НЕБЕС!**\n\nКто-то из ваших друзей пожертвовал своим Щитом Иммунитета, чтобы спасти вас!\nВсе ваши блокировки и страйки аннулированы. Ограничения сняты. Приятного общения!", parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= 🎁 ВНЕЗАПНЫЕ АИРДРОПЫ В ЧАТАХ =================
 
@@ -532,21 +578,21 @@ def handle_claim_airdrop(call):
     
     if not drop_data:
         try: bot.answer_callback_query(call.id, "❌ Этот контейнер уже заржавел и исчез!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # Проверяем, не брал ли юзер уже свою долю
     if uid in drop_data.get("claimed_by", []):
         try: bot.answer_callback_query(call.id, "❌ Жадность фраера погубит! Вы уже взяли свою долю.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # Проверяем, остались ли места
     if drop_data.get("claimed_count", 0) >= drop_data.get("max_claims", 5):
         try: bot.answer_callback_query(call.id, "❌ Контейнер пуст! Вы не успели.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     # БЛОКИРУЕМ ДОЛЮ (Атомарный запрос, защищающий от миллисекундных гонок)
@@ -557,7 +603,7 @@ def handle_claim_airdrop(call):
     
     if result.modified_count == 0:
         try: bot.answer_callback_query(call.id, "❌ Не успели! Кто-то забрал последнюю долю прямо перед вами.", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # 🔥 КОТ-ВОРИШКА В КОНТЕЙНЕРЕ 🔥
@@ -578,12 +624,12 @@ def handle_claim_airdrop(call):
         
         alert_msg = f"🐈‍⬛ МЯУ! ВЫ СХВАТИЛИ ДИКОГО КОТА!\n\nВместо припасов из ящика выпрыгнул кот! Он расцарапал вам руки и украл {stolen} ваших очков, пока убегал! 🩸"
         try: bot.answer_callback_query(call.id, alert_msg, show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     else:
         # ВЫДАЕМ ОБЫЧНУЮ НАГРАДУ
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": points}}, upsert=True)
         try: bot.answer_callback_query(call.id, f"🎉 Вы урвали {points} очков!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # МЕНЯЕМ СООБЩЕНИЕ В ЧАТЕ
     new_count = drop_data.get("claimed_count", 0) + 1
@@ -668,7 +714,7 @@ threading.Thread(target=payout_notifier_loop, daemon=True).start()
 @bot.callback_query_handler(func=lambda call: call.data == 'show_prizes_btn')
 def btn_show_prizes(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # Подменяем автора на того, кто нажал кнопку
     call.message.from_user = call.from_user
@@ -678,7 +724,7 @@ def btn_show_prizes(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'play_roulette_btn')
 def btn_play_roulette(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     # Подменяем автора на того, кто нажал кнопку, чтобы очки списались с него, а не с бота
     call.message.from_user = call.from_user

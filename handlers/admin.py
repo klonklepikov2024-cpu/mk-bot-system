@@ -298,7 +298,7 @@ def handle_doc_check(call):
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data: 
         try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return 
     target_uid = user_data["uid"]
         
@@ -333,7 +333,7 @@ def handle_admin_templates(call):
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data: 
         try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
     target_uid = user_data["uid"]
 
@@ -456,7 +456,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
 @bot.callback_query_handler(func=lambda call: call.data == "buy_indulgence")
 def handle_buy_indulgence(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     uid = call.from_user.id
     amount = 2000
@@ -514,7 +514,7 @@ def handle_vid_check(call):
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data: 
         try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return 
     target_uid = user_data["uid"]
         
@@ -598,7 +598,7 @@ def handle_rejections(call):
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data: 
         try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return 
     target_uid = user_data["uid"]
         
@@ -730,7 +730,7 @@ def handle_close_ticket(call):
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data: 
         try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return 
     target_uid = user_data["uid"]
     
@@ -780,7 +780,7 @@ def handle_close_ticket(call):
     )
     
     try: bot.edit_message_text(f"{call.message.html}\n\n🏁 <b>Тикет закрыт.</b> Пользователю отправлен запрос оценки.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    except: 
+    except Exception: 
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
@@ -851,7 +851,7 @@ def handle_force_unban(call):
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data: 
         try: bot.answer_callback_query(call.id, "❌ Топик уже закрыт или данные устарели", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
     target_uid = user_data["uid"]
     
@@ -903,7 +903,7 @@ def handle_force_unban(call):
     )
     
     try: bot.edit_message_text(f"{call.message.html}\n\n🔓 <b>Пользователь разбанен!</b> Приказ передан Скайнету. Тикет закрыт: {ticket_num}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-    except: 
+    except Exception: 
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
@@ -917,26 +917,26 @@ def handle_manual_bill(message):
     if str(message.chat.id) != str(STAFF_GROUP_ID): return
     if not message.is_topic_message:
         try: bot.reply_to(message, "❌ Эту команду нужно использовать внутри топика конкретного пользователя.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     args = message.text.split()
     if len(args) != 2 or not args[1].isdigit():
         try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/bill [сумма]`", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     amount = int(args[1])
     if amount < 1 or amount > 50000:
         try: bot.reply_to(message, "❌ Сумма должна быть от 1 до 50 000 звёзд.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     thread_id = message.message_thread_id
     user_data = paid_collection.find_one({"thread_id": thread_id})
     if not user_data:
         try: bot.reply_to(message, "❌ Не удалось найти пользователя.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     target_uid = user_data["uid"]
@@ -978,7 +978,7 @@ def handle_manual_bill(message):
     except Exception as e:
         logger.warning(f"Ошибка при ручном выставлении счета: {e}")
         try: bot.reply_to(message, f"❌ Произошла ошибка: {e}")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def process_admin_invoice(message):
     try:
@@ -1038,7 +1038,7 @@ def handle_admin_replies(message):
 
     paid_collection.update_one({"uid": target_uid}, {"$set": {"topic_type": "manual"}})
     try: bot.copy_message(target_uid, STAFF_GROUP_ID, message.message_id)
-    except: logger.warning(f"Ошибка ручного ответа админа юзеру {target_uid}")
+    except Exception: logger.warning(f"Ошибка ручного ответа админа юзеру {target_uid}")
 
 # ================= АРТЕФАКТЫ И ТЕГИ =================
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
@@ -1093,7 +1093,7 @@ def handle_claim_premium(call):
     # 👇 ЗАМОК НА ПОЛУЧЕНИЕ ПРЕМИУМА 👇
     if is_user_locked(uid):
         try: bot.answer_callback_query(call.id, "⛔️ Выдача призов приостановлена до снятия системных ограничений!", show_alert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
     try: bot.answer_callback_query(call.id)
@@ -1195,7 +1195,15 @@ def process_arrest_claim(message, code):
     name = message.from_user.first_name
     username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
     
-    db['promocodes'].update_one({"_id": code}, {"$inc": {"used_count": 1}})
+    # Атомарно «сжигаем» ордер: сработает только один раз и только у владельца
+    claimed = db['promocodes'].find_one_and_update(
+        {"_id": code, "owner_uid": uid, "is_active": True, "used_count": 0},
+        {"$inc": {"used_count": 1}}
+    )
+    if not claimed:
+        try: bot.send_message(message.chat.id, "❌ Этот ордер уже был использован или не принадлежит вам.")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     
     from config import PRIZES_THREAD_ID
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Исполнить (Замутить)", callback_data=f"arrest_done_{uid}"), InlineKeyboardButton("❌ Отклонить (Вернуть ордер)", callback_data=f"arrest_rej_{code}_{uid}"))
@@ -1371,7 +1379,7 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
                 # Убираем кнопки (✅ / ❌) с видео у админов, так как ИИ уже всё решил
                 if video_msg_id:
                     try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=video_msg_id, reply_markup=None)
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
                 # 💬 ПИШЕМ ЮЗЕРУ!
                 bot.send_message(
@@ -1383,7 +1391,7 @@ def analyze_video_speech(file_id, secret_code, thread_id, uid, video_msg_id, thu
     except Exception as e:
         logger.error(f"Ошибка STT (Голос ИИ): {e}")
         try: bot.send_message(STAFF_GROUP_ID, "❌ *Ошибка Скайнета при прослушивании видео.* Проверьте кружок вручную.", message_thread_id=thread_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     finally:
         # Обязательно удаляем временный файл с сервера, чтобы не забить диск!
         if temp_video_path and os.path.exists(temp_video_path):
@@ -1542,7 +1550,7 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
             if "РЕШЕНИЕ: ОДОБРЕНО" in ai_text.upper():
                 if photo_msg_id:
                     try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=photo_msg_id, reply_markup=None)
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
                 code_words = ["ЯБЛОКО", "ТИГР", "СОЛНЦЕ", "МОРЕ", "СОКОЛ", "РАКЕТА", "ВЕТЕР", "МАЯК"]
                 secret_code = f"{random.choice(code_words)}-{random.randint(10, 99)}"
@@ -1553,21 +1561,21 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
                 # 💬 ПИШЕМ ЮЗЕРУ ОТ ЛИЦА ПАСПОРТИСТКИ
                 text_to_user = f"🛂 **Таможня (ИИ):**\n💬 _«{ai_comment}»_\n\n✅ **Документ одобрен!**\n\nВторой этап верификации:\nЗапишите **видео-кружок**, на котором будет четко видно ваше лицо, и произнесите фразу:\n\n💬 *«Привет команде МК, я из *города* на часах: *хх:хх* часов. Мой код: {secret_code}»*.\n\nУ вас есть 5 минут на отправку видео."
                 try: bot.send_message(uid, text_to_user, parse_mode="Markdown")
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
                 bot.send_message(STAFF_GROUP_ID, f"👁 **Паспортистка (ИИ):**\n{ai_text}\n\n✅ **АВТО-ОДОБРЕНО!** Выдан код: `{secret_code}`", message_thread_id=thread_id, parse_mode="Markdown")
                 
             elif "РЕШЕНИЕ: ОТКЛОНЕНО" in ai_text.upper():
                 if photo_msg_id:
                     try: bot.edit_message_reply_markup(chat_id=STAFF_GROUP_ID, message_id=photo_msg_id, reply_markup=None)
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
                 if not ai_comment: ai_comment = "Мужчина, я ничего не вижу! Размыто всё, идите переделывайте!"
                 
                 # 💬 ОТШИВАЕМ ЮЗЕРА ОТ ЛИЦА ПАСПОРТИСТКИ
                 text_to_user = f"🛂 **Таможня (ИИ):**\n💬 _«{ai_comment}»_\n\n❌ **Документ не принят.**\nПожалуйста, сделайте нормальное фото (без засветов, где видно лицо и дату рождения) и отправьте снова."
                 try: bot.send_message(uid, text_to_user, parse_mode="Markdown")
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
                 bot.send_message(STAFF_GROUP_ID, f"👁 **Паспортистка (ИИ):**\n{ai_text}\n\n❌ **АВТО-ОТКЛОНЕНО!** Юзер отправлен переделывать фото.", message_thread_id=thread_id, parse_mode="Markdown")
                 
@@ -1577,11 +1585,11 @@ def analyze_document_vision(file_id, thread_id, uid, photo_msg_id=None):
 
         else:
             try: bot.send_message(STAFF_GROUP_ID, f"⚠️ *Ответ серверов Groq (Код {response.status_code}):*\n\n`{safe_md(response.text)}`", message_thread_id=thread_id, parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     except Exception as e:
         try: bot.send_message(STAFF_GROUP_ID, f"❌ *Ошибка Паспортистки при анализе:* `{safe_md(e)}`. Проверьте фото вручную.", message_thread_id=thread_id, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 
 def process_ticket_with_ai(uid, user_text, thread_id):
@@ -1801,7 +1809,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         # ================== 4. ЗАПУСК ИИ ==================
         try:
             thinking_msg = bot.send_message(STAFF_GROUP_ID, "⏳ *Скайнет анализирует тикет (v3.2)...*", message_thread_id=thread_id, parse_mode="Markdown")
-        except:
+        except Exception:
             thinking_msg = None
 
         response = None
@@ -1829,7 +1837,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 
         if thinking_msg:
             try: bot.delete_message(STAFF_GROUP_ID, thinking_msg.message_id)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
         if response is None or response.status_code != 200:
             error_details = response.text if response is not None else "Нет ответа"
@@ -1913,7 +1921,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
     except Exception as e:
         logger.error(f"Ошибка ИИ-Секретаря v3.2: {e}")
         try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка ИИ: {str(e)[:300]}", message_thread_id=thread_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ПЕРЕХВАТ РУЧНОГО ЗАКРЫТИЯ ТОПИКА =================
 @bot.message_handler(content_types=['forum_topic_closed'])
@@ -2025,12 +2033,12 @@ def ticket_sweeper_task():
                             "Для снятия ограничений обратитесь в поддержку заново.", 
                             parse_mode="Markdown"
                         )
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                     
                     # 4. Сообщаем админам
                     if thread_id:
                         try: bot.send_message(STAFF_GROUP_ID, "💀 *Скайнет: Юзер умер в процессе верификации (24ч). Выдан Глобальный Бан.*", message_thread_id=thread_id, parse_mode="Markdown")
-                        except: pass
+                        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
                 # 🌸 ЛОГИКА МЯГКОГО ЗАКРЫТИЯ (Для обычных вопросов/рекламы)
                 else:
@@ -2048,10 +2056,10 @@ def ticket_sweeper_task():
                     )
                     try: 
                         bot.send_message(target_uid, "⏳ **Ваше обращение было автоматически закрыто из-за отсутствия активности (24 часа).**", parse_mode="Markdown")
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                     if thread_id:
                         try: bot.send_message(STAFF_GROUP_ID, "🧹 *Скайнет: Диалог закрыт по таймауту (24 часа бездействия).* База очищена.", message_thread_id=thread_id, parse_mode="Markdown")
-                        except: pass
+                        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
                 # 🧹 ОБЩАЯ ОЧИСТКА БАЗЫ (Снимаем метки и статус в любом случае)
                 paid_collection.update_one(
@@ -2062,7 +2070,7 @@ def ticket_sweeper_task():
                 # Закрываем топик
                 if thread_id:
                     try: bot.close_forum_topic(STAFF_GROUP_ID, thread_id)
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                     
         except Exception as e:
             logger.error(f"Ошибка Санитара Архивов: {e}")
@@ -2077,7 +2085,7 @@ threading.Thread(target=ticket_sweeper_task, daemon=True).start()
 @bot.callback_query_handler(func=lambda call: call.data.startswith('req_manual_pay_'))
 def handle_req_manual_pay(call):
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     amount = int(call.data.split('_')[3])
     uid = call.from_user.id
     
@@ -2124,7 +2132,7 @@ def handle_req_manual_pay(call):
                 message_thread_id=thread_id, 
                 parse_mode="Markdown"
             )
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= РУЧНОЕ ВЫСТАВЛЕНИЕ СЧЕТА (АДМИН) =================
 @bot.message_handler(commands=['give'])
@@ -2178,7 +2186,7 @@ def handle_admin_send_msg(message):
     args = message.text.split(maxsplit=2)
     if len(args) < 3 or not args[1].isdigit():
         try: bot.reply_to(message, "❌ **Ошибка формата!**\nИспользуйте: `/send [ID] [Текст сообщения]`\n\n*Пример:* `/send 123456789 Ваш промокод Ozon: OZON-1000-WIN`", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     target_uid = int(args[1])
@@ -2195,7 +2203,7 @@ def handle_admin_send_msg(message):
 def handle_payout_decisions(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     parts = call.data.split('_')
     action = parts[1] # "done" или "cancel"
@@ -2207,7 +2215,7 @@ def handle_payout_decisions(call):
     
     if not withdrawal:
         try: bot.edit_message_text(f"{call.message.text}\n\n⚠️ **ЗАЯВКА УЖЕ ОБРАБОТАНА ИЛИ ОТМЕНЕНА!**", call.message.chat.id, call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     if action == "done":
@@ -2224,7 +2232,7 @@ def handle_payout_decisions(call):
         })
         
         try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ОДОБРЕНО И ВЫПЛАЧЕНО АДМИНОМ!**", call.message.chat.id, call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif action == "cancel":
         # Возвращаем деньги обратно на баланс юзера!
@@ -2234,32 +2242,32 @@ def handle_payout_decisions(call):
         db['withdrawals'].update_one({"_id": withdrawal["_id"]}, {"$set": {"status": "rejected", "notify_status": "reject"}})
         
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ОТКЛОНЕНО. ДЕНЬГИ ВОЗВРАЩЕНЫ НА БАЛАНС ЮЗЕРА.**", call.message.chat.id, call.message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= РАЗВЕДЧИК КОНКУРСОВ (СКАЙНЕТ) =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('scout_'))
 def handle_scout_contest(call):
     if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
     try: bot.answer_callback_query(call.id)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     action = call.data.replace("scout_", "")
     
     if action == "reject_contest":
         db['active_contest'].update_one({"_id": "current_event", "status": "scout_draft"}, {"$set": {"status": "rejected"}})
         try: bot.edit_message_text(f"{call.message.html}\n\n❌ <b>Идея отклонена администратором.</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     elif action == "deploy_contest":
         # 1. Меняем статус на running
         active = db['active_contest'].find_one_and_update({"_id": "current_event", "status": "scout_draft"}, {"$set": {"status": "running"}})
         if not active:
             try: bot.answer_callback_query(call.id, "❌ Черновик не найден или уже запущен!", show_alert=True)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
             
         try: bot.edit_message_text(f"{call.message.html}\n\n🚀 <b>ЗАПУЩЕНО! Скайнет начинает рассылку по чатам...</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
         # 2. Фоновая рассылка
         def broadcast_scout():
@@ -2278,10 +2286,10 @@ def handle_scout_contest(call):
                     bot.send_message(chat_id, announcement, parse_mode="HTML")
                     success += 1
                     time.sleep(0.3)
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
             try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Авто-конкурс успешно разослан в {success} чатов!</b>", parse_mode="HTML", message_thread_id=call.message.message_thread_id)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
         import threading
         threading.Thread(target=broadcast_scout, daemon=True).start()

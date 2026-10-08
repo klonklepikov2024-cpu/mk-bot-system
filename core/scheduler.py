@@ -11,6 +11,7 @@ from apscheduler.jobstores.mongodb import MongoDBJobStore
 from database.mongo import client, db, paid_collection 
 
 from config import APP_URL
+from utils.logger import logger
 WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
 
 tz = ZoneInfo("Europe/Moscow")
@@ -53,7 +54,7 @@ def delete_task_executor(chat_id, message_id):
         from config import STAFF_GROUP_ID
         try:
             bot.send_message(STAFF_GROUP_ID, error_text)
-        except:
+        except Exception:
             pass
 
 def check_giveaways_task():
@@ -103,7 +104,7 @@ def check_giveaways_task():
         for w in winners_info:
             try:
                 bot.send_message(w['uid'], f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{w['ticket']} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
         # Отчет админам
         admin_report = f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\n🎁 Приз: **{gw['title']}**\n🏆 Победители:\n"
@@ -112,7 +113,7 @@ def check_giveaways_task():
             
         try:
             bot.send_message(STAFF_GROUP_ID, admin_report, message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     # 2. ПРОГРЕВ ГОРЯЩИХ РОЗЫГРЫШЕЙ (Те, кому осталось < 1 часа)
     almost_ended = db['giveaways'].find({
@@ -168,7 +169,7 @@ def check_auctions_task():
         from core.bot import bot
         try:
             bot.send_message(leader_uid, f"🔨 <b>ПРОДАНО!</b>\n\nПоздравляем! Ваша ставка в <b>{lot['current_bid']} 💎</b> сыграла.\nВы получили артефакт <b>{lot['icon']} «{lot['name']}»</b>!\n\n<i>Он добавлен в вашу базу Скайнета и готов к использованию в чатах.</i>", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def auto_spawn_auction_lot():
     """Скайнет автоматически выставляет случайный элитный лот на аукцион"""
@@ -228,8 +229,8 @@ def auto_spawn_auction_lot():
         
         for cid in all_chats:
             try: bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup); time.sleep(0.3)
-            except: pass
-    except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС =================
 
@@ -270,7 +271,7 @@ def personal_farm_notifications():
             if now - spawned_at > 10800: # 🔥 ИЗМЕНИЛИ НА 3 ЧАСА (10800 сек) 🔥
                 db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}, "$unset": {"pest": ""}})
                 try: bot.send_message(uid, f"🥀 <b>УРОЖАЙ УНИЧТОЖЕН!</b>\n{plot['pest']['name']} {plot['pest']['emoji']} сожрал(а) ваш {crop['name']}.", parse_mode="HTML", reply_markup=markup)
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             continue # Если заражено, воду не проверяем и не растем
             
         # --- 2. ГЕНЕРАЦИЯ НОВОГО НАПАДЕНИЯ (Шанс 2% каждые 15 мин) ---
@@ -284,12 +285,12 @@ def personal_farm_notifications():
                 if user_db.get("immunity", 0) > 0:
                     paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
                     try: bot.send_message(uid, f"🛡 <b>ЗАЩИТА ФЕРМЫ!</b>\n{pest['name']} {pest['emoji']} попытался сожрать ваш {crop['name']}, но ваш <b>Щит Иммунитета</b> ударил его током!\n<i>(Списан 1 щит, урожай спасен)</i>", parse_mode="HTML", reply_markup=markup)
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 else:
                     # Заражаем грядку!
                     db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"pest": {"id": pest["id"], "name": pest["name"], "emoji": pest["emoji"], "spawned_at": now}}})
                     try: bot.send_message(uid, f"🚨 <b>ТРЕВОГА НА ФЕРМЕ!</b>\nНа ваш {crop['name']} напал(а) <b>{pest['name']} {pest['emoji']}</b>!\n\nУ вас есть <b>3 часа</b>, чтобы зайти в Кабинет и прогнать вредителя, иначе он сожрет урожай!", parse_mode="HTML", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("👞 ПРОГНАТЬ!", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm"))))
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 continue # Прерываем цикл, так как напали
 
         # --- 3. ОБЫЧНЫЕ ПРОВЕРКИ ВОДЫ И СОЗРЕВАНИЯ ---
@@ -302,22 +303,22 @@ def personal_farm_notifications():
             if u_data.get("withered_crops_count", 0) == 5 and "drought" not in u_data.get("achievements", []):
                 paid_collection.update_one({"uid": uid}, {"$push": {"achievements": "drought"}})
                 try: bot.send_message(uid, "🏆 <b>ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!</b>\nВы получили значок: 💩 <b>«Засуха»</b>! Худший фермер года.", parse_mode="HTML")
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
             try: bot.send_message(uid, f"🥀 <b>ПЛОХИЕ НОВОСТИ!</b>\nВаш {crop['name']} засох без воды.", parse_mode="HTML", reply_markup=markup)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             continue
             
         if crop["water_req"] and (now - last_watered > 72000) and not plot.get("water_warning"):
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"water_warning": True}})
             try: bot.send_message(uid, f"⚠️ <b>ТРЕВОГА НА УЧАСТКЕ!</b>\nВаш {crop['name']} скоро засохнет! (Осталось <4 часов)", parse_mode="HTML", reply_markup=markup)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             continue
             
         if now >= planted_at + crop["grow_time"]:
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
             try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел!", parse_mode="HTML", reply_markup=markup)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def colorado_beetle_invasion():
     """Расползание Колорадского Жука по картофельному полю"""
@@ -371,11 +372,12 @@ def daily_bonus_reminder():
         if not last_bonus:
             continue
             
-        time_diff = (now - last_bonus).total_seconds()
+        lb = last_bonus if last_bonus.tzinfo else last_bonus.replace(tzinfo=datetime.timezone.utc)
+        days_passed = (datetime.datetime.now(tz).date() - lb.astimezone(tz).date()).days
         
         # Если прошло >20 часов, но <48 часов
         # Значит, бонус либо уже доступен, либо будет доступен с минуты на минуту, а стрик еще жив!
-        if 72000 <= time_diff <= 172800:
+        if days_passed == 1:  # вчера забирали, сегодня ещё нет: стрик сгорит в 00:00 по Москве
             uid = user.get("uid")
             streak = user.get("bonus_streak", 1)
             try:
@@ -388,13 +390,13 @@ def daily_bonus_reminder():
                 )
                 count += 1
                 time.sleep(0.05) # Защита от Flood Wait
-            except:
+            except Exception:
                 pass
                 
     if count > 0:
         from config import STAFF_GROUP_ID
         try: bot.send_message(STAFF_GROUP_ID, f"📢 **Умные Push-уведомления:** Отправлено {count} напоминаний о бонусе.")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= 3. РЕКЛАМНАЯ ВОРОНКА ПО ЧАТАМ =================
 
@@ -450,7 +452,7 @@ def broadcast_teaser(text, button_text, tab_name):
         
     try:
         bot.send_message(STAFF_GROUP_ID, report_msg, parse_mode='HTML')
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def smart_funnel_teaser():
     """Умная рекламная карусель с системой Анти-Попугай"""
@@ -729,7 +731,7 @@ def drop_cyber_bomb():
         sent_msg = bot.send_message(target_chat, msg_text, parse_mode="Markdown", reply_markup=markup)
         # Удаляем бомбу через 3 часа
         schedule_message_deletion(target_chat, sent_msg.message_id, 10800, bot)
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def stray_cat_tax():
     """Соседский кот сжирает деньги лентяев (Неактив 30 дней)"""
@@ -759,7 +761,7 @@ def stray_cat_tax():
             try:
                 from core.bot import bot
                 bot.send_message(uid, f"🐈‍⬛ <b>СОСЕДСКИЙ КОТ ДОБРАЛСЯ ДО КОШЕЛЬКА!</b>\n\nВы не заходили в Кабинет больше месяца. Бездомный кот пробрался к вам и сгрыз <b>{rubles} ₽</b>...\n\nСкайнет сжалился и обменял обрывки на <b>{converted_pts} 💎</b>.", parse_mode="HTML")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def check_contests_task():
     from datetime import datetime
@@ -788,7 +790,7 @@ def check_contests_task():
                 # Если никто не участвовал, просто закрываем конкурс
                 db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})
                 try: bot.send_message(STAFF_GROUP_ID, f"🤷‍♂️ Конкурс {contest_id} завершен, но работ не было.", message_thread_id=CONTESTS_THREAD_ID)
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 return
                 
             # Подсчет лайков (Зрительские симпатии)
@@ -820,7 +822,7 @@ def check_contests_task():
                 })
                 
                 try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nПо итогам зрительского голосования ваш образ «{safe_title}» занял <b>{place} место</b>!\nВаша награда: <b>{prize_text}</b>.\n<i>Заявка передана администрации. Ждите начисления!</i>", parse_mode="HTML")
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
             # Замораживаем работы и сам конкурс
             db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
@@ -860,7 +862,7 @@ def refund_expired_courts():
                     from core.bot import bot
                     try:
                         bot.send_message(inv_uid, f"⚖️ <b>СУД ЗАКРЫТ:</b> Дело против {court.get('target_name', 'пользователя')} развалилось из-за нехватки доказательств (истек срок 24ч).\nВаши 100 💎 возвращены на баланс!", parse_mode="HTML")
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 
                 # Удаляем суд из базы
                 db['active_courts'].delete_one({"_id": court_id})
@@ -888,7 +890,7 @@ def collectors_task():
             from config import chat_ids_mk # или любой главный чат
             for chat_id in chat_ids_mk.values():
                 bot.send_message(chat_id, f"🚨 **КОЛЛЕКТОРЫ НА МЕСТЕ!** 🚨\n\nПользователь `ID {uid}` просрочил выплату кредита в МФО Скайнета!\nСумма долга: **{debt_amount} 💎**.\n\n_Имущество арестовано, должник лишен права голоса (МУТ), пока кто-нибудь не скинет ему Очки или он не задонатит!_", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # Не забудь добавить в start_scheduler():
 # scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)

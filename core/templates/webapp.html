@@ -869,9 +869,16 @@
             };
             confirmModal.classList.remove('hidden');
             safeHaptic('impact', 'medium');
+                }
+
+        // Безопасная вставка пользовательского текста в HTML
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+            });
         }
 
-        // --- УТИЛИТА ЗАПРОСОВ (С БРОНЕБОЙНЫМ ЛОГИРОВАНИЕМ) ---
+        // --- (любой комментарий с заголовком раздела)
         async function apiCall(endpoint, payload = {}) {
             payload.initData = tg.initData;
 
@@ -1195,7 +1202,7 @@
                             </div>
                         </div>`;
                     } else {
-                        let winText = gw.winning_number ? `Победитель: ${gw.winner_name} (Билет №${gw.winning_number})` : gw.winner_name;
+                        let winText = gw.winning_number ? `Победитель: ${esc(gw.winner_name)} (Билет №${gw.winning_number})` : esc(gw.winner_name);
                         html += `
                         <div class="surface rounded-2xl p-4 border border-gray-800 relative overflow-hidden opacity-90 shadow-lg">
                             <div class="absolute top-0 right-0 bg-gray-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">ЗАВЕРШЕН</div>
@@ -1294,7 +1301,7 @@
                         <div class="flex items-center space-x-3 overflow-hidden">
                             <span class="font-black text-white text-lg min-w-[60px]">№${p.num}</span>
                             <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs shadow-md">👤</div>
-                            <span class="text-gray-200 text-sm font-medium truncate whitespace-nowrap">${p.name}</span>
+                            <span class="text-gray-200 text-sm font-medium truncate whitespace-nowrap\">${esc(p.name)}</span>
                         </div>
                         <span class="text-gray-500 text-[10px] whitespace-nowrap ml-2">${p.date}</span>
                     </div>`;
@@ -1359,7 +1366,7 @@
                                 <h3 class="font-bold text-md leading-tight">${lot.title}${belowMarketBadge}</h3>
                                 <p class="text-[9px] text-gray-400 mt-1">📅 Выложено: ${lot.date_str}</p>
                             </div>
-                            <span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2 text-right leading-tight min-w-max">Продавец:<br>${lot.seller}</span>
+                            <span class="bg-gray-700 text-[10px] px-2 py-1 rounded-md text-gray-300 ml-2 text-right leading-tight min-w-max">Продавец:<br>${esc(lot.seller)}</span>
                         </div>
                         ${buyButtons}
                     </div>`;
@@ -1687,10 +1694,10 @@
                     document.getElementById('blueSafeBal').innerText = blueBal + ' 💎';
                 }, 12000);
                 
-                let b_logs = data.blue_logs.map(l => `<div><span class="text-white">${l.name}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
+                let b_logs = data.blue_logs.map(l => `<div><span class="text-white">${esc(l.name)}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
                 document.getElementById('blueSafeLogs').innerHTML = b_logs || '<div class="text-center mt-3 opacity-50">Ожидание...</div>';
                 
-                let r_logs = data.red_logs.map(l => `<div><span class="text-white">${l.name}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
+                let r_logs = data.red_logs.map(l => `<div><span class="text-white">${esc(l.name)}</span>: [${l.guess}] <span class="text-yellow-500">➜ ${l.result}</span></div>`).join('');
                 document.getElementById('redSafeLogs').innerHTML = r_logs || '<div class="text-center mt-3 opacity-50">Ожидание...</div>';
             });
         }
@@ -2241,7 +2248,7 @@
                 data.forEach(lot => {
                     let minBid = lot.current_bid + 100;
                     let isLeading = (lot.leader_name !== "Нет ставок");
-                    let leaderHtml = isLeading ? `<span class="text-purple-400 font-bold">${lot.leader_name}</span>` : `<span class="text-gray-500">Нет ставок</span>`;
+                    let leaderHtml = isLeading ? `<span class="text-purple-400 font-bold\">${esc(lot.leader_name)}</span>` : `<span class="text-gray-500">Нет ставок</span>`;
                     
                     let timeColor = lot.time_left.includes("м") ? "text-red-400 animate-pulse" : "text-gray-300";
 

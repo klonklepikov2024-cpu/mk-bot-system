@@ -30,6 +30,7 @@ import handlers.polls
 import handlers.contests
 import handlers.market
 import handlers.start_menu
+from handlers.casino import create_unique_promo, msk_today, msk_day_of, msk_time_left
 
 app = Flask(__name__, template_folder='templates')
 
@@ -55,13 +56,15 @@ def setup():
         logger.info(f"🔄 Устанавливаем вебхук: {target_url}")
         
         requests.get(
-            f"https://api.telegram.org/bot{bot_token}/deleteWebhook?drop_pending_updates=True",
+            f"https://api.telegram.org/bot{bot_token}/deleteWebhook",
             timeout=8
         )
         time.sleep(1)
         
+        webhook_secret = os.getenv('WEBHOOK_SECRET', '')
+        secret_part = f"&secret_token={webhook_secret}" if webhook_secret else ""
         res = requests.get(
-            f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}&drop_pending_updates=True",
+            f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}{secret_part}",
             timeout=15
         )
         
@@ -79,8 +82,15 @@ def index():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
-    bot.process_new_updates([update])
+    # Принимаем только запросы с секретным заголовком от самого Telegram
+    secret = os.getenv('WEBHOOK_SECRET', '')
+    if secret and request.headers.get('X-Telegram-Bot-Api-Secret-Token') != secret:
+        return 'forbidden', 403
+    try:
+        update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+        bot.process_new_updates([update])
+    except Exception as e:
+        logger.error(f"Ошибка обработки апдейта: {e}")
     return 'ok', 200
 
 @app.route('/ping')
@@ -121,7 +131,7 @@ def mute_user(chat_id, user_id, seconds, reason=""):
         print(error_text)
         try:
             bot.send_message(STAFF_GROUP_ID, error_text, parse_mode="HTML")
-        except:
+        except Exception:
             pass
         return False
 
@@ -209,7 +219,12 @@ def buy_ticket():
     if not chat_stat and not is_elite:
         return jsonify({"error": "Розыгрыши только для своих! Напишите хотя бы 50 сообщений в чате (или получите статус VIP/BEYOND), чтобы участвовать."}), 400
 
-    amount = int(data.get('amount', 1))
+    try:
+        amount = int(data.get('amount', 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректное количество билетов!"}), 400
+    if amount < 1 or amount > 100000:
+        return jsonify({"error": "Некорректное количество билетов!"}), 400
     giveaway_id = data.get('giveaway_id')
     
     gw = db['giveaways'].find_one({"_id": giveaway_id, "status": "active"})
@@ -508,7 +523,7 @@ def api_buy_market():
         msg_text = f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}{currency_sym}** (комиссия рынка учтена)."
         if subsidy_msg: msg_text += f"\n\n{subsidy_msg}"
         bot.send_message(lot['seller_uid'], msg_text, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     return jsonify({"success": True, "promo_id": promo_id})
 
@@ -570,7 +585,7 @@ def api_spin_roulette():
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
             markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
             bot.send_message(STAFF_GROUP_ID, f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n👤 Победитель: {first_name} ({username_str})\n\n❗️ <i>Заявка добавлена в Веб-панель.</i>", parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val == 63:
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
@@ -592,7 +607,7 @@ def api_spin_roulette():
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
             markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
             bot.send_message(STAFF_GROUP_ID, f"🛍 <b>СОРВАН СУПЕР-ПРИЗ (СЕРТИФИКАТ) ИЗ WEB APP!</b> 🛍\n\n👤 Победитель: {first_name} ({username_str})\n\n❗️ <i>Заявка добавлена в Веб-панель.</i>", parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val == 62:
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
@@ -601,7 +616,7 @@ def api_spin_roulette():
 
     elif val == 64:
         code = f"JACKPOT-{random.randint(1000, 9999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
         prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nЗолотой Билет (VIP) и 300 очков!\nКод: {code}"
         prize_id, prize_name = "jackpot", "ДЖЕКПОТ VIP"
@@ -614,7 +629,7 @@ def api_spin_roulette():
         try:
             from core.bot import bot
             bot.send_message(uid, "👑 Вы выиграли Купон на личный тег!", reply_markup=tag_prize_markup(code))
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val in [1, 22, 43]:
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1, "bounty_points": 50}})
@@ -651,7 +666,7 @@ def api_spin_roulette():
 
     elif val in [5, 17, 29]:
         code = f"ARREST-{random.randint(100, 999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        code = create_unique_promo(code.split("-")[0], {"type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         prize_msg = f"🚓 СОЦИАЛЬНЫЙ АРТЕФАКТ!\nВы нашли Ордер на Арест!\nКод: {code}"
         prize_id, prize_name = "arrest", "Ордер на Арест"
 
@@ -680,7 +695,7 @@ def api_spin_roulette():
         ]
         drop = random.choice(promos)
         code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
-        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
         prize_msg = f"✨ РЕДКИЙ ДРОП!\nВыиграна скидка {drop['name']}!\nКод: {code}"
         prize_id, prize_name = "discount", "Скидка"
 
@@ -726,12 +741,11 @@ def api_claim_bonus():
     
     # Проверяем таймер
     if last_bonus:
-        time_diff = (now - last_bonus).total_seconds()
-        if time_diff < 86400: # Прошло меньше 24 часов
-            hours_left = int((86400 - time_diff) // 3600)
-            mins_left = int(((86400 - time_diff) % 3600) // 60)
-            return jsonify({"error": f"Рано! Приходите через {hours_left}ч {mins_left}м."}), 400
-        elif time_diff > 172800: # Прошло БОЛЬШЕ 48 часов - стрик сгорел
+        days_passed = (msk_today() - msk_day_of(last_bonus)).days
+        if days_passed <= 0: # Сегодня (по Москве) уже забирали
+            hours_left, mins_left = msk_time_left()
+            return jsonify({"error": f"Рано! Новый бонус будет в 00:00 по Москве (через {hours_left}ч {mins_left}м)."}), 400
+        elif days_passed > 1: # Пропущен хотя бы один день - стрик сгорел
             current_streak = 0
             
     # Увеличиваем стрик
@@ -757,7 +771,7 @@ def api_claim_bonus():
 
     update_data = {
         "$inc": {"bounty_points": points_reward, "jackpot_shards": shards_reward},
-        "$set": {"last_bonus_date": now, "bonus_streak": current_streak}
+        "$set": {"last_bonus_date": datetime.datetime.now(datetime.timezone.utc), "bonus_streak": current_streak}
     }
     
     paid_collection.update_one({"uid": uid}, update_data, upsert=True)
@@ -827,7 +841,7 @@ def api_craft():
         if chance <= 60:
             code = f"JACKPOT-{random.randint(1000, 9999)}"
             import datetime
-            db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
             return jsonify({"success": True, "msg": f"🎉 Собран Золотой Билет VIP!\nКод: {code}"})
         elif chance <= 90:
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
@@ -874,12 +888,12 @@ def api_craft():
         # 🔥 ПАТЧ: Выдаем КУПОНЫ вместо прямой записи в базу 🔥
         if not u_info.get("is_queer"):
             code = f"BEYOND-{random.randint(1000, 9999)}"
-            db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
             return jsonify({"success": True, "msg": f"🏳️‍🌈 Выкован 100% Купон на BEYOND!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
             
         elif not u_info.get("is_vip"):
             code = f"VIP-{random.randint(1000, 9999)}"
-            db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
             return jsonify({"success": True, "msg": f"👑 Выкован 100% Купон на VIP!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
             
         else:
@@ -1072,8 +1086,15 @@ def api_exchange():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     
-    cost = data.get('cost')
-    reward = data.get('reward')
+    # Курс определяет сервер, а не браузер (cost -> reward)
+    EXCHANGE_PACKS = {50: 50, 150: 175, 250: 300, 500: 650}
+    try:
+        cost = int(data.get('cost'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректный пакет обмена!"}), 400
+    reward = EXCHANGE_PACKS.get(cost)
+    if reward is None:
+        return jsonify({"error": "Такого пакета обмена не существует!"}), 400
     
     user_db = paid_collection.find_one_and_update(
         {"uid": uid, "cashback_balance": {"$gte": cost}},
@@ -1126,13 +1147,18 @@ def api_loan():
         debt_amount = int(amount + (amount * percent))
         deadline = now + (days * 86400)
         
-        # Выдаем деньги и вешаем долг
-        paid_collection.update_one({"uid": uid}, {
-            "$inc": {"bounty_points": amount},
-            "$set": {"debt": debt_amount, "debt_deadline": deadline, "debt_notified": False}
-        })
+        # Выдаем деньги и вешаем долг (атомарно: только если долга сейчас нет)
+        res = paid_collection.update_one(
+            {"uid": uid, "$or": [{"debt": {"$exists": False}}, {"debt": {"$lte": 0}}]},
+            {
+                "$inc": {"bounty_points": amount},
+                "$set": {"debt": debt_amount, "debt_principal": amount, "debt_deadline": deadline, "debt_notified": False}
+            }
+        )
+        if res.modified_count == 0:
+            return jsonify({"error": "У вас уже есть непогашенный кредит! МФО отказывает в выдаче."}), 400
         
-        return jsonify({"success": True, "msg": f"💳 Кредит одобрен!\nПолучено: {amount} 💎\nК возврату: {debt_amount} 💎\nСрок: {days} дн."})
+        return jsonify({"success": True, "msg": f"💳 Кредит одобрен!
         
     # === ПОГАСИТЬ КРЕДИТ ===
     elif action == 'pay':
@@ -1142,17 +1168,24 @@ def api_loan():
         if user_db.get("bounty_points", 0) < debt:
             return jsonify({"error": f"Недостаточно средств! Нужно {debt} 💎 для полного погашения."}), 400
             
-        # Списываем долг и разблокируем юзера (если он был в муте)
-        paid_collection.update_one({"uid": uid}, {
-            "$inc": {"bounty_points": -debt},
-            "$unset": {"debt": "", "debt_deadline": "", "debt_notified": ""}
-        })
+        # Списываем долг и разблокируем юзера (атомарно: долг тот же и очков хватает)
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "debt": debt, "bounty_points": {"$gte": debt}},
+            {
+                "$inc": {"bounty_points": -debt},
+                "$unset": {"debt": "", "debt_deadline": "", "debt_notified": ""}
+            }
+        )
+        if not paid:
+            return jsonify({"error": "Не удалось погасить долг. Проверьте баланс и попробуйте ещё раз."}), 400
         
         # Снимаем мут (добавляем задачу Скайнетам)
         db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
         
         # Проценты (чистая прибыль) уходят в Синий Сейф!
-        profit = debt - int(debt / (1 + percent)) if 'percent' in locals() else int(debt * 0.2) # примерный расчет прибыли
+        principal = user_db.get("debt_principal")
+        profit = (debt - principal) if principal else int(debt * 0.2)  # у старых кредитов сумма выдачи неизвестна
+        if profit < 0: profit = 0
         db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": profit}})
         
         return jsonify({"success": True, "msg": "✅ Долг полностью погашен! Вы свободны."})
@@ -1297,8 +1330,13 @@ def api_payout():
     if user_db.get("cashback_balance", 0) < amount: 
         return jsonify({"error": "Недостаточно средств!"}), 400
     
-    # 1. Списываем баланс
-    paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -amount}})
+    # 1. Списываем баланс (атомарно: только если денег хватает прямо сейчас)
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": amount}},
+        {"$inc": {"cashback_balance": -amount}}
+    )
+    if not charged:
+        return jsonify({"error": "Недостаточно средств!"}), 400
     
     # 👇 ФИКС 1: ИМПОРТ ДО ИСПОЛЬЗОВАНИЯ ВРЕМЕНИ 👇
     import time
@@ -1347,8 +1385,15 @@ def api_get_stars_invoice():
     parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
     uid = json.loads(parsed_data['user'])['id']
     
-    stars_amount = int(data.get('stars_amount', 50))
-    points_reward = int(data.get('points_reward', 100))
+    # Пакеты определяет сервер: цена в звёздах -> очки
+    STAR_PACKS = {50: 50, 125: 150, 200: 300, 350: 600, 500: 1000, 1200: 3000}
+    try:
+        stars_amount = int(data.get('stars_amount'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректный пакет!"}), 400
+    points_reward = STAR_PACKS.get(stars_amount)
+    if points_reward is None:
+        return jsonify({"error": "Такого пакета не существует!"}), 400
     
     try:
         from core.bot import bot
@@ -1563,32 +1608,49 @@ def api_place_bid():
     if user_db.get("bounty_points", 0) < bid_amount:
         return jsonify({"error": "Недостаточно очков для такой ставки!"}), 400
         
-    # Возвращаем очки предыдущему лидеру (если он был)
-    prev_leader = lot.get("leader_uid")
-    prev_bid = lot.get("current_bid", 0)
+    # Шаг 1. Атомарно замораживаем очки новой ставки (если хватает прямо сейчас)
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": bid_amount}},
+        {"$inc": {"bounty_points": -bid_amount}}
+    )
+    if not charged:
+        return jsonify({"error": "Недостаточно очков для такой ставки!"}), 400
+
+    # Анти-снайпер: если до конца < 5 минут, продлеваем на 5 минут
+    end_time = lot['end_time']
+    if end_time - int(time.time()) < 300:
+        end_time += 300
+
+    # Шаг 2. Атомарно занимаем лот, только если ставка в нём не изменилась с момента проверки
+    old_lot = db['auction_lots'].find_one_and_update(
+        {
+            "_id": ObjectId(lot_id),
+            "status": "active",
+            "current_bid": lot['current_bid'],
+            "end_time": {"$gt": int(time.time())}
+        },
+        {"$set": {
+            "current_bid": bid_amount,
+            "leader_uid": uid,
+            "leader_name": first_name,
+            "end_time": end_time
+        }}
+    )
+    if not old_lot:
+        # Нас опередили: возвращаем очки и просим повторить
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": bid_amount}})
+        return jsonify({"error": "Ставку только что перебили! Обновите страницу и попробуйте ещё раз."}), 400
+
+    # Шаг 3. Возвращаем очки прежнему лидеру (берём то, что реально было в лоте)
+    prev_leader = old_lot.get("leader_uid")
+    prev_bid = old_lot.get("current_bid", 0)
     if prev_leader and prev_bid > 0:
         paid_collection.update_one({"uid": prev_leader}, {"$inc": {"bounty_points": prev_bid}})
         try:
             from core.bot import bot
             bot.send_message(prev_leader, f"⚠️ <b>АУКЦИОН:</b> Вашу ставку на лот «{lot['name']}» перебили! Ваши {prev_bid} 💎 возвращены на баланс.", parse_mode="HTML")
-        except: pass
-        
-    # Списываем очки у нового лидера
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -bid_amount}})
-    
-    # Обновляем лот (Анти-снайпер: если до конца < 5 минут, продлеваем на 5 минут)
-    end_time = lot['end_time']
-    if end_time - int(time.time()) < 300:
-        end_time += 300 
-        
-    db['auction_lots'].update_one({"_id": ObjectId(lot_id)}, {
-        "$set": {
-            "current_bid": bid_amount,
-            "leader_uid": uid,
-            "leader_name": first_name,
-            "end_time": end_time
-        }
-    })
+        except Exception:
+            pass
     
     return jsonify({"success": True, "msg": f"Ваша ставка {bid_amount} 💎 принята!"})
 
@@ -1818,7 +1880,7 @@ def api_inventory_action():
                 shield_broken_by_anarchy = True # Щит уничтожен, но атака проходит!
             else:
                 try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `ID {uid}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
-                except: pass
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
             
         # 4. БРОСАЕМ КУБИК НА ВЗЛОМ
@@ -1873,11 +1935,11 @@ def api_inventory_action():
                     
                     # Инфарктное уведомление партнеру
                     try: bot.send_message(partner_id, f"🚨 **СЕМЕЙНЫЙ СЧЕТ ВЗЛОМАН!**\nВ рамках Судной Ночи хакер атаковал вашу семью и украл **{family_stolen} 💎** из вашей общей копилки!", parse_mode="Markdown")
-                    except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
             victim_msg += "\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._"
             try: bot.send_message(target_uid, victim_msg, parse_mode="Markdown")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
             total_loot = stolen + family_stolen
             return jsonify({"success": True, "msg": f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {total_loot} 💎 у жертвы!{extra_msg}"})
@@ -2143,7 +2205,7 @@ def api_farm_action():
                     msg += "\n🛡 В кустах найден Щит Иммунитета!"
                 elif chance <= 20:
                     code = f"ARREST-{random.randint(100, 999)}"
-                    db['promocodes'].insert_one({"_id": code, "type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    code = create_unique_promo(code.split("-")[0], {"type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
                     msg += f"\n🚓 В кустах найден Ордер на Арест!\nКод: {code}"
 
         if crop.get('shards_chance') and random.randint(1, 100) <= crop['shards_chance']:
@@ -2381,7 +2443,7 @@ def api_crack_safe():
             from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
             safe_name = "СЕЙФА ДАННЫХ (Очки)" if safe_color == 'blue' else "ФИНАНСОВОГО СЕЙФА (Рубли)"
             bot.send_message(STAFF_GROUP_ID, f"🚨 <b>СИСТЕМА ВЗЛОМАНА!</b>\n\nХакер {user_name_str} подобрал пароль от {safe_name} и унес куш в размере <b>{prize} {currency}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
         # 🔥 2. ГРОМКОЕ ОПОВЕЩЕНИЕ ПО ВСЕМ ЧАТАМ 🔥
         def broadcast_safe_crack():
@@ -2415,8 +2477,8 @@ def api_crack_safe():
                         schedule_message_deletion(cid, sent_msg.message_id, 3600, bot)
                         
                         time.sleep(0.3) 
-                    except: pass
-            except: pass
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
         import threading
         threading.Thread(target=broadcast_safe_crack, daemon=True).start()
@@ -2495,7 +2557,7 @@ def api_open_agent_case():
             from core.bot import bot
             from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
             bot.send_message(STAFF_GROUP_ID, f"🎰 <b>ДЖЕКПОТ В КЕЙСАХ АГЕНТА!</b>\nПользователь `{uid}` выбил: <b>{prize_name}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     # Отправляем на фронтенд ТОЛЬКО ID выигранного приза.
     # Остальную магию (прокрутку, генерацию ленты и т.д.) будет делать JavaScript.
@@ -2660,13 +2722,13 @@ def api_admin_deploy_contest():
         # Переводим машинные даты в человеческие
         def format_date(d_str):
             try: return datetime.strptime(d_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-            except: return "??.??.????"
+            except Exception: return "??.??.????"
 
         # 🔥 НОВАЯ ФУНКЦИЯ: Вычисляет дату итогов (+1 день к концу голосования)
         def get_results_date(d_str):
             try: 
                 return (datetime.strptime(d_str, "%Y-%m-%d") + timedelta(days=1)).strftime("%d.%m.%Y")
-            except: return "??.??.????"
+            except Exception: return "??.??.????"
             
         ss = format_date(data.get("sub_start"))
         se = format_date(data.get("sub_end"))
@@ -2695,10 +2757,10 @@ def api_admin_deploy_contest():
                 bot.send_message(chat_id, announcement, parse_mode="HTML")
                 success += 1
                 time.sleep(0.3)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
         try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Анонс конкурса успешно разослан в {success} чатов!</b>", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     import threading
     threading.Thread(target=broadcast, daemon=True).start()
@@ -3163,7 +3225,7 @@ def handle_quest_resolution(call):
     try:
         # 🔥 БРОНЕБОЙНЫЙ ФИКС: Сначала принудительно стираем кнопки отдельным запросом! 🔥
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
         if action == 'ok':
             import time
@@ -3174,12 +3236,12 @@ def handle_quest_resolution(call):
                 
                 if not u_info.get("is_queer"):
                     code = f"BEYOND-{random.randint(1000, 9999)}"
-                    db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
                     granted = f"Купон 100% на BEYOND 🏳️‍🌈 (Код: `{code}`)"
                     
                 elif not u_info.get("is_vip"):
                     code = f"VIP-{random.randint(1000, 9999)}"
-                    db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
                     granted = f"Купон 100% на VIP 👑 (Код: `{code}`)"
                     
                 else:
@@ -3527,7 +3589,7 @@ def grant_achievement(uid, ach_id, ach_name, ach_icon, chat_id):
         try:
             from core.bot import bot
             bot.send_message(chat_id, f"🏆 **ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!**\nВы получили значок: {ach_icon} **«{ach_name}»**!", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return True
     return False
 
@@ -4081,7 +4143,7 @@ def run_away_child(message):
     try:
         from core.bot import bot
         bot.send_message(parent_id, f"🚨 **ВАШ РЕБЕНОК СБЕЖАЛ!**\n\n[{child_name}](tg://user?id={child_id}) покинул семью. Проверьте ваш Семейный Фонд, кажется, оттуда пропали сбережения...", parse_mode="Markdown")
-    except:
+    except Exception:
         pass
 
 # ================= ПРАВО ВЕТО (ДЛЯ СВЯТЫХ) =================
@@ -4135,7 +4197,7 @@ def redeem_sins(message):
         try:
             from handlers.admin import safe_set_tag
             safe_set_tag(message.chat.id, uid, original_tag)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
     bot.reply_to(message, f"⛪️ <b>ИСКУПЛЕНИЕ ПРОЙДЕНО!</b>\n\nВы пожертвовали {cost_text} на благо Империи.\nСкайнет списывает часть ваших грехов: <b>+20 к Карме</b>!", parse_mode="HTML")
 
@@ -4175,7 +4237,7 @@ def trigger_anarchy(message):
         )
         for cid in all_chats:
             try: bot.send_message(cid, msg_text, parse_mode="HTML"); time.sleep(0.3)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
     import threading
     threading.Thread(target=broadcast_anarchy, daemon=True).start()
@@ -4282,7 +4344,7 @@ def handle_court_funding(call):
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"⚖️ Докинуть 100 💎 (Собрано: {new_collected}/{court['goal']})", callback_data=f"court_fund_{court_id}"))
         try:
             bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
-        except:
+        except Exception:
             pass
         bot.answer_callback_query(call.id, "Ваши 100 💎 приняты в фонд правосудия!", show_alert=True)
 
@@ -4489,7 +4551,7 @@ def gods_voice(message):
         msg_text = f"👑 <b>Глобальное послание от {message.from_user.first_name}:</b>\n\n{html.escape(text)}"
         for cid in all_chats:
             try: bot.send_message(cid, msg_text, parse_mode="HTML"); time.sleep(0.3)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         bot.send_message(message.chat.id, "✅ Глас Бога услышан во всех чатах!")
     import threading
     threading.Thread(target=broadcast, daemon=True).start()
@@ -4644,7 +4706,7 @@ def handle_karma_vote(message):
             try:
                 from handlers.admin import safe_set_tag
                 safe_set_tag(message.chat.id, target_id, original_tag)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
         bot.reply_to(message, f"📈 **Социальный Кредит повышен!**\nГражданин [{target_name}](tg://user?id={target_id}) получает +1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
     else:
@@ -4657,7 +4719,7 @@ def handle_karma_vote(message):
             try:
                 from handlers.admin import safe_set_tag
                 safe_set_tag(message.chat.id, target_id, bad_title)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
         bot.reply_to(message, f"📉 **Внимание, нарушение!**\nГражданин [{target_name}](tg://user?id={target_id}) получает -1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
 
@@ -4943,7 +5005,7 @@ def run_squid_game(chat_id):
         # 👇 ВОТ ЭТА СТРОКА ВЕРНЕТ ШОУ В ЧАТ 👇
         try:
             bot.send_message(chat_id, f"🔫 <b>Игрок <a href='tg://user?id={loser['id']}'>{html.escape(loser['name'])}</a> устранен.</b> (Мут на 3 часа).\nОсталось игроков: {len(players)}", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     winner = players[0]
     paid_collection.update_one({"uid": winner['id']}, {"$inc": {"bounty_points": pot}})
@@ -4951,7 +5013,7 @@ def run_squid_game(chat_id):
 
     try:
         bot.send_message(chat_id, f"🏆 <b>ИГРА В КАЛЬМАРА ЗАВЕРШЕНА!</b> 🏆\n\nВыживший: <a href='tg://user?id={winner['id']}'>{html.escape(winner['name'])}</a>!\nОн забирает весь куш: <b>{pot} 💎</b>!\n\n<i>Поздравляем. Остальные отправлены в морг.</i>", parse_mode="HTML")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= КРИМИНАЛ: ОГРАБЛЕНИЕ КАЗИНО =================
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!ограбление', 'ограбление'])
@@ -5095,12 +5157,12 @@ def track_global_activity(message):
     if karma <= -100:
         try:
             bot.delete_message(message.chat.id, message.message_id)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         mute_user(message.chat.id, uid, 172800, "Цифровой ГУЛАГ (Карма <= -100)")
         paid_collection.update_one({"uid": uid}, {"$set": {"social_rating": -50}}) # Сброс до -50
         try:
             bot.send_message(message.chat.id, f"🚨 <b>ВРАГ НАРОДА УСТРАНЕН!</b>\nГражданин {message.from_user.first_name} лишен голоса на 48 часов за достижение Кармы -100. Рейтинг принудительно сброшен до -50.", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # 👻 2. ТЕНЕВОЙ БАН (Карма <= -90)
@@ -5108,7 +5170,7 @@ def track_global_activity(message):
         try:
             bot.delete_message(message.chat.id, message.message_id)
             bot.send_message(message.chat.id, f"🗑 <i>Пакет данных утерян. Социальный рейтинг отправителя слишком низок для стабильной маршрутизации.</i>", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # 💸 3. НАЛОГ НА СЛОВА (Карма <= -75)
@@ -5117,11 +5179,11 @@ def track_global_activity(message):
         if pts < 5:
             try:
                 bot.delete_message(message.chat.id, message.message_id)
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             mute_user(message.chat.id, uid, 43200, "Налог на слова: исчерпан баланс")
             try:
                 bot.send_message(message.chat.id, f"🔇 <b>БАЛАНС СЛОВ ИСЧЕРПАН.</b>\nУ гражданина нет 5 💎 на оплату сообщения. Выдан мут на 12 часов. Молчание — золото.", parse_mode="HTML")
-            except: pass
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             return
         else:
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": -5}})
@@ -5132,7 +5194,7 @@ def track_global_activity(message):
         try:
             bot.delete_message(message.chat.id, message.message_id)
             bot.send_message(message.chat.id, f"📵 <b>ПЕЙДЖЕР-РЕЖИМ!</b>\nГражданину {message.from_user.first_name} запрещено отправлять фото, стикеры и войсы (Карма ниже -50). Только текст!", parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # Стандартный сбор статистики (если прошел цензуру)
@@ -5155,7 +5217,7 @@ def heartbeat_sec():
     while True:
         try:
             db['settings'].update_one({"_id": "bot_status"}, {"$set": {"sec_last_seen": time.time()}}, upsert=True)
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         time.sleep(60)
 
 threading.Thread(target=heartbeat_sec, daemon=True).start()

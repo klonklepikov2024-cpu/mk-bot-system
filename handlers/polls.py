@@ -241,7 +241,7 @@ def generate_and_send_daily_poll(is_test=False):
         logger.error(f"❌ Скайнет не смог сгенерировать опрос. Последняя ошибка: {last_error}")
         try: 
             bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка JSON: Скайнет не смог сгенерировать опрос.\nДетали: `{last_error[:200]}`", parse_mode="Markdown")
-        except: 
+        except Exception:
             pass
         return
     # 🔥 КОНЕЦ БЛОКА 🔥
@@ -261,15 +261,15 @@ def generate_and_send_daily_poll(is_test=False):
     except Exception as e:
         logger.error(f"❌ Ошибка публикации опроса: {e}")
         try: bot.send_message(STAFF_GROUP_ID, f"❌ Ошибка публикации опроса (проверьте длину текста): {e}")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # 🔥 ЗАЩИТА ПРИ ТЕСТЕ 🔥
     if is_test:
         try: bot.send_message(DONOR_GROUP_ID, "🛠 **ЭТО ТЕСТОВЫЙ ЗАПУСК**\nОпрос сгенерирован, рассылка ОТКЛЮЧЕНА.", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.send_message(STAFF_GROUP_ID, f"✅ **Тестовый опрос готов!**\nТема: {selected_holiday}\nПосмотрите результат в группе-доноре.", parse_mode="Markdown")
-        except: pass
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
     # ================= 4. МАССОВАЯ РАССЫЛКА ПО СЕТКЕ =================
@@ -299,9 +299,9 @@ def generate_and_send_daily_poll(is_test=False):
     # ================= 5. ОТЧЕТ АДМИНАМ =================
     report_text = f"✅ **Авто-Опрос запущен!**\nТема: {selected_holiday}\nСкайнет разослал его в {success_count} чатов."
     try: bot.send_message(DONOR_GROUP_ID, report_text, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.send_message(STAFF_GROUP_ID, report_text, parse_mode="Markdown")
-    except: pass
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 scheduler.add_job(
     generate_and_send_daily_poll, 
