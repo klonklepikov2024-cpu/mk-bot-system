@@ -1158,7 +1158,7 @@ def api_loan():
         if res.modified_count == 0:
             return jsonify({"error": "У вас уже есть непогашенный кредит! МФО отказывает в выдаче."}), 400
         
-        return jsonify({"success": True, "msg": f"💳 Кредит одобрен!
+        return jsonify({"success": True, "msg": "💳 Кредит одобрен!"})
         
     # === ПОГАСИТЬ КРЕДИТ ===
     elif action == 'pay':
