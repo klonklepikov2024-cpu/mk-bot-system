@@ -487,8 +487,11 @@ def handle_guardian_angel(message):
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
-    # Списываем щит у спасателя
-    paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+    # Списываем щит у спасателя (атомарно)
+    if not paid_collection.find_one_and_update({"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
+        try: bot.reply_to(message, "❌ У вас нет активных **🛡 Щитов Иммунитета** для призыва Ангела!")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     
     # Разбаниваем друга (обнуляем страйки и статус)
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})

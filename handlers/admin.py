@@ -682,8 +682,9 @@ def handle_trap(call):
     thread_id = call.message.message_thread_id
     user_data = paid_collection.find_one({"uid": target_uid}) or {"uid": target_uid, "strikes": 0, "immunity": 0}
     
-    if user_data.get("immunity", 0) > 0:
-        paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}})
+    if user_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+            {"uid": target_uid, "immunity": {"$gte": 1}},
+            {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}}):
         try: bot.send_message(target_uid, "⛔️ **Вы нарушили правила!**\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен. Будьте осторожны в следующий раз._", parse_mode="Markdown")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         try: bot.edit_message_text(f"{call.message.html}\n\n🛡 <b>Юзер спасен Иммунитетом!</b> Страйк поглощен щитом. Топик закрыт.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=None)

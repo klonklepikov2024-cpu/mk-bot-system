@@ -144,6 +144,6 @@ def matrix_updater_daemon():
     while True:
         time.sleep(60)
         try: refresh_matrix()
-        except: pass
+        except Exception as e: print(f"⚠️ Не удалось обновить матрицу инфраструктуры: {e}")
 
 threading.Thread(target=matrix_updater_daemon, daemon=True).start()

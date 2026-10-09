@@ -155,8 +155,9 @@ def handle_user_query(call):
             return 
 
         # ПРОВЕРКА ЩИТА ИММУНИТЕТА
-        if user_data.get("status") != 1 and user_data.get("immunity", 0) > 0:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}, "$set": {"status": 1}}) 
+        if user_data.get("status") != 1 and user_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                {"uid": uid, "immunity": {"$gte": 1}},
+                {"$inc": {"immunity": -1}, "$set": {"status": 1}}):
             user_data["status"] = 1 
             bot.send_message(call.message.chat.id, "🛡 **Сработал Щит Иммунитета!**\nОдно бесплатное обращение в поддержку активировано. Щит разрушен.", parse_mode="Markdown")
 

@@ -286,8 +286,8 @@ def personal_farm_notifications():
                 
                 # Проверка АВТО-ЩИТА!
                 user_db = paid_collection.find_one({"uid": uid}) or {}
-                if user_db.get("immunity", 0) > 0:
-                    paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+                if user_db.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                        {"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
                     try: bot.send_message(uid, f"🛡 <b>ЗАЩИТА ФЕРМЫ!</b>\n{pest['name']} {pest['emoji']} попытался сожрать ваш {crop['name']}, но ваш <b>Щит Иммунитета</b> ударил его током!\n<i>(Списан 1 щит, урожай спасен)</i>", parse_mode="HTML", reply_markup=markup)
                     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 else:

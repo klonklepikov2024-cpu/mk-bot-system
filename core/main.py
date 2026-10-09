@@ -1853,7 +1853,8 @@ def api_inventory_action():
         user_data = paid_collection.find_one({"uid": uid}) or {}
         if user_data.get("immunity", 0) < 1: return jsonify({"error": "Нет активных Щитов!"}), 400
         
-        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+        if not paid_collection.find_one_and_update({"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
+            return jsonify({"error": "Нет активных Щитов!"}), 400
         paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
         
         import time
@@ -2027,8 +2028,9 @@ def api_inventory_action():
         
         # 3. ПРОБИТИЕ ЩИТА (Анархия дает 50% шанс пробить щит насквозь)
         shield_broken_by_anarchy = False
-        if target_data.get("immunity", 0) > 0:
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}})
+        if target_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                {"uid": target_uid, "immunity": {"$gte": 1}},
+                {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}}):
             
             import random
             if is_anarchy and random.randint(1, 100) <= 50:
@@ -3835,8 +3837,8 @@ def russian_roulette(message):
         paid_collection.update_one({"uid": uid}, {"$inc": {"roulette_deaths_streak": 1}}, upsert=True)
         new_data = paid_collection.find_one({"uid": uid}) or {}
         
-        if user_data.get("immunity", 0) > 0:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+        if user_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                {"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
             sent_msg = bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
             schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
         else:
@@ -4046,6 +4048,11 @@ def handle_duel_response(call):
         return
         
     # === НАЧАЛО БОЯ ===
+    # Атомарно занимаем дуэль: двойной клик/параллельный запрос не запустит бой дважды
+    duel = db['active_duels'].find_one_and_update({"_id": duel_id, "status": "pending"}, {"$set": {"status": "fighting"}})
+    if not duel:
+        bot.answer_callback_query(call.id, "Дуэль уже идёт или завершена!", show_alert=True)
+        return
     bet = duel['bet']
     
     # Финальная проверка балансов перед боем
@@ -4577,11 +4584,11 @@ def redeem_sins(message):
     shards = user_data.get("jackpot_shards", 0)
     
     # Пытаемся забрать ресурсы за Карму
-    if shields >= 1:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1, "social_rating": 20}})
+    if shields >= 1 and paid_collection.find_one_and_update(
+            {"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1, "social_rating": 20}}):
         cost_text = "1 🛡 Щит Иммунитета"
-    elif shards >= 5:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -5, "social_rating": 20}})
+    elif shards >= 5 and paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": 5}}, {"$inc": {"jackpot_shards": -5, "social_rating": 20}}):
         cost_text = "5 🧩 Осколков"
     else:
         return bot.reply_to(message, "⛓ <b>Вам нечем платить за свои грехи!</b>\nДля искупления требуется пожертвовать государству <b>1 🛡 Щит</b> или <b>5 🧩 Осколков</b>.", parse_mode="HTML")
@@ -5550,16 +5557,23 @@ def join_heist(message):
     if any(m['id'] == uid for m in heist['members']):
         return bot.reply_to(message, "🔫 Ты и так уже в банде, держи пушку крепче!")
         
-    # Добавляем юзера в банду
-    db['active_heists'].update_one({"_id": chat_id}, {"$push": {"members": {"id": uid, "name": user_name}}})
-    heist['members'].append({"id": uid, "name": user_name})
+    # Добавляем юзера в банду (атомарно: не дважды и не больше 3 человек)
+    from pymongo import ReturnDocument
+    heist = db['active_heists'].find_one_and_update(
+        {"_id": chat_id, "members.id": {"$ne": uid}, "members.2": {"$exists": False}},
+        {"$push": {"members": {"id": uid, "name": user_name}}},
+        return_document=ReturnDocument.AFTER
+    )
+    if not heist:
+        return bot.reply_to(message, "🔫 Ты уже в банде, либо банда уже в сборе!")
     
     if len(heist['members']) < 3:
         left = 3 - len(heist['members'])
         return _say(message.chat.id, f"🤝 [{user_name}](tg://user?id={uid}) надел(а) маску и присоединился(лась) к банде!\nОсталось найти еще **{left}** чел.", parse_mode="Markdown")
         
     # === БАНДА СОБРАНА. НАЧИНАЕМ НАЛЕТ! ===
-    db['active_heists'].delete_one({"_id": chat_id})
+    if db['active_heists'].delete_one({"_id": chat_id}).deleted_count == 0:
+        return   # налёт уже запущен параллельным запросом
     _say(message.chat.id, "🚐 **БАНДА В СБОРЕ! Налет начался...**\n_Стрельба, взломы серверов, визги сирен..._", parse_mode="Markdown")
     time.sleep(3)
     

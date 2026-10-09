@@ -24,7 +24,7 @@ class TelegramExceptionHandler(telebot.ExceptionHandler):
         
         try:
             bot.send_message(STAFF_GROUP_ID, error_msg, parse_mode="HTML")
-        except:
+        except Exception:
             print("Не удалось отправить ошибку в ТГ:", error_trace)
             
         return True

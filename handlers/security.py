@@ -865,8 +865,9 @@ def handle_admin_report_decision(call):
     elif action == "strike":
         user_data = paid_collection.find_one({"uid": reporter_uid}) or {"uid": reporter_uid, "strikes": 0, "immunity": 0}
         
-        if user_data.get("immunity", 0) > 0:
-            paid_collection.update_one({"uid": reporter_uid}, {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}})
+        if user_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                {"uid": reporter_uid, "immunity": {"$gte": 1}},
+                {"$inc": {"immunity": -1}, "$unset": {"topic_type": ""}}):
             take_points_capped(reporter_uid, 10)   # было: "bounty_points": -10 в том же $inc
             try: bot.send_message(reporter_uid, "⛔️ **Ложный донос!**\nВы использовали систему не по назначению. Списано **-10 очков**.\n\nБот попытался выдать вам Штрафной Страйк, но ваш **🛡 Щит Иммунитета поглотил удар!**\n_Щит разрушен._", parse_mode="Markdown")
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -1003,7 +1004,9 @@ def process_angel_id(message):
         bot.send_message(message.chat.id, "❌ У вас нет активных Щитов Иммунитета!")
         return
         
-    paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": -1}})
+    if not paid_collection.find_one_and_update({"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
+        bot.send_message(message.chat.id, "❌ У вас нет активных Щитов Иммунитета!")
+        return
     paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
     db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
     
