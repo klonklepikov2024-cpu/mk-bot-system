@@ -156,6 +156,83 @@ def validate_webapp_data(init_data, token):
 def webapp_page():
     return render_template('webapp.html')
 
+# ================= 🏆 ЗАЛ СЛАВЫ: КАТАЛОГ ДОСТИЖЕНИЙ =================
+# "auto": функция (юзер, поле_картошки) -> (текущее, цель). Такие медали выдаются сами при открытии профиля.
+# Без "auto" медаль выдаётся в момент действия (grant_achievement). "reward": что добавляется в момент получения.
+ACHIEVEMENT_CATALOG = [
+    # --- события (как раньше) ---
+    {"id": "schizo", "icon": "🤡", "name": "Шизофреник", "desc": "Попытаться пожениться на самом себе."},
+    {"id": "black_streak", "icon": "🎰", "name": "Черная полоса", "desc": "Погибнуть 3 раза подряд в русской рулетке."},
+    {"id": "gladiator", "icon": "⚔️", "name": "Гладиатор", "desc": "Выиграть 10 дуэлей подряд."},
+    {"id": "santa", "icon": "🎅", "name": "Санта-Клаус", "desc": "Раздать мешками 50 000 💎 суммарно. Бафф: 5% шанс выпасть 64 в игре «Кубик»."},
+    {"id": "safecracker", "icon": "🏦", "name": "Медвежатник", "desc": "Взломать сейф, угадав PIN-код. Бафф: +1 попытка взлома в сутки."},
+    {"id": "patriarch", "icon": "👨‍👩‍👧‍👦", "name": "Патриарх семьи", "desc": "Усыновить 3 детей, находясь в браке. Бафф: посадки на ферме растут на 10% быстрее."},
+    {"id": "drought", "icon": "💩", "name": "Засуха", "desc": "Дать 5 растениям засохнуть без полива."},
+    {"id": "rat", "icon": "🔪", "name": "Крыса", "desc": "Подать в суд на 5 разных игроков."},
+    {"id": "cuckold", "icon": "🦌", "name": "Рогоносец", "desc": "Остаться без пары из-за разлучника. Клеймо на 7 дней."},
+    {"id": "bankrupt", "icon": "📉", "name": "Банкрот", "desc": "Проиграть в дуэлях 10 000 💎 за сутки."},
+    # --- новые, считаются автоматически ---
+    {"id": "streak7", "icon": "🔥", "name": "Постоянство", "desc": "Забирать ежедневный бонус 7 дней подряд.", "reward": {"immunity": 1}, "reward_text": "🛡 1 щит",
+     "auto": lambda u, pf: (u.get("bonus_streak", 0), 7)},
+    {"id": "streak30", "icon": "💪", "name": "Железная воля", "desc": "Забирать ежедневный бонус 30 дней подряд.", "reward": {"immunity": 3}, "reward_text": "🛡 3 щита",
+     "auto": lambda u, pf: (u.get("bonus_streak", 0), 30)},
+    {"id": "informer10", "icon": "👁", "name": "Бдительный", "desc": "Отправить 10 успешных донесений на нарушителей.", "reward": {"jackpot_shards": 5}, "reward_text": "🧩 5 осколков",
+     "auto": lambda u, pf: (u.get("successful_reports", 0), 10)},
+    {"id": "informer50", "icon": "🛰", "name": "Глаза Скайнета", "desc": "Отправить 50 успешных донесений на нарушителей.", "reward": {"immunity": 1, "jackpot_shards": 10}, "reward_text": "🛡 1 щит и 🧩 10 осколков",
+     "auto": lambda u, pf: (u.get("successful_reports", 0), 50)},
+    {"id": "potato100", "icon": "🥔", "name": "Картофельный барон", "desc": "Собрать 100 картофелин на Колхозном поле.", "reward": {"jackpot_shards": 5}, "reward_text": "🧩 5 осколков",
+     "auto": lambda u, pf: (pf.get("t_harv", 0), 100)},
+    {"id": "potato1000", "icon": "👑", "name": "Король картохи", "desc": "Собрать 1000 картофелин.", "reward": {"immunity": 3}, "reward_text": "🛡 3 щита",
+     "auto": lambda u, pf: (pf.get("t_harv", 0), 1000)},
+    {"id": "bugkiller", "icon": "🪲", "name": "Истребитель жуков", "desc": "Раздавить или потравить 50 колорадских жуков.", "reward": {"jackpot_shards": 5}, "reward_text": "🧩 5 осколков",
+     "auto": lambda u, pf: (pf.get("t_squash", 0), 50)},
+    {"id": "married", "icon": "💍", "name": "Семьянин", "desc": "Вступить в брак.",
+     "auto": lambda u, pf: (1 if u.get("partner_id") else 0, 1)},
+    {"id": "rich10k", "icon": "💰", "name": "Богач", "desc": "Накопить 10 000 💎 на счету.",
+     "auto": lambda u, pf: (u.get("bounty_points", 0), 10000)},
+    {"id": "shield10", "icon": "🛡", "name": "Бронированный", "desc": "Накопить 10 щитов иммунитета одновременно.",
+     "auto": lambda u, pf: (u.get("immunity", 0), 10)},
+    {"id": "shards100", "icon": "🧩", "name": "Коллекционер осколков", "desc": "Накопить 100 осколков одновременно.",
+     "auto": lambda u, pf: (u.get("jackpot_shards", 0), 100)},
+    {"id": "saint", "icon": "😇", "name": "Святой", "desc": "Набрать карму 50 и выше.",
+     "auto": lambda u, pf: (u.get("social_rating", 0), 50)},
+    {"id": "villain", "icon": "😈", "name": "Злодей", "desc": "Опуститься до кармы -50 и ниже.",
+     "auto": lambda u, pf: (max(0, -u.get("social_rating", 0)), 50)},
+]
+
+def _auto_grant_achievements(uid, user_db, pf):
+    """Выдаёт медали, условия которых выполнены, и их награды. Возвращает id новых."""
+    have = set(user_db.get("achievements", []))
+    newly = []
+    for a in ACHIEVEMENT_CATALOG:
+        fn = a.get("auto")
+        if not fn or a["id"] in have:
+            continue
+        try: cur, goal = fn(user_db, pf)
+        except Exception: continue
+        if cur >= goal:
+            res = paid_collection.update_one({"uid": uid, "achievements": {"$ne": a["id"]}}, {"$push": {"achievements": a["id"]}})
+            if res.modified_count:
+                if a.get("reward"):
+                    paid_collection.update_one({"uid": uid}, {"$inc": a["reward"]})
+                newly.append(a["id"])
+    return newly
+
+def _build_ach_catalog(user_db, pf):
+    have = set(user_db.get("achievements", []))
+    out = []
+    for a in ACHIEVEMENT_CATALOG:
+        item = {"id": a["id"], "icon": a["icon"], "name": a["name"], "desc": a["desc"],
+                "unlocked": a["id"] in have, "reward": a.get("reward_text", "")}
+        fn = a.get("auto")
+        if fn and not item["unlocked"]:
+            try:
+                cur, goal = fn(user_db, pf)
+                item["progress"], item["goal"] = int(max(0, min(cur, goal))), int(goal)
+            except Exception: pass
+        out.append(item)
+    return out
+
 @app.route('/api/profile', methods=['POST'])
 def get_profile():
     data = request.json
@@ -181,12 +258,18 @@ def get_profile():
         p_stat = db['chat_stats'].find_one({"uid": partner_id}) or {}
         partner_name = p_stat.get("name", f"ID {partner_id}")
         
-        # Тянем баланс семьи из базы
-        fam_id = f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
-        fam_db = db['family_banks'].find_one({"_id": fam_id}) or {}
-        family_balance = fam_db.get("balance", 0)
+    # Баланс копилки: у супругов общий, у детей - копилка родителей
+    _fam_id = _family_bank_id(uid, user_db)
+    if _fam_id:
+        family_balance = (db['family_banks'].find_one({"_id": _fam_id}) or {}).get("balance", 0)
         
     children_count = len(user_db.get("children", []))
+    
+    # 🏆 Зал Славы: авто-выдача достижений по счётчикам + каталог для мини-аппа
+    pf = db['potato_fields'].find_one({"uid": uid}) or {}
+    newly = _auto_grant_achievements(uid, user_db, pf)
+    if newly:
+        user_db = paid_collection.find_one({"uid": uid}) or user_db
     
     return jsonify({
         "points": user_db.get("bounty_points", 0),
@@ -196,7 +279,9 @@ def get_profile():
         "kids": children_count,
         "family_balance": family_balance, # 🔥 ДОБАВИЛИ ЭТУ СТРОЧКУ 🔥
         "golden_frame": user_db.get("golden_frame", False),
-        "achievements": user_db.get("achievements", [])
+        "achievements": user_db.get("achievements", []),
+        "ach_catalog": _build_ach_catalog(user_db, pf),
+        "new_achievements": [a["name"] for a in ACHIEVEMENT_CATALOG if a["id"] in newly]
     })
 
 @app.route('/api/buy_ticket', methods=['POST'])
@@ -2331,19 +2416,45 @@ def api_farm_action():
 
 # ================= КАРТОФЕЛЬНОЕ ПОЛЕ (БЭКЕНД) =================
 
+# ================= 🥔 КОЛХОЗНОЕ ПОЛЕ 10x10 =================
+POTATO_COST = 60                 # цена семян за клетку
+POTATO_GROW = 8 * 3600           # созревание
+POTATO_DUST_COST = 100           # Дуст: убрать всех жуков разом
+POTATO_SPRAY_COST = 150          # Обработка поля: жуки обходят поле
+POTATO_SPRAY_SECONDS = 12 * 3600
+
+def _potato_get_field(uid):
+    field = db['potato_fields'].find_one({"uid": uid})
+    if not field:
+        # Инициализируем пустое поле 10х10 (100 нулей)
+        db['potato_fields'].insert_one({"uid": uid, "cells": [0] * 100})
+        field = db['potato_fields'].find_one({"uid": uid}) or {"uid": uid, "cells": [0] * 100}
+    return field
+
+def _potato_stats(field, now):
+    cells = field.get("cells", [0] * 100)
+    return {
+        "ready": sum(1 for c in cells if c > 0 and now - c >= POTATO_GROW),
+        "growing": sum(1 for c in cells if c > 0 and now - c < POTATO_GROW),
+        "beetles": sum(1 for c in cells if c == -1),
+        # «волна» - с момента, когда поле было пустым: сколько посажено, собрано и на какую сумму
+        "wave_plant": field.get("s_plant", 0),
+        "wave_harv_cnt": field.get("s_cnt", 0),
+        "wave_reward": field.get("s_harv", 0),
+        "wave_spent": field.get("s_plant", 0) * POTATO_COST,
+        "spray_left": max(0, int(field.get("protected_until", 0) - now)),
+        "total_harvested": field.get("t_harv", 0),
+        "total_squashed": field.get("t_squash", 0),
+    }
+
 @app.route('/api/get_potato_field', methods=['POST'])
 def api_get_potato_field():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
-    
-    field = db['potato_fields'].find_one({"uid": uid})
-    if not field:
-        # Инициализируем пустое поле 10х10 (100 нулей)
-        db['potato_fields'].insert_one({"uid": uid, "cells": [0] * 100})
-        field = {"cells": [0] * 100}
-        
-    return jsonify({"cells": field["cells"]})
+    import time
+    field = _potato_get_field(uid)
+    return jsonify({"cells": field["cells"], "stats": _potato_stats(field, int(time.time()))})
 
 @app.route('/api/potato_action', methods=['POST'])
 def api_potato_action():
@@ -2351,41 +2462,123 @@ def api_potato_action():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
     
-    action = data.get('action')
-    index = int(data.get('index', 0))
-    
-    if index < 0 or index > 99: return jsonify({"error": "Клетка за пределами поля!"}), 400
-    
-    field = db['potato_fields'].find_one({"uid": uid})
-    if not field: return jsonify({"error": "Поле не найдено!"}), 400
-    cells = field['cells']
-    import time
+    import time, random
     now = int(time.time())
+    action = data.get('action')
+    try: index = int(data.get('index', 0))
+    except (TypeError, ValueError): index = -1
+    
+    field = _potato_get_field(uid)
+    cells = field['cells']
+    fid = {"uid": uid}
+    
+    def reset_wave_if_empty():
+        if all(c == 0 for c in cells):
+            db['potato_fields'].update_one(fid, {"$set": {"s_plant": 0, "s_cnt": 0, "s_harv": 0}})
+    
+    # --- ПОСАДИТЬ ВЕЗДЕ (на все свободные клетки, сколько хватит очков) ---
+    if action == 'plant_all':
+        empty = [i for i, c in enumerate(cells) if c == 0]
+        if not empty: return jsonify({"error": "Нет свободных клеток!"}), 400
+        pts = (paid_collection.find_one({"uid": uid}) or {}).get("bounty_points", 0)
+        n = min(len(empty), pts // POTATO_COST)
+        if n <= 0: return jsonify({"error": f"Нет {POTATO_COST} 💎 на семена!"}), 400
+        total_cost = n * POTATO_COST
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": total_cost}},
+            {"$inc": {"bounty_points": -total_cost}}
+        )
+        if not charged: return jsonify({"error": "Баланс изменился, попробуйте ещё раз."}), 400
+        reset_wave_if_empty()
+        planted = 0
+        for i in empty[:n]:
+            res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": 0}, {"$set": {f"cells.{i}": now}})
+            if res.modified_count: planted += 1
+        if planted < n:   # клетку успели занять параллельным запросом: возвращаем деньги
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": (n - planted) * POTATO_COST}})
+        db['potato_fields'].update_one(fid, {"$inc": {"s_plant": planted}})
+        return jsonify({"success": True, "msg": f"🌱 Посажено {planted} шт. за {planted * POTATO_COST} 💎."})
+    
+    # --- СОБРАТЬ ВСЁ (одним запросом и одним окошком вместо 100 тапов) ---
+    if action == 'harvest_all':
+        total, cnt = 0, 0
+        for i, c in enumerate(cells):
+            if c > 0 and now - c >= POTATO_GROW:
+                res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": c}, {"$set": {f"cells.{i}": 0}})
+                if res.modified_count:
+                    total += random.randint(70, 110)
+                    cnt += 1
+        if cnt == 0: return jsonify({"error": "Нет созревшей картохи!"}), 400
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": total}})
+        db['potato_fields'].update_one(fid, {"$inc": {"s_harv": total, "s_cnt": cnt, "t_harv": cnt}})
+        return jsonify({"success": True, "reward": total, "count": cnt, "msg": f"🥔 Собрано {cnt} шт., получено {total} 💎!"})
+    
+    # --- ДУСТ: убрать всех жуков разом ---
+    if action == 'dust':
+        if not any(c == -1 for c in cells): return jsonify({"error": "На поле нет жуков!"}), 400
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": POTATO_DUST_COST}},
+            {"$inc": {"bounty_points": -POTATO_DUST_COST}}
+        )
+        if not charged: return jsonify({"error": f"Нужно {POTATO_DUST_COST} 💎 на дуст!"}), 400
+        killed = 0
+        for i, c in enumerate(cells):
+            if c == -1:
+                res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": -1}, {"$set": {f"cells.{i}": 0}})
+                if res.modified_count: killed += 1
+        if killed == 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": POTATO_DUST_COST}})
+            return jsonify({"error": "Жуки уже исчезли."}), 400
+        db['potato_fields'].update_one(fid, {"$inc": {"t_squash": killed}})
+        return jsonify({"success": True, "msg": f"☠️ Дуст сработал: уничтожено жуков: {killed}."})
+    
+    # --- ОБРАБОТКА ПОЛЯ: 12 часов жуки не прилетают и не ползут ---
+    if action == 'spray':
+        left = field.get("protected_until", 0) - now
+        if left > 3600: return jsonify({"error": f"Поле уже обработано (ещё {int(left // 3600)} ч)."}), 400
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": POTATO_SPRAY_COST}},
+            {"$inc": {"bounty_points": -POTATO_SPRAY_COST}}
+        )
+        if not charged: return jsonify({"error": f"Нужно {POTATO_SPRAY_COST} 💎 на обработку!"}), 400
+        db['potato_fields'].update_one(fid, {"$set": {"protected_until": now + POTATO_SPRAY_SECONDS}})
+        return jsonify({"success": True, "msg": "🧪 Поле обработано! 12 часов жуки не прилетят и не поползут."})
+    
+    # --- ДЕЙСТВИЯ НАД ОДНОЙ КЛЕТКОЙ ---
+    if index < 0 or index > 99: return jsonify({"error": "Клетка за пределами поля!"}), 400
     
     if action == 'plant':
         if cells[index] != 0: return jsonify({"error": "Занято!"}), 400
-        user_db = paid_collection.find_one_and_update(
-            {"uid": uid, "bounty_points": {"$gte": 60}},
-            {"$inc": {"bounty_points": -60}}
+        reset_wave_if_empty()
+        # Сначала атомарно занимаем клетку, потом списываем семена (двойной тап не оплатит одну клетку дважды)
+        claimed = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": 0}, {"$set": {f"cells.{index}": now}})
+        if claimed.modified_count == 0: return jsonify({"error": "Занято!"}), 400
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": POTATO_COST}},
+            {"$inc": {"bounty_points": -POTATO_COST}}
         )
-        if not user_db: return jsonify({"error": "Нет 60 💎 на семена!"}), 400
-        cells[index] = now
-        db['potato_fields'].update_one({"uid": uid}, {"$set": {f"cells.{index}": now}})
+        if not paid:
+            db['potato_fields'].update_one({"uid": uid, f"cells.{index}": now}, {"$set": {f"cells.{index}": 0}})
+            return jsonify({"error": f"Нет {POTATO_COST} 💎 на семена!"}), 400
+        db['potato_fields'].update_one(fid, {"$inc": {"s_plant": 1}})
         return jsonify({"success": True})
         
     elif action == 'harvest':
         planted_at = cells[index]
-        if planted_at <= 0 or now - planted_at < 8 * 3600:
+        if planted_at <= 0 or now - planted_at < POTATO_GROW:
             return jsonify({"error": "Еще не созрело!"}), 400
-        import random
+        # Атомарно убираем клетку: двойной тап не выдаст награду дважды
+        res = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": planted_at}, {"$set": {f"cells.{index}": 0}})
+        if res.modified_count == 0: return jsonify({"error": "Уже собрано!"}), 400
         reward = random.randint(70, 110)
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}})
-        db['potato_fields'].update_one({"uid": uid}, {"$set": {f"cells.{index}": 0}})
+        db['potato_fields'].update_one(fid, {"$inc": {"s_harv": reward, "s_cnt": 1, "t_harv": 1}})
         return jsonify({"success": True, "reward": reward})
         
     elif action == 'squash':
-        if cells[index] != -1: return jsonify({"error": "Здесь нет жука!"}), 400
-        db['potato_fields'].update_one({"uid": uid}, {"$set": {f"cells.{index}": 0}})
+        res = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": -1}, {"$set": {f"cells.{index}": 0}})
+        if res.modified_count == 0: return jsonify({"error": "Здесь нет жука!"}), 400
+        db['potato_fields'].update_one(fid, {"$inc": {"t_squash": 1}})
         return jsonify({"success": True})
     
     return jsonify({"error": "Неизвестное действие"}), 400
@@ -4012,14 +4205,17 @@ def handle_claim_userdrop(call):
         bot.answer_callback_query(call.id, "Слишком поздно! Мешок уже расхватали.", show_alert=True)
         return
         
-    # Выдаем награду нажавшему
-    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": drop['piece']}}, upsert=True)
-    
-    # Обновляем базу мешка
-    db['active_airdrops'].update_one(
-        {"_id": drop_id},
+    # Атомарно занимаем долю: один раз на человека и не больше max_users долей
+    taken_slot = db['active_airdrops'].find_one_and_update(
+        {"_id": drop_id, "claimed_by": {"$ne": uid}, f"claimed_by.{drop['max_users'] - 1}": {"$exists": False}},
         {"$push": {"claimed_by": uid}}
     )
+    if not taken_slot:
+        bot.answer_callback_query(call.id, "Слишком поздно или вы уже взяли долю!", show_alert=True)
+        return
+    
+    # Выдаем награду нажавшему
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": drop['piece']}}, upsert=True)
     
     bot.answer_callback_query(call.id, f"✅ Вы урвали {drop['piece']} 💎!", show_alert=True)
     
@@ -4032,6 +4228,10 @@ def handle_claim_userdrop(call):
             call.message.chat.id, call.message.message_id, parse_mode="Markdown"
         )
         db['active_airdrops'].delete_one({"_id": drop_id})
+        # Хвост от деления (1000 на 3 -> по 333, хвост 1) возвращаем спонсору, раньше он сгорал
+        rest = drop['total'] - drop['piece'] * drop['max_users']
+        if rest > 0:
+            paid_collection.update_one({"uid": drop['sponsor_id']}, {"$inc": {"bounty_points": rest}})
     else:
         # 👇 НОВОЕ: ОБНОВЛЯЕМ ПРОГРЕСС В КНОПКЕ 👇
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton

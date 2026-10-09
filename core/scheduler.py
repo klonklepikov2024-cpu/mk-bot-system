@@ -325,14 +325,22 @@ def personal_farm_notifications():
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 def colorado_beetle_invasion():
-    """Расползание Колорадского Жука по картофельному полю"""
-    fields = db['potato_fields'].find()
+    """Расползание Колорадского Жука по картофельному полю: с уведомлением в ЛС и защитой обработанных полей"""
     import time, random
+    from core.bot import bot
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    from config import APP_URL
     now = int(time.time())
     
-    for field in fields:
-        cells = field['cells']
-        updated = False
+    for field in db['potato_fields'].find():
+        # Обработанное поле (Обработка в мини-аппе) жуки обходят стороной
+        if field.get("protected_until", 0) > now:
+            continue
+        cells = list(field.get('cells', []))
+        if len(cells) != 100:
+            continue
+        fid = field["_id"]
+        new_hits, eaten = 0, 0
         
         for i in range(100):
             # Если тут жук, он пытается перепрыгнуть на соседнюю клетку (шанс 20%)
@@ -344,19 +352,38 @@ def colorado_beetle_invasion():
                 if i < 90: valid_neighbors.append(i+10)      # Низ
                 
                 target = random.choice(valid_neighbors)
-                # Жук съедает растущую картошку
+                # Жук съедает растущую картошку (точечно, чтобы не затереть действия игрока)
                 if cells[target] > 0:
-                    cells[target] = -1
-                    updated = True
+                    res = db['potato_fields'].update_one({"_id": fid, f"cells.{target}": cells[target]}, {"$set": {f"cells.{target}": -1}})
+                    if res.modified_count:
+                        cells[target] = -1
+                        eaten += 1
                     
             # Если тут картошка и она еще растет, есть 1% шанс, что жук прилетит сам
             elif cells[i] > 0 and (now - cells[i] < 8 * 3600):
                 if random.randint(1, 100) <= 1:
-                    cells[i] = -1
-                    updated = True
-                    
-        if updated:
-            db['potato_fields'].update_one({"_id": field["_id"]}, {"$set": {"cells": cells}})
+                    res = db['potato_fields'].update_one({"_id": fid, f"cells.{i}": cells[i]}, {"$set": {f"cells.{i}": -1}})
+                    if res.modified_count:
+                        cells[i] = -1
+                        new_hits += 1
+        
+        beetles = sum(1 for c in cells if c == -1)
+        # Уведомление в ЛС: не чаще раза в 3 часа, и только если жуки реально появились или поели кусты
+        if (new_hits or eaten) and beetles > 0 and now - field.get("beetle_notified_at", 0) > 3 * 3600:
+            try:
+                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🥔 На поле", web_app=WebAppInfo(url=f"{APP_URL.rstrip('/')}/webapp?tab=farm")))
+                bot.send_message(
+                    field["uid"],
+                    f"🪲 <b>ЖУК НА КАРТОФЕЛЬНОМ ПОЛЕ!</b>\n\nЗаражено клеток: <b>{beetles}</b>" + (f", уже съедено кустов: <b>{eaten}</b>" if eaten else "") +
+                    "\nЖук ползёт на соседние кусты и множится.\n\n"
+                    "🦶 Раздавить бесплатно: тап по жуку.\n"
+                    "☠️ <b>Дуст</b> (100 💎): уберёт всех жуков разом.\n"
+                    "🧪 <b>Обработка</b> (150 💎): 12 часов жуки не прилетают и не ползут.",
+                    parse_mode="HTML", reply_markup=markup
+                )
+            except Exception as e:
+                logger.debug(f"Игнор ошибки: {e}")
+            db['potato_fields'].update_one({"_id": fid}, {"$set": {"beetle_notified_at": now}})
 
 def daily_bonus_reminder():
     """Вечернее пуш-уведомление для тех, кто забыл забрать Ежедневный Бонус"""
@@ -752,9 +779,12 @@ def stray_cat_tax():
         
         if rubles > 0:
             converted_pts = rubles * 2 # Утешительная конвертация
-            paid_collection.update_one({"uid": uid}, {
-                "$inc": {"cashback_balance": -rubles, "bounty_points": converted_pts}
-            })
+            res = paid_collection.update_one(
+                {"uid": uid, "cashback_balance": rubles},   # только если баланс не изменился с момента чтения
+                {"$inc": {"cashback_balance": -rubles, "bounty_points": converted_pts}}
+            )
+            if res.modified_count == 0:
+                continue   # баланс поменялся - заберём в следующий запуск
             
             # Логируем, куда делись деньги
             db['ruble_ledger'].insert_one({
@@ -902,40 +932,40 @@ def collectors_task():
 # scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
 
 def refund_expired_user_airdrops():
-    """Возвращает остатки из неразобранных мешков пользователей (старше 24 часов)"""
+    """Возвращает остатки из неразобранных мешков пользователей (старше 24 часов), включая СТАРЫЕ мешки без created_at"""
     import time
     now = time.time()
     
-    # Ищем пользовательские дропы (начинаются с userdrop_), которым больше 24 часов
-    expired_drops = list(db['active_airdrops'].find({
-        "_id": {"$regex": "^userdrop_"},
-        "created_at": {"$lte": now - 86400} 
-    }))
-    
-    for drop in expired_drops:
-        claimed_count = len(drop.get("claimed_by", []))
-        max_users = drop.get("max_users", 1)
-        piece = drop.get("piece", 0)
-        sponsor_id = drop.get("sponsor_id")
+    for drop in list(db['active_airdrops'].find({"_id": {"$regex": "^userdrop_"}})):
+        # У старых мешков нет created_at: время создания зашито в id (userdrop_<время>_<uid>)
+        ts = drop.get("created_at")
+        if ts is None:
+            try: ts = int(str(drop["_id"]).split("_")[1])
+            except Exception: continue
+        if ts > now - 86400:
+            continue
         
-        # Считаем, сколько очков не забрали
-        leftover = (max_users - claimed_count) * piece
+        # Атомарно забираем мешок: возврат произойдёт только один раз, даже при параллельном запуске
+        gone = db['active_airdrops'].find_one_and_delete({"_id": drop["_id"]})
+        if not gone:
+            continue
+        
+        claimed_count = len(gone.get("claimed_by", []))
+        # Остаток = всё, что не раздали, включая "хвост" от деления (например, 1000 на 3 -> по 333, хвост 1)
+        leftover = gone.get("total", 0) - claimed_count * gone.get("piece", 0)
+        sponsor_id = gone.get("sponsor_id")
         
         if leftover > 0 and sponsor_id:
-            # Возвращаем остаток спонсору
             paid_collection.update_one({"uid": sponsor_id}, {"$inc": {"bounty_points": leftover}})
             try:
                 from core.bot import bot
                 bot.send_message(
-                    sponsor_id, 
-                    f"🎒 **ВОЗВРАТ СРЕДСТВ:** Ваш мешок на {drop.get('total', 0)} 💎 не был разобран полностью.\nНеиспользованный остаток (**{leftover} 💎**) возвращен на ваш баланс!", 
+                    sponsor_id,
+                    f"🎒 **ВОЗВРАТ СРЕДСТВ:** Ваш мешок на {gone.get('total', 0)} 💎 не был разобран полностью.\nНеиспользованные **{leftover} 💎** вернулись на ваш баланс.",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
-        
-        # Удаляем протухший мешок
-        db['active_airdrops'].delete_one({"_id": drop["_id"]})
 
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 

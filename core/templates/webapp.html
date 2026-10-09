@@ -453,16 +453,37 @@
         <div id="farmPotatoBlock" class="hidden">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="font-bold text-lg text-yellow-500">Колхозное поле</h3>
-                <span class="text-xs text-gray-400">Посажено: <span id="potatoCount">0</span>/100</span>
+                <span class="text-xs text-gray-400">Растёт: <span id="potatoCount">0</span>/100</span>
             </div>
-            
+
+            <!-- Прогресс сбора текущей посадки -->
+            <div class="surface rounded-xl p-2 mb-2 border border-yellow-800/40">
+                <div class="flex justify-between text-[11px] text-gray-300 mb-1">
+                    <span>🧺 Собрано: <b id="potatoHarvCnt">0</b>/<span id="potatoPlantCnt">0</span></span>
+                    <span id="potatoProfit" class="font-bold text-green-400">+0 💎</span>
+                </div>
+                <div class="h-2 bg-black/50 rounded overflow-hidden"><div id="potatoBar" class="h-2 bg-yellow-500 transition-all" style="width:0%"></div></div>
+                <div class="flex justify-between text-[10px] text-gray-500 mt-1"><span id="potatoReadyInfo"></span><span id="potatoSprayInfo"></span></div>
+            </div>
+
+            <div id="potatoBeetleBanner" class="hidden bg-red-900/40 border border-red-600/60 rounded-xl p-2 mb-2 text-xs text-red-200">
+                🪲 На поле жуки: <b id="potatoBeetleCnt">0</b>! Они ползут на соседние кусты и множатся. Раздави тапом или купи Дуст.
+            </div>
+
             <div class="bg-yellow-900/10 p-2 rounded-xl border border-yellow-800/50 shadow-inner overflow-hidden">
                 <div id="potatoGrid" class="grid grid-cols-10 gap-0.5 w-full">
                     <p class="text-gray-500 text-sm col-span-10 text-center py-10">⏳ Вспахиваем поле...</p>
                 </div>
             </div>
-            
-            <p class="text-[9px] text-gray-400 text-center mt-3 uppercase tracking-widest">Тапай по клеткам, чтобы сажать картоху (60 💎/шт).</p>
+
+            <div class="grid grid-cols-2 gap-2 mt-3">
+                <button onclick="potatoBulk('harvest_all')" class="surface rounded-xl p-2 text-xs font-bold border border-yellow-600/40 active:scale-95 transition-transform">🧺 Собрать всё</button>
+                <button onclick="potatoBulk('plant_all')" class="surface rounded-xl p-2 text-xs font-bold border border-green-600/40 active:scale-95 transition-transform">🌱 Посадить везде</button>
+                <button onclick="potatoBulk('dust')" class="surface rounded-xl p-2 text-xs font-bold border border-red-600/40 active:scale-95 transition-transform">☠️ Дуст · 100 💎</button>
+                <button onclick="potatoBulk('spray')" class="surface rounded-xl p-2 text-xs font-bold border border-blue-600/40 active:scale-95 transition-transform">🧪 Обработка 12ч · 150 💎</button>
+            </div>
+
+            <p class="text-[9px] text-gray-400 text-center mt-3 uppercase tracking-widest">Тап по клетке: посадить (60 💎) / собрать / раздавить жука. Съеденный кустик не вернуть.</p>
         </div>
 
     </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ФЕРМЫ 🔥 -->
@@ -993,16 +1014,18 @@
                 }
 
                 // --- ЗАЛ СЛАВЫ (АЧИВКИ) ---
-                const achMap = { "schizo": "🤡", "black_streak": "🎰", "gladiator": "⚔️", "santa": "🎅", "safecracker": "🏦", "patriarch": "👨‍👩‍👧‍👦", "drought": "💩", "rat": "🔪", "cuckold": "🦌", "bankrupt": "📉" };
+                window._achCatalog = data.ach_catalog || [];
                 const medalsBox = document.getElementById('medalsContainer');
-                if (data.achievements && data.achievements.length > 0) {
-                    let mHtml = '';
-                    data.achievements.forEach(a => {
-                        if (achMap[a]) mHtml += `<span class="bg-black/50 text-lg w-7 h-7 flex items-center justify-center rounded border border-gray-700 shadow-inner">${achMap[a]}</span>`;
-                    });
-                    medalsBox.innerHTML = mHtml;
+                const unlockedAch = window._achCatalog.filter(a => a.unlocked);
+                if (unlockedAch.length > 0) {
+                    medalsBox.innerHTML = unlockedAch.map(a => `<span class="bg-black/50 text-lg w-7 h-7 flex items-center justify-center rounded border border-gray-700 shadow-inner">${a.icon}</span>`).join('');
                 } else {
-                    medalsBox.innerHTML = '<span class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Нет наград</span>';
+                    medalsBox.innerHTML = '<span class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Нет наград · нажми, чтобы посмотреть, как их получить</span>';
+                }
+                medalsBox.style.cursor = 'pointer';
+                medalsBox.onclick = showAchievements;
+                if (data.new_achievements && data.new_achievements.length) {
+                    customAlert('Новые медали: ' + data.new_achievements.join(', '), 'Достижение!', '🏆');
                 }
             });
         }
@@ -1910,7 +1933,58 @@
                 });
                 grid.innerHTML = html;
                 document.getElementById('potatoCount').innerText = count;
+                renderPotatoStats(data.stats || {});
             });
+        }
+
+        function renderPotatoStats(s) {
+            const plant = s.wave_plant || 0, got = s.wave_harv_cnt || 0;
+            document.getElementById('potatoHarvCnt').innerText = got;
+            document.getElementById('potatoPlantCnt').innerText = plant;
+            document.getElementById('potatoBar').style.width = (plant > 0 ? Math.min(100, Math.round(got / plant * 100)) : 0) + '%';
+            const profit = (s.wave_reward || 0) - (s.wave_spent || 0);
+            const pe = document.getElementById('potatoProfit');
+            pe.innerText = (profit >= 0 ? '+' : '') + profit + ' 💎';
+            pe.className = 'font-bold ' + (profit >= 0 ? 'text-green-400' : 'text-red-400');
+            document.getElementById('potatoReadyInfo').innerText = 'Созрело: ' + (s.ready || 0) + ' · Растёт: ' + (s.growing || 0);
+            const sp = s.spray_left || 0;
+            document.getElementById('potatoSprayInfo').innerText = sp > 0 ? ('🧪 защита ещё ' + Math.ceil(sp / 3600) + ' ч') : '';
+            const ban = document.getElementById('potatoBeetleBanner');
+            if ((s.beetles || 0) > 0) { ban.classList.remove('hidden'); document.getElementById('potatoBeetleCnt').innerText = s.beetles; }
+            else { ban.classList.add('hidden'); }
+        }
+
+        function potatoBulk(action) {
+            const ask = {
+                plant_all: 'Посадить картошку на все свободные клетки (60 💎 за каждую)?',
+                dust: 'Купить Дуст за 100 💎 и убрать всех жуков с поля?',
+                spray: 'Обработать поле за 150 💎? Жуки будут обходить его 12 часов.'
+            };
+            if (ask[action] && !confirm(ask[action])) return;
+            safeHaptic('impact', 'light');
+            apiCall('/api/potato_action', {action: action}).then(data => {
+                if (data.error) { customAlert(data.error, "Колхоз", "⚠️"); return; }
+                safeHaptic('notify', 'success');
+                if (data.msg) customAlert(data.msg, "Колхоз", "🥔");
+                loadPotatoField();
+                loadProfile();
+            });
+        }
+
+        // --- ЗАЛ СЛАВЫ: окно со всеми достижениями ---
+        function showAchievements() {
+            const list = window._achCatalog || [];
+            const rows = list.map(a => {
+                const prog = (!a.unlocked && a.goal) ? '<div class="h-1 bg-gray-800 rounded mt-1"><div class="h-1 bg-blue-500 rounded" style="width:' + Math.min(100, Math.round((a.progress || 0) / a.goal * 100)) + '%"></div></div><div class="text-[9px] text-gray-500 mt-0.5">' + (a.progress || 0) + ' / ' + a.goal + '</div>' : '';
+                const rew = a.reward ? '<div class="text-[10px] text-yellow-500 mt-0.5">Награда: ' + a.reward + '</div>' : '';
+                return '<div class="flex gap-2 items-start p-2 rounded-lg border ' + (a.unlocked ? 'border-yellow-600/40 bg-yellow-900/10' : 'border-gray-800 bg-black/30 opacity-60') + '"><div class="text-2xl">' + (a.unlocked ? a.icon : '🔒') + '</div><div class="flex-1"><div class="font-bold text-sm">' + a.name + '</div><div class="text-[11px] text-gray-400">' + a.desc + '</div>' + prog + rew + '</div></div>';
+            }).join('');
+            const done = list.filter(a => a.unlocked).length;
+            const ov = document.createElement('div');
+            ov.className = 'fixed inset-0 z-[9999] bg-black/80 flex items-end justify-center p-3';
+            ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+            ov.innerHTML = '<div class="surface w-full max-w-md rounded-2xl p-4 border border-gray-700" style="max-height:80vh;overflow-y:auto"><div class="flex justify-between items-center mb-3"><h3 class="font-bold text-lg">🏆 Зал Славы <span class="text-xs text-gray-400">' + done + '/' + list.length + '</span></h3><button onclick="this.closest(\'.fixed\').remove()" class="text-gray-400 text-xl px-2">✕</button></div><div class="space-y-2">' + rows + '</div></div>';
+            document.body.appendChild(ov);
         }
 
         function potatoAction(action, cellIndex) {

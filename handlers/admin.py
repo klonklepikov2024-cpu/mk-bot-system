@@ -2298,3 +2298,87 @@ def handle_scout_contest(call):
 
         import threading
         threading.Thread(target=broadcast_scout, daemon=True).start()
+
+
+# ================= 📒 ЖУРНАЛ ОЧКОВ: ОТЧЁТЫ ДЛЯ АДМИНОВ =================
+_PTS_LABELS = {
+    "main.api_open_chest": "Сундук (Web)", "main.api_spin_roulette": "Рулетка (Web)", "main.api_craft": "Крафт",
+    "main.api_inventory_action": "Инвентарь/Взлом", "main.api_farm_action": "Ферма (грядки)",
+    "main.api_potato_action": "Картофельное поле", "main.handle_user_airdrop": "Мешок: бросили",
+    "main.handle_claim_userdrop": "Мешок: забрали", "main.p2p_transfer": "Переводы игрокам",
+    "main.handle_marriage_response": "Свадьба", "main.join_squid_game": "Игра в кальмара",
+    "main.join_heist": "Ограбление", "main._auto_grant_achievements": "Награда за достижение",
+    "scheduler.refund_expired_user_airdrops": "Возврат мешков", "scheduler.stray_cat_tax": "Кот-налог",
+}
+_PTS_FIELDS = {"pts": ("bounty_points", "очки 💎"), "shards": ("jackpot_shards", "осколки 🧩"), "shields": ("immunity", "щиты 🛡")}
+
+def _pts_label(reason):
+    return _PTS_LABELS.get(reason, reason)
+
+def _pts_staff_only(message):
+    return str(message.chat.id) == str(STAFF_GROUP_ID) or message.from_user.id == OWNER_ID
+
+@bot.message_handler(commands=['pts'])
+def handle_pts_cmd(message):
+    """/pts <ID> [дней] [pts|shards|shields] - откуда у игрока приходят и куда уходят очки"""
+    if not _pts_staff_only(message): return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].lstrip('-').isdigit():
+        return bot.reply_to(message, "Формат: /pts <ID игрока> [дней=7] [pts|shards|shields]")
+    target = int(args[1])
+    days = int(args[2]) if len(args) > 2 and args[2].isdigit() else 7
+    days = max(1, min(180, days))
+    fkey = args[3] if len(args) > 3 and args[3] in _PTS_FIELDS else "pts"
+    field, fname = _PTS_FIELDS[fkey]
+    since = time.time() - days * 86400
+    rows = list(db['points_ledger'].aggregate([
+        {"$match": {"uid": target, "field": field, "ts": {"$gte": since}, "delta": {"$exists": True}}},
+        {"$group": {"_id": "$reason", "sum": {"$sum": "$delta"}, "n": {"$sum": 1}}},
+    ]))
+    gains = sorted([r for r in rows if r["sum"] > 0], key=lambda r: -r["sum"])
+    spends = sorted([r for r in rows if r["sum"] < 0], key=lambda r: r["sum"])
+    tot_in = sum(r["sum"] for r in gains); tot_out = sum(r["sum"] for r in spends)
+    lines = [f"📒 Журнал: {fname}, игрок {target}, за {days} дн.", f"Приход: +{tot_in} | Расход: {tot_out} | Итого: {tot_in + tot_out:+d}", ""]
+    lines.append("⬆️ ОТКУДА ПРИХОДИТ:")
+    lines += [f"  +{r['sum']:<7} {_pts_label(r['_id'])} (×{r['n']})" for r in gains[:12]] or ["  нет записей"]
+    lines.append("\n⬇️ КУДА УХОДИТ:")
+    lines += [f"  {r['sum']:<8} {_pts_label(r['_id'])} (×{r['n']})" for r in spends[:12]] or ["  нет записей"]
+    last = list(db['points_ledger'].find({"uid": target, "field": field}).sort("ts", -1).limit(8))
+    if last:
+        lines.append("\n🕒 ПОСЛЕДНИЕ ОПЕРАЦИИ (время UTC+5):")
+        tz = datetime.timezone(datetime.timedelta(hours=5))
+        for e in last:
+            t = datetime.datetime.fromtimestamp(e["ts"], tz).strftime("%d.%m %H:%M")
+            val = f"{e['delta']:+d}" if "delta" in e else f"= {e.get('value')}"
+            bal = f" → {e['bal']}" if e.get("bal") is not None else ""
+            lines.append(f"  {t} {val}{bal} {_pts_label(e['reason'])}")
+    bot.reply_to(message, "\n".join(lines)[:3900])
+
+@bot.message_handler(commands=['pts_top'])
+def handle_pts_top_cmd(message):
+    """/pts_top [дней] [pts|shards|shields] - сводка по всей экономике: краны, стоки и топ накрутчиков"""
+    if not _pts_staff_only(message): return
+    args = message.text.split()
+    days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 7
+    days = max(1, min(180, days))
+    fkey = args[2] if len(args) > 2 and args[2] in _PTS_FIELDS else "pts"
+    field, fname = _PTS_FIELDS[fkey]
+    since = time.time() - days * 86400
+    match = {"field": field, "ts": {"$gte": since}, "delta": {"$exists": True}}
+    rows = list(db['points_ledger'].aggregate([
+        {"$match": match}, {"$group": {"_id": "$reason", "sum": {"$sum": "$delta"}, "n": {"$sum": 1}}}]))
+    gains = sorted([r for r in rows if r["sum"] > 0], key=lambda r: -r["sum"])
+    spends = sorted([r for r in rows if r["sum"] < 0], key=lambda r: r["sum"])
+    tot_in = sum(r["sum"] for r in gains); tot_out = sum(r["sum"] for r in spends)
+    lines = [f"📊 Экономика: {fname}, за {days} дн.", f"Выпущено: +{tot_in} | Сожжено: {tot_out} | Чистая эмиссия: {tot_in + tot_out:+d}", ""]
+    lines.append("🚰 КРАНЫ (откуда берутся):")
+    lines += [f"  +{r['sum']:<8} {_pts_label(r['_id'])} (×{r['n']})" for r in gains[:10]] or ["  нет записей"]
+    lines.append("\n🕳 СТОКИ (куда уходят):")
+    lines += [f"  {r['sum']:<9} {_pts_label(r['_id'])} (×{r['n']})" for r in spends[:10]] or ["  нет записей"]
+    top = list(db['points_ledger'].aggregate([
+        {"$match": dict(match, uid={"$ne": None})},
+        {"$group": {"_id": "$uid", "net": {"$sum": "$delta"}}}, {"$sort": {"net": -1}}, {"$limit": 8}]))
+    if top:
+        lines.append("\n🏆 ТОП ПО ЧИСТОМУ ПРИРОСТУ (проверять на накрутку):")
+        lines += [f"  {t['_id']}: {t['net']:+d}" for t in top]
+    bot.reply_to(message, "\n".join(lines)[:3900])

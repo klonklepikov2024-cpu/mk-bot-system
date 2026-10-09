@@ -1,6 +1,6 @@
 import time
 from pymongo import ReturnDocument
-from database.mongo import paid_collection, db
+from database.mongo import paid_collection, db, log_ledger
 
 def is_user_locked(uid):
     """Глобальный предохранитель: проверяет, не в бане ли юзер"""
@@ -46,7 +46,10 @@ def take_points_capped(uid, amount):
         return_document=ReturnDocument.BEFORE
     )
     if not old: return 0
-    return min(amount, int(old.get("bounty_points", 0)))
+    taken = min(amount, int(old.get("bounty_points", 0)))
+    if taken > 0:
+        log_ledger(uid, "bounty_points", -taken)   # update-пайплайн обёртка не видит, пишем в журнал сами
+    return taken
 
 
 def _craft_key(uid, kind):
