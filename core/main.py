@@ -10,7 +10,7 @@ import json
 import random
 import html
 from telebot.types import ChatPermissions
-from urllib.parse import unquote
+from urllib.parse import unquote, parse_qsl
 from flask import render_template, jsonify
 from database.mongo import paid_collection, db
 from config import BOT_TOKEN
@@ -139,16 +139,20 @@ def mute_user(chat_id, user_id, seconds, reason=""):
 # ================= WEB APP API =================
 
 def validate_webapp_data(init_data, token):
-    """Секретная функция проверки подписи от Telegram"""
+    """Секретная функция проверки подписи от Telegram (+ срок действия initData 48 часов)"""
     if not init_data: return False # <--- ДОБАВИЛИ ЗАЩИТУ
     try:
-        parsed_data = dict(qc.split("=", 1) for qc in unquote(init_data).split("&"))
+        from urllib.parse import parse_qsl
+        parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
         if "hash" not in parsed_data: return False
         hash_val = parsed_data.pop("hash")
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
         secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
         calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        return calc_hash == hash_val
+        if not hmac.compare_digest(calc_hash, hash_val): return False
+        # Украденный initData нельзя использовать вечно
+        import time as _t
+        return _t.time() - int(parsed_data.get("auth_date", 0)) < 48 * 3600
     except Exception:
         return False
 
@@ -241,7 +245,7 @@ def get_profile():
     if not validate_webapp_data(init_data, BOT_TOKEN):
         return jsonify({"error": "Взлом жопы отклонен"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(init_data).split("&"))
+    parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
@@ -290,7 +294,7 @@ def buy_ticket():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     username = user_info.get('first_name', 'Аноним')
@@ -484,7 +488,7 @@ def api_buy_market():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
@@ -631,7 +635,7 @@ def api_spin_roulette():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
 
@@ -830,7 +834,7 @@ def api_claim_bonus():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     
     import datetime
@@ -888,7 +892,7 @@ def api_get_inventory():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
@@ -922,7 +926,7 @@ def api_craft():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
@@ -1031,7 +1035,7 @@ def api_open_chest():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     
     PRICE = 1000
@@ -1104,7 +1108,7 @@ def api_open_chest():
 def api_get_cpa():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     # 1. Личная стата агента за ВСЁ ВРЕМЯ
     hold = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "hold"})
@@ -1196,7 +1200,7 @@ def api_generate_cpa_link():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
         
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     chat_id = data.get('chat_id')
     
@@ -1226,7 +1230,7 @@ def api_generate_cpa_link():
 def api_exchange():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     # Курс определяет сервер, а не браузер (cost -> reward)
     EXCHANGE_PACKS = {50: 50, 150: 175, 250: 300, 500: 650}
@@ -1251,7 +1255,7 @@ def api_exchange():
 def api_loan():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     action = data.get('action')
     user_db = paid_collection.find_one({"uid": uid}) or {}
@@ -1384,7 +1388,7 @@ def get_daily_tasks_matrix(uid, today_str):
 def api_get_tasks():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     import datetime
     today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
@@ -1394,7 +1398,7 @@ def api_get_tasks():
 def api_open_task_case():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     case_type = data.get('case_type')
     
     import datetime
@@ -1447,7 +1451,7 @@ def api_payout():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
@@ -1526,7 +1530,7 @@ def api_get_stars_invoice():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
         
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     
     # Пакеты определяет сервер: цена в звёздах -> очки
@@ -1589,7 +1593,7 @@ def api_get_my_promos():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
         
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0, "type": {"$ne": "airdrop"}}))
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
@@ -1635,7 +1639,7 @@ def api_add_market_lot():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
         
-    user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
+    user_info = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])
     uid = user_info['id']
     first_name = user_info.get('first_name', 'Аноним')
     
@@ -1727,7 +1731,7 @@ def api_place_bid():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     first_name = user_info.get('first_name', 'Аноним')
@@ -1804,7 +1808,7 @@ def api_inventory_action():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Ошибка авторизации (Неверная подпись)"}), 403
         
-    user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
+    user_info = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])
     uid = user_info['id']
     first_name = user_info.get('first_name', 'Аноним')
     
@@ -2137,7 +2141,7 @@ def api_get_farm():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
         
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     plots = list(db['farm_plots'].find({"uid": uid}).sort("slot_id", 1))
     
@@ -2193,7 +2197,7 @@ def api_farm_action():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
         
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     action = data.get('action') 
     slot_id = int(data.get('slot_id', 0))
     
@@ -2451,7 +2455,7 @@ def _potato_stats(field, now):
 def api_get_potato_field():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     import time
     field = _potato_get_field(uid)
     return jsonify({"cells": field["cells"], "stats": _potato_stats(field, int(time.time()))})
@@ -2460,7 +2464,7 @@ def api_get_potato_field():
 def api_potato_action():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     import time, random
     now = int(time.time())
@@ -2589,7 +2593,7 @@ def api_potato_action():
 def api_get_safes():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
-    uid = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])['id']
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
     keys = {"blue": user_db.get("key_blue", 0), "red": user_db.get("key_red", 0)}
@@ -2621,7 +2625,7 @@ def api_crack_safe():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
     
-    user_info = json.loads(dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))['user'])
+    user_info = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])
     uid = user_info['id']
     username = user_info.get('username')
     user_name_str = f"@{username}" if username else user_info.get('first_name', 'Аноним')
@@ -2763,7 +2767,7 @@ def api_open_agent_case():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
     
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
@@ -2836,7 +2840,7 @@ def api_admin_generate_contest():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     from config import ADMIN_CHAT_IDS
     if str(uid) not in [str(x) for x in ADMIN_CHAT_IDS]:
@@ -2948,7 +2952,7 @@ def api_admin_deploy_contest():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
         return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     from config import ADMIN_CHAT_IDS
     if uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен"}), 403
@@ -3034,7 +3038,7 @@ def api_admin_user_action():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
 
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     admin_uid = json.loads(parsed_data['user'])['id']
     from config import ADMIN_CHAT_IDS
     if admin_uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен."}), 403
@@ -3127,6 +3131,11 @@ def api_admin_user_action():
 def api_admin_giveaway():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    # ⬇ новое: только админы (раньше эндпоинт был открыт любому игроку с валидной подписью)
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    _adm_uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    if _adm_uid not in ADMIN_CHAT_IDS and _adm_uid != OWNER_ID:
+        return jsonify({"error": "Доступ запрещен."}), 403
     
     import datetime
     title = data.get('title')
@@ -3148,6 +3157,11 @@ def api_admin_giveaway():
 def api_admin_emission():
     data = request.json
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    # ⬇ новое: только админы (раньше эндпоинт был открыт любому игроку с валидной подписью)
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    _adm_uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    if _adm_uid not in ADMIN_CHAT_IDS and _adm_uid != OWNER_ID:
+        return jsonify({"error": "Доступ запрещен."}), 403
     action = data.get('action')
     
     import random
@@ -3175,7 +3189,7 @@ def api_admin_stats():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     stat_type = data.get('type')
     
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(data.get('initData')).split("&"))
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     
     import datetime
@@ -3420,7 +3434,7 @@ def api_submit_quest():
     if not screenshot:
         return jsonify({"error": "Файл скриншота не найден!"}), 400
         
-    parsed_data = dict(qc.split("=", 1) for qc in unquote(init_data).split("&"))
+    parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     username = user_info.get('username')
