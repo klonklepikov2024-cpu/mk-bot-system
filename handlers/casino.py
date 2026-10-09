@@ -94,6 +94,18 @@ def handle_casino_spin(message):
     uid = message.from_user.id
     SPIN_PRICE = 50 # Стоимость одной прокрутки
 
+    # 🔥 Казино работает только в личке бота: в группе - короткая подсказка, которая сама исчезает
+    if message.chat.type != 'private':
+        try:
+            bot_username = bot.get_me().username
+            hint_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎰 Играть в личке", url=f"https://t.me/{bot_username}?start=casino"))
+            hint = bot.reply_to(message, "🎰 Казино работает в личке бота, чтобы не засорять чат.", reply_markup=hint_markup)
+            schedule_message_deletion(message.chat.id, hint.message_id, 20, bot)
+            schedule_message_deletion(message.chat.id, message.message_id, 20, bot)
+        except Exception as e:
+            logger.debug(f"Игнор ошибки: {e}")
+        return
+
     # 🔥 АТОМАРНАЯ ОПЕРАЦИЯ: База данных сама проверяет, есть ли 50 очков,
     # и если есть — МГНОВЕННО их списывает. Никаких микрозадержек!
     updated_user = paid_collection.find_one_and_update(
@@ -188,6 +200,20 @@ def handle_spin_for_cashback(call):
     call.message.from_user = call.from_user
     handle_casino_spin(call.message)
 
+
+@bot.callback_query_handler(func=lambda call: call.data == 'casino_spin_dm')
+def handle_casino_spin_dm(call):
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    call.message.from_user = call.from_user
+    handle_casino_spin(call.message)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'casino_prizes_dm')
+def handle_casino_prizes_dm(call):
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    call.message.from_user = call.from_user
+    show_casino_prizes(call.message)
 
 def process_spin_result(chat_id, username, dice_msg_id, val, uid):
     user_data = paid_collection.find_one({"uid": uid}) or {}
@@ -409,22 +435,27 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_won}})
         msg = f"🧩 *Барабан остановился...*\n\nВы нашли: **+{shards_won} Осколок Джекпота**!\n_Соберите 50 штук в кабинете для супер-приза._"
 
-    try:
-        # Отвечаем на кружок рулетки, используя ID чата и ID сообщения
-        bot.send_message(chat_id, msg, reply_to_message_id=dice_msg_id, parse_mode="Markdown")
-    except Exception as e:
-        logger.warning(f"Не удалось ответить на рулетку в чате: {e}")
+    private = (chat_id == uid)
+    again_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎰 Ещё раз (50 💎)", callback_data="casino_spin_dm"))
+    
+    # В личке не дублируем: если есть подробное сообщение о призе, шлём только его (с кнопками)
+    if not (private and pm_msg):
+        try:
+            bot.send_message(chat_id, msg, reply_to_message_id=dice_msg_id, parse_mode="Markdown",
+                             reply_markup=again_markup if private else None)
+        except Exception as e:
+            logger.warning(f"Не удалось ответить на рулетку в чате: {e}")
     
     if pm_msg:
         try:
-            if pm_markup:
-                bot.send_message(uid, pm_msg, parse_mode="Markdown", reply_markup=pm_markup)
-            else:
-                bot.send_message(uid, pm_msg, parse_mode="Markdown")
+            kwargs = {"parse_mode": "Markdown"}
+            if pm_markup: kwargs["reply_markup"] = pm_markup
+            if private: kwargs["reply_to_message_id"] = dice_msg_id
+            bot.send_message(uid, pm_msg, **kwargs)
         except Exception as e:
             logger.warning(f"Не удалось отправить приз в ЛС юзеру {uid}: {e}")
             try:
-                bot.send_message(chat_id, f"⚠️ @{username}, я не смог отправить вам приз в ЛС. Напишите мне в личные сообщения /start!", parse_mode="Markdown") # Использовали username и chat_id
+                bot.send_message(chat_id, f"⚠️ @{username}, я не смог отправить вам приз в ЛС. Напишите мне /start и повторите.")
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ЕЖЕДНЕВНЫЙ БОНУС =================

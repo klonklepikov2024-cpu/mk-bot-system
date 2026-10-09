@@ -35,14 +35,21 @@ def tag_prize_markup(code):
 
 def execute_arrest(uid, first_name, promo_id, target_info):
     """МГНОВЕННОЕ использование Ордера на Арест из Web App (Игнорирует Щиты, без спама в чаты)"""
-    target_info = str(target_info).strip()
+    import html as _html
+    raw = str(target_info).strip()
+    # Первое слово - цель (@username, ID или ссылка t.me/...), всё остальное - причина
+    parts = raw.split(None, 1)
+    token = parts[0] if parts else ""
+    reason_text = parts[1].strip()[:150] if len(parts) > 1 else ""
+    for pref in ("https://t.me/", "http://t.me/", "t.me/"):
+        if token.startswith(pref): token = "@" + token[len(pref):]
     target_uid = None
     
-    # 1. Пытаемся распарсить, что ввел юзер (ID или Юзернейм)
-    if target_info.isdigit(): 
-        target_uid = int(target_info)
-    elif target_info.startswith('@'):
-        uname = target_info.replace('@', '').lower()
+    # 1. Пытаемся распарсить цель (ID или Юзернейм)
+    if token.isdigit(): 
+        target_uid = int(token)
+    elif token.startswith('@'):
+        uname = token.replace('@', '').lower()
         u = db['users'].find_one({"username": uname})
         if u: target_uid = u['_id']
         else:
@@ -60,6 +67,11 @@ def execute_arrest(uid, first_name, promo_id, target_info):
     if target_uid in ADMIN_CHAT_IDS or target_uid == OWNER_ID:
         return False, "❌ Ошибка доступа: Цель обладает дипломатической неприкосновенностью (Админ)!"
 
+    # 2.5 Нельзя «накладывать» арест на того, кто уже в муте: ордер не тратится и срок не обнуляется
+    from utils.validators import has_active_group_restriction
+    if has_active_group_restriction(target_uid):
+        return False, "🚓 Эта цель уже под арестом или в муте! Ордер НЕ потрачен, дождитесь окончания ограничения."
+
     # 3. Атомарно «сжигаем» ордер: сработает только один раз и только у владельца
     claimed = db['promocodes'].find_one_and_update(
         {"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0},
@@ -76,7 +88,7 @@ def execute_arrest(uid, first_name, promo_id, target_info):
         "action": "global_mute", 
         "duration": 3600, 
         "timestamp": now,
-        "reason": f"Ордер на Арест (от {first_name})",
+        "reason": f"Ордер на Арест (от {first_name})" + (f": {reason_text}" if reason_text else ""),
         "ignore_shield": True  # Приказ главному боту игнорировать щиты!
     })
 
@@ -84,8 +96,8 @@ def execute_arrest(uid, first_name, promo_id, target_info):
     try:
         bot.send_message(
             target_uid, 
-            f"🚓 **ОРДЕР НА АРЕСТ!**\n\nГражданин {first_name} применил против вас артефакт.\nСкайнет лишил вас права голоса во всех чатах сети на **1 ЧАС**.\n\n_⚠️ Ордер пробивает любые Щиты Иммунитета! Ограничения будут сняты автоматически._", 
-            parse_mode="Markdown"
+            f"🚓 <b>ОРДЕР НА АРЕСТ!</b>\n\nГражданин {_html.escape(first_name)} применил против вас артефакт.\nСкайнет лишил вас права голоса во всех чатах сети на <b>1 ЧАС</b>." + (f"\n📝 Причина: <i>{_html.escape(reason_text)}</i>" if reason_text else "") + "\n\n<i>⚠️ Ордер пробивает любые Щиты Иммунитета! Ограничения будут сняты автоматически.</i>", 
+            parse_mode="HTML"
         )
     except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
     
@@ -93,7 +105,7 @@ def execute_arrest(uid, first_name, promo_id, target_info):
     try:
         bot.send_message(
             STAFF_GROUP_ID, 
-            f"🚓 <b>ХАОС: ПРИМЕНЕНИЕ ОРДЕРА (WEB APP)</b>\n\n👤 Исполнитель: {first_name} (<code>{uid}</code>)\n🎯 Жертва: <code>{target_uid}</code>\n\n✅ <i>Жертва отправлена в мут на 1 час (Щиты пробиты).</i>", 
+            f"🚓 <b>ХАОС: ПРИМЕНЕНИЕ ОРДЕРА (WEB APP)</b>\n\n👤 Исполнитель: {first_name} (<code>{uid}</code>)\n🎯 Жертва: <code>{target_uid}</code>\n📝 Причина: {_html.escape(reason_text) or '—'}\n\n✅ <i>Жертва отправлена в мут на 1 час (Щиты пробиты).</i>", 
             parse_mode="HTML"
         )
     except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")

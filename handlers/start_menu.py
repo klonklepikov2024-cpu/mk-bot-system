@@ -31,6 +31,18 @@ def send_welcome(message):
             bot.send_message(message.chat.id, shop_text, reply_markup=markup, parse_mode="Markdown")
             return
 
+        # Диплинк в казино (кнопка «Играть в личке» из группы)
+        if len(message.text.split()) > 1 and message.text.split()[1] == "casino":
+            ud = paid_collection.find_one({"uid": message.from_user.id}) or {}
+            casino_markup = InlineKeyboardMarkup(row_width=1)
+            casino_markup.add(
+                InlineKeyboardButton("🎰 Крутить (50 💎)", callback_data="casino_spin_dm"),
+                InlineKeyboardButton("📋 Таблица призов", callback_data="casino_prizes_dm"),
+                InlineKeyboardButton("💳 Купить очки", callback_data="sec_back_main")
+            )
+            bot.send_message(message.chat.id, f"🎰 **Казино**\n\nВаш баланс: **{ud.get('bounty_points', 0)} 💎**\nСтоимость прокрутки: 50 💎", reply_markup=casino_markup, parse_mode="Markdown")
+            return
+
         # 🔥 НОВОЕ: ЛОВИМ ДИПЛИНК ИЗ ГРУППЫ ОТ ЗАЗЫВАЛЫ 🔥
         if len(message.text.split()) > 1 and message.text.split()[1].startswith("app_"):
             tab_name = message.text.split()[1].replace("app_", "")
