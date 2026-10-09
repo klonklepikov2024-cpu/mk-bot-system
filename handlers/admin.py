@@ -2152,7 +2152,8 @@ def handle_give_cmd(message):
         
         if currency in ['points', 'очки']:
             # ⬇ было: $inc на amount без проверки знака
-            if amount >= 0:
+            if amount >= 0 or message.from_user.id == OWNER_ID:
+                # владелец может ставить штраф и уводить баланс в минус осознанно
                 paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": amount}}, upsert=True)
             else:
                 amount = -take_points_capped(target_uid, -amount)   # списание не глубже нуля

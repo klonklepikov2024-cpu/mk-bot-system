@@ -6,7 +6,7 @@ import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from core.bot import bot
-from utils.validators import is_user_locked, can_withdraw, take_points_capped
+from utils.validators import is_user_locked, can_withdraw, take_points_capped, craft_slot, craft_release
 from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 from database.mongo import paid_collection, db
 from utils.logger import logger
@@ -208,12 +208,18 @@ def handle_craft_beyond(call):
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
+    # ⬇ лимит: не больше 3 элитных крафтов в сутки
+    if not craft_slot(uid, 'beyond', 3):
+        try: bot.answer_callback_query(call.id, "❌ Лимит: 3 элитных крафта в сутки.", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     # Списываем ресы в любом случае
     charged = paid_collection.find_one_and_update(
         {"uid": uid, "bounty_points": {"$gte": CRAFT_POINTS}, "immunity": {"$gte": CRAFT_SHIELDS}},
         {"$inc": {"bounty_points": -CRAFT_POINTS, "immunity": -CRAFT_SHIELDS}}
     )
     if not charged:
+        craft_release(uid, 'beyond')
         try: bot.answer_callback_query(call.id, "❌ Не хватает ресурсов!", show_alert=True)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
@@ -228,8 +234,8 @@ def handle_craft_beyond(call):
         db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
         msg = "👑 **КРАФТ УСПЕШЕН!**\n\nСтатус BEYOND у вас уже есть, поэтому кузница выковала вам **ПОЖИЗНЕННЫЙ VIP-СТАТУС**! 💎"
     else:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 1000}})
-        msg = "💸 **КРАФТ УСПЕШЕН!**\n\nТак как у вас уже есть статусы BEYOND и VIP, кузница переплавила ресурсы в чистые деньги!\nВы получили **1000 рублей кэшбэка** на баланс! 💰\n\n_Их можно вывести на карту или потратить на оплату._"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 5}})
+        msg = "🛡 **КРАФТ УСПЕШЕН!**\n\nТак как у вас уже есть статусы BEYOND и VIP, кузница переплавила ресурсы в **5 Щитов Иммунитета**!"
     
     try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -246,7 +252,11 @@ def handle_pawn_promo(call):
 def handle_reward_purchase(call):
     parts = call.data.split('_')
     reward_type = parts[2]
-    price = int(parts[3])
+    # ⬇ цена только из серверной таблицы: callback_data можно подделать кастомным клиентом
+    REWARD_PRICES = {"fine25": 30, "fine50": 60, "vip50": 100, "ads50": 150, "vip100": 300}
+    price = REWARD_PRICES.get(reward_type)
+    if price is None:
+        return
     uid = call.from_user.id
     
     user_data = paid_collection.find_one({"uid": uid}) or {}
@@ -264,7 +274,7 @@ def handle_reward_purchase(call):
         {"uid": uid, "bounty_points": {"$gte": price}},
         {"$inc": {"bounty_points": -price}}
     )
-    if not charged or price <= 0:
+    if not charged:
         return
     
     code_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))

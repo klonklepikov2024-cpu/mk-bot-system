@@ -21,7 +21,7 @@ from core.scheduler import start_scheduler
 from utils.logger import logger
 
 # Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
-from utils.validators import take_points_capped, can_withdraw
+from utils.validators import take_points_capped, can_withdraw, craft_slot, craft_release
 import handlers.security
 import handlers.admin
 import handlers.casino
@@ -850,7 +850,11 @@ def api_craft():
     
     if action == 'shards':
         if user_data.get("jackpot_shards", 0) < 50: return jsonify({"error": "Нужно 50 осколков!"}), 400
-        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": -50}})
+        spent = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": 50}},
+            {"$inc": {"jackpot_shards": -50}}
+        )
+        if not spent: return jsonify({"error": "Нужно 50 осколков!"}), 400
         
         import random
         chance = random.randint(1, 100)
@@ -895,11 +899,16 @@ def api_craft():
 
     elif action == 'beyond':
         # ⬇ было: precheck и отдельный update_one
+        # ⬇ лимит: не больше 3 элитных крафтов в сутки
+        if not craft_slot(uid, 'beyond', 3):
+            return jsonify({"error": "Лимит: 3 элитных крафта в сутки. Приходите завтра!"}), 400
         paid = paid_collection.find_one_and_update(
             {"uid": uid, "bounty_points": {"$gte": 3000}, "immunity": {"$gte": 2}},
             {"$inc": {"bounty_points": -3000, "immunity": -2}}
         )
-        if not paid: return jsonify({"error": "Нужно 3000 очков и 2 щита!"}), 400
+        if not paid:
+            craft_release(uid, 'beyond')
+            return jsonify({"error": "Нужно 3000 очков и 2 щита!"}), 400
         u_info = db['users'].find_one({"_id": uid}) or {}
         
         import random
@@ -915,8 +924,22 @@ def api_craft():
             return jsonify({"success": True, "msg": f"👑 Выкован 100% Купон на VIP!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
             
         else:
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 25000, "immunity": 5}})
-            return jsonify({"success": True, "msg": "💰 Макс. уровень! Ресурсы переплавлены в 25 000 💎 и 5 🛡 Щитов!"})
+            # ⬇ было: +25000 💎 и +5 🛡 за 3000 💎 и 2 🛡 - бесконечный цикл накрутки очков
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 5}})
+            return jsonify({"success": True, "msg": "🛡 Макс. уровень! Ресурсы переплавлены в 5 Щитов Иммунитета!"})
+
+    elif action == 'shield_shop':
+        # Кузница Щитов: 15 осколков -> 1 щит, не больше 5 в сутки
+        if not craft_slot(uid, 'shield_shop', 5):
+            return jsonify({"error": "Лимит: 5 щитов в сутки."}), 400
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": 15}},
+            {"$inc": {"jackpot_shards": -15, "immunity": 1}}
+        )
+        if not paid:
+            craft_release(uid, 'shield_shop')
+            return jsonify({"error": "Нужно 15 осколков!"}), 400
+        return jsonify({"success": True, "msg": "🛡 Осколки переплавлены в Щит Иммунитета!"})
 
 @app.route('/api/open_chest', methods=['POST'])
 def api_open_chest():
@@ -964,8 +987,9 @@ def api_open_chest():
             
         if target == "rubles":
             stolen_rub = int(rubles * random.uniform(0.10, 0.25))
-            if stolen_rub > 0:
-                paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": -stolen_rub}})
+            if stolen_rub > 0 and paid_collection.update_one(
+                    {"uid": uid, "cashback_balance": {"$gte": stolen_rub}},
+                    {"$inc": {"cashback_balance": -stolen_rub}}).modified_count:
                 db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": stolen_rub}})
                 import time
                 db['ruble_ledger'].insert_one({"uid": uid, "amount": -stolen_rub, "reason": "Кот в мешке (Сундук)", "timestamp": time.time()})
@@ -1093,6 +1117,17 @@ def api_generate_cpa_link():
     
     if not chat_id:
         return jsonify({"error": "Город не выбран!"}), 400
+
+    # ⬇ новое: chat_id только из белого списка сетей, платные VIP/BEYOND исключены
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, VIP_CHAT_ID, BEYOND_CHAT_ID
+    try: chat_id = int(chat_id)
+    except (TypeError, ValueError): return jsonify({"error": "Некорректный чат!"}), 400
+    allowed = set(chat_ids_mk.values()) | set(chat_ids_parni.values()) | set(chat_ids_ns.values()) | set(chat_ids_gayznak.values()) | set(chat_ids_rainbow.values())
+    if chat_id not in allowed or chat_id in (VIP_CHAT_ID, BEYOND_CHAT_ID):
+        return jsonify({"error": "Для этого чата ссылки недоступны!"}), 403
+    from utils.validators import is_user_locked
+    if is_user_locked(uid):
+        return jsonify({"error": "Аккаунт заблокирован."}), 403
         
     try:
         # Дергаем Telegram API для создания заявки с маркером cpa_ID
@@ -2833,7 +2868,11 @@ def api_admin_user_action():
             return jsonify({"success": True, "msg": f"Счет на {amount}⭐️ отправлен!"})
 
         elif action == "give_points":
-            paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": int(value)}}, upsert=True)
+            v = int(value)
+            if v >= 0:
+                paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": v}}, upsert=True)
+            else:
+                take_points_capped(target_uid, -v)   # списание не глубже нуля
             bot.send_message(target_uid, f"🎁 **Бонус!**\nНачислено: **{value} Очков**.", parse_mode="Markdown")
             return jsonify({"success": True, "msg": f"Выдано {value} очков."})
 
@@ -4128,6 +4167,79 @@ def handle_adopt_response(call):
 
     bot.edit_message_text(f"🎊 **НОВАЯ КИБЕР-СЕМЬЯ!** 🎊\n\nСкайнет официально поздравляет!\n[{call.from_user.first_name}](tg://user?id={child_id}) теперь является наследником.\n\n_Напишите `!семья`, чтобы посмотреть ваше древо._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
+def build_family_tree_text(uid, get_data, get_name, max_nodes=45):
+    """Полное древо: предки (до 6 поколений), супруги (в т.ч. из других семей), дети, внуки и дальше вниз."""
+    import html
+    cache = {}
+    def gd(u):
+        if u not in cache: cache[u] = get_data(u) or {}
+        return cache[u]
+    def link(u): return f"<a href='tg://user?id={u}'>{html.escape(str(get_name(u)))}</a>"
+    def partner_of(u): return gd(u).get("partner_id")
+    def kids_of(u):
+        ids = list(gd(u).get("children", []))
+        p = partner_of(u)
+        if p:
+            for c in gd(p).get("children", []):
+                if c not in ids: ids.append(c)
+        return ids
+
+    # 1. поднимаемся к самому старшему известному предку
+    seen, cur = {uid}, uid
+    for _ in range(6):
+        p = gd(cur).get("parent_id")
+        if not p or p in seen: break
+        seen.add(p); cur = p
+    root = cur
+
+    shown, lines, state = set(), [], {"n": 0, "cut": False}
+    def label(u):
+        if u == uid: s = f"👉 <b>{html.escape(str(get_name(u)))}</b> (вы)"
+        elif u == root: s = f"👑 {link(u)}"
+        else: s = f"👤 {link(u)}"
+        p = partner_of(u)
+        if p:
+            s += f" 💍 {link(p)}"
+            pp = gd(p).get("parent_id")
+            if pp and pp not in shown and pp != u:
+                s += f" <i>(род. из семьи {link(pp)})</i>"
+        return s
+    def walk(u, prefix, is_last, depth):
+        if state["n"] >= max_nodes:
+            state["cut"] = True; return
+        state["n"] += 1
+        shown.add(u)
+        p = partner_of(u)
+        if p: shown.add(p)
+        branch = "" if depth == 0 else ("└─ " if is_last else "├─ ")
+        lines.append(f"{prefix}{branch}{label(u)}")
+        kids = [c for c in kids_of(u) if c not in shown]
+        cp = prefix + ("" if depth == 0 else ("   " if is_last else "│  "))
+        for i, c in enumerate(kids):
+            walk(c, cp, i == len(kids) - 1, depth + 1)
+    walk(root, "", True, 0)
+
+    # если вы вошли в семью через брак и ваша ветка не попала в дерево выше - покажем и её
+    if uid not in shown:
+        lines.append("")
+        walk(uid, "", True, 0)
+    text = "🌳 <b>ГЕНЕАЛОГИЧЕСКОЕ ДРЕВО</b> 🌳\n\n" + "\n".join(lines)
+    if state["cut"] or len(text) > 3900:
+        text = text[:3850].rsplit("\n", 1)[0] + "\n… <i>(показаны не все родственники)</i>"
+    return text
+
+def _family_bank_id(uid, user_data):
+    """ID общей копилки: у супругов общий, у детей - копилка родителей (если родитель в браке)."""
+    partner_id = user_data.get("partner_id")
+    if partner_id:
+        return f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
+    parent_id = user_data.get("parent_id")
+    if parent_id:
+        pp = (paid_collection.find_one({"uid": parent_id}) or {}).get("partner_id")
+        if pp:
+            return f"family_{min(parent_id, pp)}_{max(parent_id, pp)}"
+    return None
+
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!семья', 'моя семья', '/family'])
 def my_family_tree(message):
     uid = message.from_user.id
@@ -4140,30 +4252,12 @@ def my_family_tree(message):
     if not partner_id and not parent_id and not children:
         return bot.reply_to(message, "🕸 Вы сирота и одиночка. Ни мужа/жены, ни родителей, ни детей.\n\n_Напишите `!свадьба` в ответ кому-нибудь или `!усыновить`._", parse_mode="Markdown")
         
-    text = f"🌳 **ГЕНЕАЛОГИЧЕСКОЕ ДРЕВО** 🌳\n\n👤 **Вы:** [{message.from_user.first_name}](tg://user?id={uid})\n"
-    
-    if parent_id:
-        p_name = (db['chat_stats'].find_one({"uid": parent_id}) or {}).get("name", "Опекун")
-        text += f"👑 **Родитель:** [{p_name}](tg://user?id={parent_id})\n"
-        
-        # 🔥 НОВОЕ: ИЩЕМ ОТЧИМА / РОДИТЕЛЯ №2 🔥
-        p_data = paid_collection.find_one({"uid": parent_id}) or {}
-        stepfather_id = p_data.get("partner_id")
-        if stepfather_id:
-            sf_name = (db['chat_stats'].find_one({"uid": stepfather_id}) or {}).get("name", "Отчим")
-            text += f"👨‍👨‍👦 **Отчим / Родитель №2:** [{sf_name}](tg://user?id={stepfather_id})\n"
-        
-    if partner_id:
-        part_name = (db['chat_stats'].find_one({"uid": partner_id}) or {}).get("name", "Супруг(а)")
-        text += f"💍 **В браке с:** [{part_name}](tg://user?id={partner_id})\n"
-        
-    if children:
-        text += f"👶 **Наследники ({len(children)}/3):**\n"
-        for child_id in children:
-            c_name = (db['chat_stats'].find_one({"uid": child_id}) or {}).get("name", "Ребенок")
-            text += f" ├─ [{c_name}](tg://user?id={child_id})\n"
-            
-    bot.reply_to(message, text, parse_mode="Markdown")
+    def _data(u): return paid_collection.find_one({"uid": u}) or {}
+    def _name(u):
+        n = (db['chat_stats'].find_one({"uid": u}) or {}).get("name")
+        if not n and u == uid: n = message.from_user.first_name
+        return n or "Игрок"
+    bot.reply_to(message, build_family_tree_text(uid, _data, _name), parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!выгнать', '!отказаться', '!детдом')))
 def kick_child(message):
@@ -4853,13 +4947,11 @@ def handle_karma_vote(message):
 def family_piggy_bank(message):
     uid = message.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
-    partner_id = user_data.get("partner_id")
+    # ⬇ копилкой пользуются супруги и дети семьи (ребёнок: через родителя, который в браке)
+    family_id = _family_bank_id(uid, user_data)
     
-    if not partner_id:
-        return bot.reply_to(message, "🕸 У вас нет Синдиката! Общий счет доступен только в браке.")
-        
-    # Формируем уникальный ID семьи (сортируем ID, чтобы у обоих был одинаковый ключ)
-    family_id = f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
+    if not family_id:
+        return bot.reply_to(message, "🕸 У вас нет Синдиката! Общий счет доступен в браке, а детям - если их родитель состоит в браке.")
     fam_db = db['family_banks'].find_one({"_id": family_id}) or {"balance": 0}
     current_bank = fam_db.get("balance", 0)
     
@@ -5013,6 +5105,13 @@ def show_debtors(message):
 # ================= КРИМИНАЛ: ПОБЕГ ИЗ ТЮРЬМЫ =================
 @bot.message_handler(func=lambda m: m.text and m.text.strip().lower().startswith(('!побег', 'побег')))
 def prison_break(message):
+    def _say(*a, **k):
+        m = bot.send_message(*a, **k)
+        try:
+            from core.scheduler import schedule_message_deletion
+            schedule_message_deletion(m.chat.id, m.message_id, 330, bot)   # промежуточные сообщения игры тоже чистим
+        except Exception: pass
+        return m
     try:
         parts = message.text.strip().split()
         if len(parts) < 2:
@@ -5026,11 +5125,26 @@ def prison_break(message):
         if target_id == uid:
             return bot.reply_to(message, "🤡 Вытащить самого себя за волосы из тюрьмы мог только барон Мюнхгаузен. Ждите помощи от друзей!")
 
+        # ⬇ новое: спасать можно только того, кто реально в муте/тюрьме (иначе фарм рейтинга и мут спасателя зря)
+        import time as _t
+        from utils.validators import has_active_group_restriction, _ts
+        _td = paid_collection.find_one({"uid": target_id}) or {}
+        try: in_prison = _ts(_td.get("guantanamo_until", 0)) > _t.time()
+        except Exception: in_prison = False
+        if not in_prison: in_prison = has_active_group_restriction(target_id)
+        if not in_prison:
+            try:
+                _cm = bot.get_chat_member(message.chat.id, target_id)
+                in_prison = (_cm.status == 'restricted' and not getattr(_cm, 'can_send_messages', True))
+            except Exception: pass
+        if not in_prison:
+            return bot.reply_to(message, "🤷 Этот гражданин и так на свободе, спасать некого.")
+
         import html
         safe_name = html.escape(message.from_user.first_name)
         safe_target = html.escape(parts[1])
         
-        bot.send_message(message.chat.id, f"🚁 <a href='tg://user?id={uid}'>{safe_name}</a> подгоняет вертолет к стенам изолятора и кидает трос для {safe_target}...", parse_mode="HTML")
+        _say(message.chat.id, f"🚁 <a href='tg://user?id={uid}'>{safe_name}</a> подгоняет вертолет к стенам изолятора и кидает трос для {safe_target}...", parse_mode="HTML")
         
         import time, random
         time.sleep(3)
@@ -5040,10 +5154,10 @@ def prison_break(message):
             db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
             paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": 2}})
-            bot.send_message(message.chat.id, f"✅ <b>ПОБЕГ УДАЛСЯ!</b>\nОхрана не успела среагировать. {safe_target} на свободе!\n\n<i>Спасатель получает +2 к Карме за преданность братве.</i>", parse_mode="HTML")
+            _say(message.chat.id, f"✅ <b>ПОБЕГ УДАЛСЯ!</b>\nОхрана не успела среагировать. {safe_target} на свободе!\n\n<i>Спасатель получает +2 к Карме за преданность братве.</i>", parse_mode="HTML")
         else:
             # ПРОВАЛ: Полиция вяжет спасателя
-            bot.send_message(message.chat.id, f"🚨 <b>ПРОВАЛ! СНАЙПЕРЫ НА ВЫШКАХ!</b>\nВертолет сбит из РПГ. <a href='tg://user?id={uid}'>{safe_name}</a> арестован за пособничество и отправляется в карцер на 2 часа!", parse_mode="HTML")
+            _say(message.chat.id, f"🚨 <b>ПРОВАЛ! СНАЙПЕРЫ НА ВЫШКАХ!</b>\nВертолет сбит из РПГ. <a href='tg://user?id={uid}'>{safe_name}</a> арестован за пособничество и отправляется в карцер на 2 часа!", parse_mode="HTML")
             mute_user(message.chat.id, uid, 7200, "Провал попытки побега из тюрьмы")
     except Exception as e:
         bot.reply_to(message, f"Системный сбой: {e}")
@@ -5075,12 +5189,16 @@ def start_squid_game(message):
             return bot.reply_to(message, "💸 Участнику нужно 1000 💎 для входа в Игру в Кальмара!")
 
         import time
-        db['active_squid_games'].insert_one({
-            "_id": chat_id,
-            "status": "recruiting",
-            "players": [{"id": uid, "name": message.from_user.first_name}], # Сохраняем сырое имя
-            "start_time": time.time()
-        })
+        try:
+            db['active_squid_games'].insert_one({
+                "_id": chat_id,
+                "status": "recruiting",
+                "players": [{"id": uid, "name": message.from_user.first_name}], # Сохраняем сырое имя
+                "start_time": time.time()
+            })
+        except Exception:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}})   # возврат ставки
+            return bot.reply_to(message, "🦑 Игра уже идёт или произошёл сбой. Ставка возвращена.")
 
         bot.send_message(message.chat.id, f"🦑 <b>ИГРА В КАЛЬМАРА НАЧАЛАСЬ!</b> 🦑\n\n<a href='tg://user?id={uid}'>{user_name}</a> открыл(а) набор смертников.\nВход: <b>1000 💎</b>.\nПризовой фонд: <b>10 000 💎</b> (Выживший забирает всё).\n\nНапишите <code>!играю</code>, чтобы вступить. Нужно ровно 10 человек. Кто готов рискнуть голосом?", parse_mode="HTML")
     except Exception as e:
@@ -5164,6 +5282,13 @@ def run_squid_game(chat_id):
 # ================= КРИМИНАЛ: ОГРАБЛЕНИЕ КАЗИНО =================
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!ограбление', 'ограбление'])
 def start_heist(message):
+    def _say(*a, **k):
+        m = bot.send_message(*a, **k)
+        try:
+            from core.scheduler import schedule_message_deletion
+            schedule_message_deletion(m.chat.id, m.message_id, 330, bot)   # промежуточные сообщения игры тоже чистим
+        except Exception: pass
+        return m
     chat_id = message.chat.id
     uid = message.from_user.id
     import time
@@ -5184,10 +5309,17 @@ def start_heist(message):
         "start_time": time.time()
     })
     
-    bot.send_message(message.chat.id, f"🏴‍☠️ **ПЛАНИРУЕТСЯ ОГРАБЛЕНИЕ ФИНАНСОВОГО СЕЙФА!**\n\n[{message.from_user.first_name}](tg://user?id={uid}) собирает банду.\nДля налета нужно ровно **3 человека**. На сбор есть 5 минут!\n\n_Награда: 20% от всех рублей в Красном Сейфе._\n_Риск: Мут на 2 часа и штраф 500 💎 каждому._\n\nПишите `!в деле`, если готовы рискнуть!", parse_mode="Markdown")
+    _say(message.chat.id, f"🏴‍☠️ **ПЛАНИРУЕТСЯ ОГРАБЛЕНИЕ ФИНАНСОВОГО СЕЙФА!**\n\n[{message.from_user.first_name}](tg://user?id={uid}) собирает банду.\nДля налета нужно ровно **3 человека**. На сбор есть 5 минут!\n\n_Награда: 20% от всех рублей в Красном Сейфе._\n_Риск: Мут на 2 часа и штраф 500 💎 каждому._\n\nПишите `!в деле`, если готовы рискнуть!", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!в деле', 'в деле'])
 def join_heist(message):
+    def _say(*a, **k):
+        m = bot.send_message(*a, **k)
+        try:
+            from core.scheduler import schedule_message_deletion
+            schedule_message_deletion(m.chat.id, m.message_id, 330, bot)   # промежуточные сообщения игры тоже чистим
+        except Exception: pass
+        return m
     chat_id = message.chat.id
     uid = message.from_user.id
     user_name = message.from_user.first_name
@@ -5210,11 +5342,11 @@ def join_heist(message):
     
     if len(heist['members']) < 3:
         left = 3 - len(heist['members'])
-        return bot.send_message(message.chat.id, f"🤝 [{user_name}](tg://user?id={uid}) надел(а) маску и присоединился(лась) к банде!\nОсталось найти еще **{left}** чел.", parse_mode="Markdown")
+        return _say(message.chat.id, f"🤝 [{user_name}](tg://user?id={uid}) надел(а) маску и присоединился(лась) к банде!\nОсталось найти еще **{left}** чел.", parse_mode="Markdown")
         
     # === БАНДА СОБРАНА. НАЧИНАЕМ НАЛЕТ! ===
     db['active_heists'].delete_one({"_id": chat_id})
-    bot.send_message(message.chat.id, "🚐 **БАНДА В СБОРЕ! Налет начался...**\n_Стрельба, взломы серверов, визги сирен..._", parse_mode="Markdown")
+    _say(message.chat.id, "🚐 **БАНДА В СБОРЕ! Налет начался...**\n_Стрельба, взломы серверов, визги сирен..._", parse_mode="Markdown")
     time.sleep(3)
     
     # 30% на успех
@@ -5224,16 +5356,20 @@ def join_heist(message):
     if success:
         # УСПЕХ! Взламываем Красный Сейф
         red_safe = db['safes_state'].find_one({"_id": "safe_red"}) or {"balance": 500}
-        total_loot = int(red_safe.get("balance", 500) * 0.20)
+        total_loot = int(red_safe.get("balance", 0) * 0.20)
         if total_loot < 3: total_loot = 300
         
+        # Списываем из сейфа атомарно: нельзя унести больше, чем там лежит (раньше сейф уходил в минус)
+        taken_safe = db['safes_state'].find_one_and_update(
+            {"_id": "safe_red", "balance": {"$gte": total_loot}},
+            {"$inc": {"balance": -total_loot}}
+        )
+        if not taken_safe: total_loot = 0
         share = total_loot // 3
-        
-        # Списываем из сейфа
-        db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": -total_loot}})
         
         # Раздаем рубли (кэшбэк) грабителям
         for m in heist['members']:
+            if share <= 0: break
             paid_collection.update_one({"uid": m['id']}, {"$inc": {"cashback_balance": share}})
             db['ruble_ledger'].insert_one({"uid": m['id'], "amount": share, "reason": "Успешное ограбление", "timestamp": time.time()})
             

@@ -336,6 +336,10 @@ def handle_support_payment(call):
     cost = int(call.data.split('_')[2])
     uid = call.from_user.id
 
+    # ⬇ допустимые цены только серверные (50⭐ и 111⭐: очки x5, рубли x2); из кнопки их можно подделать
+    if cost not in ({250, 555} if is_points else {100, 222}):
+        return
+
     user_data = paid_collection.find_one({"uid": uid}) or {}
 
     if is_points:

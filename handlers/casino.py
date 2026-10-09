@@ -167,11 +167,15 @@ def handle_spin_for_cashback(call):
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
-    # Транзакция: списываем рубли, начисляем очки
-    paid_collection.update_one(
-        {"uid": uid}, 
+    # Транзакция: списываем рубли, начисляем очки (атомарно)
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": SPIN_PRICE}},
         {"$inc": {"cashback_balance": -SPIN_PRICE, "bounty_points": SPIN_PRICE}}
     )
+    if not charged:
+        try: bot.answer_callback_query(call.id, "❌ Недостаточно кэшбека!", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     
     try: bot.answer_callback_query(call.id, "✅ Кэшбек обменян! Запускаем барабан...")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")

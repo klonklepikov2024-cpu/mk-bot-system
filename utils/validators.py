@@ -47,3 +47,25 @@ def take_points_capped(uid, amount):
     )
     if not old: return 0
     return min(amount, int(old.get("bounty_points", 0)))
+
+
+def _craft_key(uid, kind):
+    import datetime
+    d = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    return f"{uid}_{kind}_{d}"
+
+def craft_slot(uid, kind, limit):
+    """Занимает слот дневного лимита (сутки по UTC+5). True - можно, False - лимит исчерпан."""
+    doc = db['craft_limits'].find_one_and_update(
+        {"_id": _craft_key(uid, kind)},
+        {"$inc": {"n": 1}, "$setOnInsert": {"uid": uid, "kind": kind}},
+        upsert=True, return_document=ReturnDocument.AFTER
+    )
+    if doc.get("n", 0) > limit:
+        db['craft_limits'].update_one({"_id": _craft_key(uid, kind)}, {"$inc": {"n": -1}})
+        return False
+    return True
+
+def craft_release(uid, kind):
+    """Возвращает слот, если крафт не состоялся (не хватило ресурсов)."""
+    db['craft_limits'].update_one({"_id": _craft_key(uid, kind)}, {"$inc": {"n": -1}})
