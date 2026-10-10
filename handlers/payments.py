@@ -19,7 +19,27 @@ def handle_checkout(call):
     parts = call.data.split('_')
     action = parts[1] # "promo", "pay", "partial", "balance"
     target_type = parts[2] # "fine", "ads", "vip"
-    original_amount = int(parts[3])
+    try:
+        original_amount = int(parts[3])
+    except (IndexError, ValueError):
+        return
+
+    # 🔐 Сумма из кнопки сверяется с суммой, которую бот реально выставил (utils/offers.py).
+    # Раньше подделанная кнопка checkout_balance_fine_1 снимала бан за 2₽.
+    from utils.offers import is_amount_ok, expected_amount, FIXED_PRICES
+    if target_type not in ("fine", "indulgence", "support"):
+        return  # другие счета Секретарь не выставляет: такая кнопка может быть только подделкой
+    if not is_amount_ok(call.from_user.id, target_type, original_amount):
+        exp = expected_amount(call.from_user.id, target_type)
+        if True:
+            logger.warning(f"Отклонена оплата с неверной суммой: {call.from_user.id} {call.data} (ожидалось {exp})")
+            try: bot.send_message(call.message.chat.id, "❌ Счёт устарел или сумма не совпадает. Запросите счёт заново (/start) или напишите в поддержку.")
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+            return
+    if target_type not in FIXED_PRICES:
+        exp = expected_amount(call.from_user.id, target_type)
+        if exp is not None:
+            original_amount = exp  # дальше считаем только от серверной суммы
     
     # 1. Если юзер просто хочет оплатить
     if action == "pay":
@@ -105,6 +125,7 @@ def handle_checkout(call):
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
         db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        from utils.offers import close_offer; close_offer(call.from_user.id, target_type)
         archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата кэшбеком"}}}, upsert=True)
         
         user_data_full = paid_collection.find_one({"uid": call.from_user.id})
@@ -135,6 +156,7 @@ def handle_checkout(call):
         now = datetime.datetime.now()
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
         db['skynet_tasks'].insert_one({"uid": call.from_user.id, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        from utils.offers import close_offer; close_offer(call.from_user.id, target_type)
         archive_collection.update_one({"target": str(call.from_user.id)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Внутренний баланс)", "reason": "Оплата ОЧКАМИ"}}}, upsert=True)
         
         user_data_full = paid_collection.find_one({"uid": call.from_user.id})
@@ -219,7 +241,14 @@ def process_promo_code(message, target_type, original_amount, call_msg_chat_id, 
         send_payment_menu(original_amount, "❌ Этот промокод нельзя применить к данной услуге.\n\n🧾 **Выставляем счет на полную сумму:**", is_discounted=False)
         return
 
-    # 4. Считаем скидку
+    # 4. Считаем скидку (от серверной суммы счёта, а не от присланной)
+    from utils.offers import get_offer, apply_discount
+    _offer = get_offer(message.chat.id, target_type)
+    if _offer:
+        if _offer.get("promo"):
+            send_payment_menu(int(_offer["amount"]), "❌ К этому счёту промокод уже применён.", is_discounted=True)
+            return
+        original_amount = int(_offer.get("base") or _offer["amount"])
     discount = promo_data["value"]
     new_amount = original_amount
     
@@ -230,8 +259,16 @@ def process_promo_code(message, target_type, original_amount, call_msg_chat_id, 
         
     if new_amount < 1: new_amount = 1 
         
-    # 5. Применяем промокод и выдаем новую кассу!
-    db['promocodes'].update_one({"_id": promo_text}, {"$inc": {"used_count": 1}})
+    # 5. Применяем промокод и выдаем новую кассу! (атомарно: лимит больше не обходится гонкой)
+    used = db['promocodes'].find_one_and_update(
+        {"_id": promo_text, "$expr": {"$lt": [{"$ifNull": ["$used_count", 0]}, {"$ifNull": ["$usage_limit", 1]}]}},
+        {"$inc": {"used_count": 1}}
+    )
+    if not used:
+        send_payment_menu(original_amount, "❌ Лимит активаций этого промокода исчерпан.\n\n🧾 **Выставляем счет на полную сумму:**", is_discounted=False)
+        return
+    if _offer:
+        apply_discount(message.chat.id, target_type, new_amount, promo_text)
     
     success_text = f"✅ **Промокод успешно применен!**\nСкидка составила {original_amount - new_amount}⭐️.\n\n🧾 **Счет пересчитан. К оплате: {new_amount}⭐️**"
     
@@ -243,6 +280,29 @@ def process_promo_code(message, target_type, original_amount, call_msg_chat_id, 
 # ================= ПРИЕМ ПЛАТЕЖЕЙ TELEGRAM STARS =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def checkout_process(pre_checkout_query):
+    # 🔐 Последний рубеж: Telegram спрашивает «принять платёж?» — сверяем сумму с выставленным счётом
+    q = pre_checkout_query
+    try:
+        from utils.offers import is_amount_ok, expected_amount
+        p = q.invoice_payload
+        kind, claimed = None, None
+        if p.startswith("fine_payment_"):
+            kind, claimed = "fine", q.total_amount
+        elif p.startswith("finepartial_"):
+            kind, claimed = "fine", int(p.split("_")[1])
+        elif p.startswith("support_payment_"):
+            kind, claimed = "support", q.total_amount
+        elif p.startswith("indulgence_"):
+            kind, claimed = "indulgence", q.total_amount
+        # Счёт без записи о сумме мог быть выставлен только до обновления — такие пропускаем
+        # (индульгенция — не дешевле 2000⭐️). Новые счета без записи о сумме не выставляются.
+        legacy = kind in ("fine", "indulgence") and expected_amount(q.from_user.id, kind) is None
+        if kind and not is_amount_ok(q.from_user.id, kind, claimed):
+            if not (legacy and (kind == "fine" or q.total_amount >= 2000)):
+                bot.answer_pre_checkout_query(q.id, ok=False, error_message="Сумма не совпадает с выставленным счётом. Запросите счёт заново.")
+                return
+    except Exception as e:
+        logger.warning(f"Проверка pre_checkout: {e}")
     try:
         bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
     except Exception as e:
@@ -354,6 +414,7 @@ def successful_payment(message):
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
 
         db['fine_payments'].insert_one({"uid": uid, "amount": amount, "timestamp": time.time(), "date": now.strftime("%d.%m.%Y")})
+        from utils.offers import close_offer; close_offer(uid, "fine")
 
         # Приказ Скайнету
         db['skynet_tasks'].insert_one({
@@ -409,6 +470,7 @@ def successful_payment(message):
         ticket_num = now.strftime("%d%m%Y%H%M%S") + f"-{random.randint(100, 999)}"
         
         db['skynet_tasks'].insert_one({"uid": uid, "action": "fine_unban", "amount": original_amount, "timestamp": now})
+        from utils.offers import close_offer; close_offer(uid, "fine")
         archive_collection.update_one({"target": str(uid)}, {"$push": {"history": {"date": now.strftime("%d.%m.%Y %H:%M"), "action": "Разблокировка (Смешанная оплата)", "reason": "Звезды + Кэшбек"}}}, upsert=True)
         
         user_data = paid_collection.find_one({"uid": uid})
@@ -427,6 +489,11 @@ def successful_payment(message):
     # 3. ПОКУПКА ОЧКОВ (МАГАЗИН)
     elif payload.startswith("buy_points_"):
         points_to_add = int(payload.split('_')[2])
+        if {50: 50, 300: 200, 1000: 500}.get(points_to_add, 10**9) > amount:
+            logger.warning(f"buy_points: сумма {amount} не соответствует пакету {points_to_add} (uid {uid})")
+            try: bot.send_message(STAFF_GROUP_ID, f"⚠️ Подозрительная покупка очков: `{uid}` заплатил {amount}⭐️ за пакет {points_to_add}. Очки НЕ начислены.", parse_mode="Markdown")
+            except Exception: pass
+            return
         
         db['daily_revenue'].insert_one({"type": "points_shop", "amount": amount, "timestamp": time.time(), "date": datetime.datetime.now().strftime("%d.%m.%Y")})
         
@@ -464,19 +531,21 @@ def successful_payment(message):
             }
         )
         
-        # 2. Выдаем текстовый тег без смайла + Включаем режим Бога (для Таможни)
+        # 2. Выдаем текстовый тег без смайла + иммунитет (Скайнет пропускает таможню во все города
+        #    и не гоняет по верификации). is_vip/is_queer больше НЕ ставим: из-за них Индульгенция
+        #    открывала VIP-чат и BEYOND.
         db['users'].update_one(
             {"_id": uid}, 
             {"$set": {
                 "custom_tag": "Индульгенция",
-                "is_vip": True,
-                "is_queer": True
+                "indulgence": True
             }}, 
             upsert=True
         )
         
         # 3. Передаем приказ Скайнету на глобальный разбан
         db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+        from utils.offers import close_offer; close_offer(uid, "indulgence")
         
         # 4. Пишем в личное дело для истории
         archive_collection.update_one(
@@ -579,8 +648,15 @@ def handle_shop_buy(call):
     try: bot.answer_callback_query(call.id)
     except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
     parts = call.data.split('_')
-    points = int(parts[3])
-    price = int(parts[4])
+    # 🔐 Пакеты только серверные: раньше кнопка shop_points_buy_1000000_1 давала миллион очков за 1⭐️
+    SHOP_PACKS = {50: 50, 300: 200, 1000: 500}   # очки -> цена в звёздах
+    try:
+        points = int(parts[3])
+    except (IndexError, ValueError):
+        return
+    if points not in SHOP_PACKS:
+        return
+    price = SHOP_PACKS[points]
     try:
         bot.send_invoice(
             call.message.chat.id,

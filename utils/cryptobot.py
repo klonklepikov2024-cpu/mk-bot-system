@@ -4,6 +4,13 @@ from utils.logger import logger
 
 def get_crypto_pay_url(custom_payload, amount_stars, description, asset=None):
     amount_rub = int(amount_stars * 1.8)
+
+    # Запоминаем выставленную сумму на сервере: по ней сверяются все способы оплаты этого счёта
+    try:
+        from utils.offers import register_from_payload
+        register_from_payload(custom_payload, amount_stars)
+    except Exception as e:
+        logger.warning(f"Не удалось запомнить сумму счёта: {e}")
     
     if not CRYPTO_TOKEN:
         logger.error("Токен CRYPTO_TOKEN не найден!")
