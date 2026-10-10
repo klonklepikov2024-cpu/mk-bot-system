@@ -32,6 +32,7 @@ import handlers.contests
 import handlers.market
 import handlers.start_menu
 from handlers.casino import create_unique_promo, msk_today, msk_day_of, msk_time_left
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 app = Flask(__name__, template_folder='templates')
 
@@ -436,9 +437,9 @@ def api_get_market():
         # 2. Вычисляем, продают ли НИЖЕ РЫНКА
         target_type = lot.get("target", "all")
         base_price = 500
-        if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
-        elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
-        elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+        if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+        elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+        elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
         
         real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
         rec_price = int(real_value * 0.6)
@@ -463,8 +464,8 @@ def api_get_market():
             current_rub = int(original_rub * (1 - discount_pct / 100))
             if current_rub < 5: current_rub = 5 
             
-        current_pts = int(current_rub * 2.5)
-        original_pts = int(original_rub * 2.5)
+        current_pts = int(current_rub * points_per_rub())
+        original_pts = int(original_rub * points_per_rub())
         
         result.append({
             "id": str(lot["_id"]),
@@ -521,13 +522,13 @@ def api_buy_market():
         buyer_price_rub = int(original_rub * (1 - discount_pct / 100))
         if buyer_price_rub < 5: buyer_price_rub = 5
         
-    buyer_price_pts = int(buyer_price_rub * 2.5)
+    buyer_price_pts = int(buyer_price_rub * points_per_rub())
 
     if discount_pct > 0:
         buyer_price_rub = int(original_rub * (1 - discount_pct / 100))
         if buyer_price_rub < 5: buyer_price_rub = 5
         
-    buyer_price_pts = int(buyer_price_rub * 2.5)
+    buyer_price_pts = int(buyer_price_rub * points_per_rub())
 
     # 🔥 ВЛИЯНИЕ КАРМЫ: СКИДКА 10% ДЛЯ ХОРОШИХ ГРАЖДАН 🔥
     is_good_citizen = user_db.get("social_rating", 0) >= 50
@@ -568,9 +569,9 @@ def api_buy_market():
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
     target_type = lot.get("target", "all")
     base_price = 500
-    if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
-    elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
-    elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+    if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+    elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+    elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
     
     real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
     rec_price = int(real_value * 0.6)
@@ -806,7 +807,7 @@ def api_spin_roulette():
 
     elif val in [11, 33]:
         win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
-        cost_in_stars = win_rub // 2 
+        cost_in_stars = rub_to_stars(win_rub)
         if bank_data.get("balance", 0) >= cost_in_stars:
             db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
@@ -1603,9 +1604,9 @@ def api_get_my_promos():
         target_type = p.get("target", "all")
         # Вычисляем базовую стоимость в рублях
         base_price = 500
-        if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
-        elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
-        elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+        if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+        elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+        elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
         
         # Считаем Рекомендованную цену (60% от номинала)
         if p.get('type') == 'artifact' and target_type == 'tag':
@@ -1658,9 +1659,9 @@ def api_add_market_lot():
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
     target_type = promo.get("target", "all")
     base_price = 500
-    if target_type == "vip": base_price = prices_db.get("vip_price_stars", 250) * 2
-    elif target_type == "ads": base_price = prices_db.get("ads_price_stars", 150) * 2
-    elif target_type == "fine": base_price = prices_db.get("fine_price_stars", 650) * 2
+    if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+    elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+    elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
     
     # 🔥 НОВАЯ АДЕКВАТНАЯ ОЦЕНКА 🔥
     if promo.get("type") == "artifact":

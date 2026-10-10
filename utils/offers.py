@@ -10,10 +10,11 @@ from database.mongo import db
 
 pay_offers = db['pay_offers']
 
-# Фиксированные цены: их не нужно запоминать, достаточно белого списка
-FIXED_PRICES = {
-    "support": {50, 111},   # платный доступ к поддержке / штраф за спам кнопками
-}
+# Фиксированные цены: их не нужно запоминать, достаточно белого списка.
+# Сами суммы (доступ к поддержке / штраф за спам) меняются в панели /glaz → «Управление».
+def fixed_prices():
+    from utils.netcfg import support_prices
+    return {"support": support_prices()}
 
 
 def register_offer(uid, kind, amount):
@@ -40,7 +41,7 @@ def get_offer(uid, kind):
 
 def expected_amount(uid, kind):
     """Минимально допустимая сумма. None — счёт не выставлялся (кнопка подделана или устарела)."""
-    if kind in FIXED_PRICES:
+    if kind in fixed_prices():
         return None
     o = get_offer(uid, kind)
     return int(o["amount"]) if o else None
@@ -51,8 +52,9 @@ def is_amount_ok(uid, kind, amount):
         amount = int(amount)
     except (TypeError, ValueError):
         return False
-    if kind in FIXED_PRICES:
-        return amount in FIXED_PRICES[kind]
+    fp = fixed_prices()
+    if kind in fp:
+        return amount in fp[kind]
     exp = expected_amount(uid, kind)
     return exp is not None and amount >= exp
 

@@ -26,6 +26,7 @@ def create_unique_promo(prefix, fields):
 
 # ===== Ежедневный бонус: день считается по Москве =====
 from zoneinfo import ZoneInfo
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 MSK = ZoneInfo("Europe/Moscow")
 
 def msk_today():
@@ -408,7 +409,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
     # 9.5 🌟 ЗАМАСКИРОВАННЫЙ КЭШБЭК (Реальные рубли на баланс — val: 11, 33)
     elif val in [11, 33]:
         win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
-        cost_in_stars = win_rub // 2 
+        cost_in_stars = rub_to_stars(win_rub)
         
         # Проверяем и забираем деньги из кассы казино одним атомарным действием
         fund_paid = db['casino_bank'].find_one_and_update(

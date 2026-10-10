@@ -9,6 +9,8 @@ from config import STAFF_GROUP_ID
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
 from utils.templates import NETWORK_LINKS
+from utils.cryptobot import get_crypto_pay_url  # раньше не импортировался: меню оплаты после промокода падало
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 # ================= ЧЕК-АУТ И ГЕНЕРАЦИЯ СЧЕТОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('checkout_'))
@@ -26,7 +28,7 @@ def handle_checkout(call):
 
     # 🔐 Сумма из кнопки сверяется с суммой, которую бот реально выставил (utils/offers.py).
     # Раньше подделанная кнопка checkout_balance_fine_1 снимала бан за 2₽.
-    from utils.offers import is_amount_ok, expected_amount, FIXED_PRICES
+    from utils.offers import is_amount_ok, expected_amount, fixed_prices
     if target_type not in ("fine", "indulgence", "support"):
         return  # другие счета Секретарь не выставляет: такая кнопка может быть только подделкой
     if not is_amount_ok(call.from_user.id, target_type, original_amount):
@@ -36,7 +38,7 @@ def handle_checkout(call):
             try: bot.send_message(call.message.chat.id, "❌ Счёт устарел или сумма не совпадает. Запросите счёт заново (/start) или напишите в поддержку.")
             except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             return
-    if target_type not in FIXED_PRICES:
+    if target_type not in fixed_prices():
         exp = expected_amount(call.from_user.id, target_type)
         if exp is not None:
             original_amount = exp  # дальше считаем только от серверной суммы
@@ -84,7 +86,7 @@ def handle_checkout(call):
             except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
             return
             
-        remaining_stars = original_amount - (used_rubles // 2)
+        remaining_stars = original_amount - rub_to_stars(used_rubles)
         if remaining_stars < 1: remaining_stars = 1
         
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
@@ -101,7 +103,7 @@ def handle_checkout(call):
 
     # 4. Оплата полностью с внутреннего баланса
     elif action == "balance":
-        cost_rub = original_amount * 2
+        cost_rub = to_rub(original_amount)
         user_data = paid_collection.find_one({"uid": call.from_user.id}) or {}
         current_balance = user_data.get("cashback_balance", 0)
         
@@ -141,7 +143,7 @@ def handle_checkout(call):
 
     # 5. Оплата полностью ОЧКАМИ РУЛЕТКИ (НОВОЕ!)
     elif action == "points":
-        cost_points = original_amount * 5
+        cost_points = to_points(original_amount)
         charged = paid_collection.find_one_and_update(
             {"uid": call.from_user.id, "bounty_points": {"$gte": cost_points}},
             {"$inc": {"bounty_points": -cost_points}}
@@ -205,13 +207,13 @@ def process_promo_code(message, target_type, original_amount, call_msg_chat_id, 
         user_data_pay = paid_collection.find_one({"uid": user_id}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_rub = amount_to_pay * 2
-        cost_pts = amount_to_pay * 5
+        cost_rub = to_rub(amount_to_pay)
+        cost_pts = to_points(amount_to_pay)
 
         if cb_balance >= cost_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_rub}₽)", callback_data=f"checkout_balance_{target_type}_{amount_to_pay}"))
         elif cb_balance > 0:
-            remaining_stars = amount_to_pay - (cb_balance // 2)
+            remaining_stars = amount_to_pay - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_{target_type}_{amount_to_pay}_{cb_balance}"))
 
         if pts_balance >= cost_pts: 
@@ -298,7 +300,7 @@ def checkout_process(pre_checkout_query):
         # (индульгенция — не дешевле 2000⭐️). Новые счета без записи о сумме не выставляются.
         legacy = kind in ("fine", "indulgence") and expected_amount(q.from_user.id, kind) is None
         if kind and not is_amount_ok(q.from_user.id, kind, claimed):
-            if not (legacy and (kind == "fine" or q.total_amount >= 2000)):
+            if not (legacy and (kind == "fine" or q.total_amount >= cfg("indulgence_price"))):
                 bot.answer_pre_checkout_query(q.id, ok=False, error_message="Сумма не совпадает с выставленным счётом. Запросите счёт заново.")
                 return
     except Exception as e:
@@ -489,7 +491,7 @@ def successful_payment(message):
     # 3. ПОКУПКА ОЧКОВ (МАГАЗИН)
     elif payload.startswith("buy_points_"):
         points_to_add = int(payload.split('_')[2])
-        if {50: 50, 300: 200, 1000: 500}.get(points_to_add, 10**9) > amount:
+        if shop_packs().get(points_to_add, 10**9) > amount:
             logger.warning(f"buy_points: сумма {amount} не соответствует пакету {points_to_add} (uid {uid})")
             try: bot.send_message(STAFF_GROUP_ID, f"⚠️ Подозрительная покупка очков: `{uid}` заплатил {amount}⭐️ за пакет {points_to_add}. Очки НЕ начислены.", parse_mode="Markdown")
             except Exception: pass
@@ -649,7 +651,7 @@ def handle_shop_buy(call):
     except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
     parts = call.data.split('_')
     # 🔐 Пакеты только серверные: раньше кнопка shop_points_buy_1000000_1 давала миллион очков за 1⭐️
-    SHOP_PACKS = {50: 50, 300: 200, 1000: 500}   # очки -> цена в звёздах
+    SHOP_PACKS = shop_packs()   # очки -> цена в звёздах (меняется в панели /glaz)
     try:
         points = int(parts[3])
     except (IndexError, ValueError):

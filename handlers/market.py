@@ -8,15 +8,16 @@ from config import STAFF_GROUP_ID
 from database.mongo import paid_collection, db
 from utils.logger import logger
 from utils.cryptobot import get_crypto_pay_url
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 # ================= СИСТЕМНЫЕ ФУНКЦИИ РЫНКА =================
 
 def get_base_price_rub(target_type):
     """Умное получение базовой цены из настроек Веб-панели"""
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
-    if target_type == "vip": return prices_db.get("vip_price_stars", 250) * 2
-    if target_type == "ads": return prices_db.get("ads_price_stars", 150) * 2
-    if target_type == "fine": return prices_db.get("fine_price_stars", 650) * 2
+    if target_type == "vip": return to_rub(prices_db.get("vip_price_stars", 250))
+    if target_type == "ads": return to_rub(prices_db.get("ads_price_stars", 150))
+    if target_type == "fine": return to_rub(prices_db.get("fine_price_stars", 650))
     return 500 # Дефолт для неизвестных артефактов
 
 # ================= ГЛАВНОЕ МЕНЮ РЫНКА =================
@@ -186,8 +187,8 @@ def handle_market_showcase(call):
     
     lot = active_lots[page]
     price_rub = lot['price_rub']
-    price_stars = math.ceil(price_rub / 2)
-    price_pts = int(price_rub * 2.5) # Конвертация рублей в очки
+    price_stars = rub_to_stars_ceil(price_rub)
+    price_pts = int(price_rub * points_per_rub()) # Конвертация рублей в очки
     
     t_name = "Штраф" if lot.get('target') == 'fine' else "Рекламу" if lot.get('target') == 'ads' else "VIP" if lot.get('target') == 'vip' else "Любую услугу"
     val = f"{lot.get('value')}%" if lot.get('type') == 'percent' else f"{lot.get('value')}₽"

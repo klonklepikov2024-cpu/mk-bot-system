@@ -6,6 +6,7 @@ from config import STAFF_GROUP_ID
 from telebot.types import ReplyKeyboardRemove
 from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger, notify_admin_on_error
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -22,9 +23,9 @@ def send_welcome(message):
         if len(message.text.split()) > 1 and message.text.split()[1] == "shop":
             markup = InlineKeyboardMarkup(row_width=1)
             markup.add(
-                InlineKeyboardButton("📦 50 очков (1 прокрут) — 50⭐️", callback_data="shop_points_buy_50_50"),
-                InlineKeyboardButton("🔥 300 очков (6 прокрутов) — 200⭐️", callback_data="shop_points_buy_300_200"),
-                InlineKeyboardButton("💎 1000 очк. + 🛡 Щит — 500⭐️", callback_data="shop_points_buy_1000_500"),
+                InlineKeyboardButton(f"📦 50 очков (1 прокрут) — {shop_packs()[50]}⭐️", callback_data=f"shop_points_buy_50_{shop_packs()[50]}"),
+                InlineKeyboardButton(f"🔥 300 очков (6 прокрутов) — {shop_packs()[300]}⭐️", callback_data=f"shop_points_buy_300_{shop_packs()[300]}"),
+                InlineKeyboardButton(f"💎 1000 очк. + 🛡 Щит — {shop_packs()[1000]}⭐️", callback_data=f"shop_points_buy_1000_{shop_packs()[1000]}"),
                 InlineKeyboardButton("🔙 В главное меню", callback_data="sec_back_main")
             )
             shop_text = "🎰 **Магазин Очков Бдительности**\n\nОчки можно тратить на скидки в кабинете или использовать для игры в Гача-Рулетку (`/spin`).\n\n🏆 _Посмотреть список призов: /prizes_\n\nВыберите нужный пакет:"
@@ -68,7 +69,7 @@ def send_welcome(message):
             InlineKeyboardButton("🎰 Игровой Кабинет", callback_data="btn_game_club")
         )
         markup.add(
-            InlineKeyboardButton("📜 Снять бан без вопросов (2000⭐️)", callback_data="buy_indulgence")
+            InlineKeyboardButton(f"📜 Снять бан без вопросов ({cfg('indulgence_price')}⭐️)", callback_data="buy_indulgence")
         )
         
         bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! 👋\nВыберите нужный раздел:", reply_markup=markup)
@@ -242,9 +243,9 @@ def handle_user_query(call):
             paid_collection.update_one({"uid": uid}, {"$set": {"strikes": new_strikes}}, upsert=True)
             
             if new_strikes >= 3:
-                cost_fine = 111 # Штраф за спам - 111 Звезд
-                cost_rub_fine = cost_fine * 2
-                cost_pts_fine = cost_fine * 5
+                cost_fine = cfg("spam_fine")  # штраф за спам — в панели /glaz
+                cost_rub_fine = to_rub(cost_fine)
+                cost_pts_fine = to_points(cost_fine)
                 
                 user_rub = user_data.get("cashback_balance", 0)
                 user_points = user_data.get("bounty_points", 0)
@@ -261,7 +262,7 @@ def handle_user_query(call):
                     markup.add(InlineKeyboardButton(f"🎰 Оплатить штраф очками ({cost_pts_fine} очк.)", callback_data=f"support_pts_{cost_pts_fine}"))
                     
                 # Всегда предлагаем купить Индульгенцию
-                markup.add(InlineKeyboardButton("📜 Купить Индульгенцию (2000⭐️)", callback_data="buy_indulgence"))
+                markup.add(InlineKeyboardButton(f"📜 Купить Индульгенцию ({cfg('indulgence_price')}⭐️)", callback_data="buy_indulgence"))
                 
                 bot.send_message(
                     call.message.chat.id, 
@@ -270,9 +271,9 @@ def handle_user_query(call):
                     reply_markup=markup
                 )
             else:
-                    cost_stars = 50
-                    cost_points = cost_stars * 5
-                    cost_rub = cost_stars * 2
+                    cost_stars = cfg("support_price")  # цена поддержки — в панели /glaz
+                    cost_points = to_points(cost_stars)
+                    cost_rub = to_rub(cost_stars)
                     
                     user_rub = user_data.get("cashback_balance", 0)
                     user_points = user_data.get("bounty_points", 0)
@@ -350,7 +351,7 @@ def handle_support_payment(call):
     uid = call.from_user.id
 
     # ⬇ допустимые цены только серверные (50⭐ и 111⭐: очки x5, рубли x2); из кнопки их можно подделать
-    if cost not in ({250, 555} if is_points else {100, 222}):
+    if cost not in ({to_points(p) for p in support_prices()} if is_points else {to_rub(p) for p in support_prices()}):
         return
 
     user_data = paid_collection.find_one({"uid": uid}) or {}

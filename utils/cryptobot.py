@@ -1,9 +1,10 @@
 import requests
 from config import CRYPTO_TOKEN
 from utils.logger import logger
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 def get_crypto_pay_url(custom_payload, amount_stars, description, asset=None):
-    amount_rub = int(amount_stars * 1.8)
+    amount_rub = to_rub(amount_stars)  # курс — в панели /glaz
 
     # Запоминаем выставленную сумму на сервере: по ней сверяются все способы оплаты этого счёта
     try:

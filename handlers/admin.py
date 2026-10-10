@@ -24,6 +24,7 @@ from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
 
 import html
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 def safe_md(text, max_len=1000):
     """Очищает текст от спецсимволов Markdown и обрезает длину, чтобы не крашнуть Телеграм"""
@@ -348,8 +349,8 @@ def handle_admin_templates(call):
             user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
             cb_balance = user_data_pay.get("cashback_balance", 0)
             pts_balance = user_data_pay.get("bounty_points", 0)
-            cost_in_rub = amount * 2
-            cost_pts = amount * 5
+            cost_in_rub = to_rub(amount)
+            cost_pts = to_points(amount)
             
             url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
             url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -359,7 +360,7 @@ def handle_admin_templates(call):
             if cb_balance >= cost_in_rub:
                 markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
             elif cb_balance > 0:
-                remaining_stars = amount - (cb_balance // 2)
+                remaining_stars = amount - rub_to_stars(cb_balance)
                 markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
             else:
                 markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -416,8 +417,8 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
+        cost_in_rub = to_rub(amount)
+        cost_pts = to_points(amount)
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -427,7 +428,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         if cb_balance >= cost_in_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
         elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
+            remaining_stars = amount - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
         else:
             markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -459,13 +460,13 @@ def handle_buy_indulgence(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     uid = call.from_user.id
-    amount = 2000
-    cost_in_rub = amount * 2
+    amount = cfg("indulgence_price")
+    cost_in_rub = to_rub(amount)
     
     user_data_pay = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data_pay.get("cashback_balance", 0)
     pts_balance = user_data_pay.get("bounty_points", 0)
-    cost_pts = amount * 5
+    cost_pts = to_points(amount)
     
     url_usdt = get_crypto_pay_url(f"indulgence_{uid}", amount, "Покупка Индульгенции (Снятие бана)", asset="USDT")
     url_ton = get_crypto_pay_url(f"indulgence_{uid}", amount, "Покупка Индульгенции (Снятие бана)", asset="TON")
@@ -475,10 +476,10 @@ def handle_buy_indulgence(call):
     if cb_balance >= cost_in_rub:
         markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_indulgence_{amount}"))
     elif cb_balance > 0:
-        remaining_stars = amount - (cb_balance // 2)
+        remaining_stars = amount - rub_to_stars(cb_balance)
         markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_indulgence_{amount}_{cb_balance}"))
     else:
-        markup.add(InlineKeyboardButton(f"💳 Оплатить 2000⭐️", callback_data=f"checkout_pay_indulgence_{amount}"))
+        markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_indulgence_{amount}"))
     
     if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
     if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
@@ -495,7 +496,7 @@ def handle_buy_indulgence(call):
         "Эта опция позволяет мгновенно снять **ВСЕ** текущие ограничения и штрафы без вопросов, "
         "общения со службой поддержки и записи видео-кружков.\n\n"
         "✨ Бонус: Вы получите уникальный статус **📜 Индульгенция** во всех чатах.\n\n"
-        "💰 Стоимость: **2000⭐️**"
+        f"💰 Стоимость: **{amount}⭐️**"
     )
     
     try:
@@ -632,8 +633,8 @@ def handle_rejections(call):
                 user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
                 pts_balance = user_data_pay.get("bounty_points", 0)
-                cost_in_rub = amount * 2
-                cost_pts = amount * 5
+                cost_in_rub = to_rub(amount)
+                cost_pts = to_points(amount)
                 
                 url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
                 url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -643,7 +644,7 @@ def handle_rejections(call):
                 if cb_balance >= cost_in_rub:
                     fine_markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
                 elif cb_balance > 0:
-                    remaining_stars = amount - (cb_balance // 2)
+                    remaining_stars = amount - rub_to_stars(cb_balance)
                     fine_markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
                 else:
                     fine_markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -946,8 +947,8 @@ def handle_manual_bill(message):
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
+        cost_in_rub = to_rub(amount)
+        cost_pts = to_points(amount)
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -957,7 +958,7 @@ def handle_manual_bill(message):
         if cb_balance >= cost_in_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
         elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
+            remaining_stars = amount - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
         else:
             markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -990,8 +991,8 @@ def process_admin_invoice(message):
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
+        cost_in_rub = to_rub(amount)
+        cost_pts = to_points(amount)
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -1001,7 +1002,7 @@ def process_admin_invoice(message):
         if cb_balance >= cost_in_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
         elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
+            remaining_stars = amount - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
         else:
             markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -1130,8 +1131,8 @@ def process_premium_claim(message):
         "status": "pending"
     }) # <--- ДОБАВИЛИ СКОБКУ }
     
-    from config import PRIZES_THREAD_ID
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"https://{APP_URL}/glaz"))
+    from config import PRIZES_THREAD_ID, APP_URL  # APP_URL раньше не импортировался
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"https://{str(APP_URL or '').replace('https://', '').rstrip('/')}/glaz"))
     try:
         bot.send_message(
             STAFF_GROUP_ID, 
@@ -1870,8 +1871,8 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 user_data_pay = paid_collection.find_one({"uid": uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
                 pts_balance = user_data_pay.get("bounty_points", 0)
-                cost_in_rub = amount * 2
-                cost_pts = amount * 5
+                cost_in_rub = to_rub(amount)
+                cost_pts = to_points(amount)
                 
                 url_usdt = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
                 url_ton = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -1881,7 +1882,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 if cb_balance >= cost_in_rub:
                     markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
                 elif cb_balance > 0:
-                    remaining_stars = amount - (cb_balance // 2)
+                    remaining_stars = amount - rub_to_stars(cb_balance)
                     markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
                 else:
                     markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
