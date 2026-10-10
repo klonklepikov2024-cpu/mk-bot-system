@@ -24,6 +24,7 @@ from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
 
 import html
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
 
 def safe_md(text, max_len=1000):
     """Очищает текст от спецсимволов Markdown и обрезает длину, чтобы не крашнуть Телеграм"""
@@ -348,8 +349,8 @@ def handle_admin_templates(call):
             user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
             cb_balance = user_data_pay.get("cashback_balance", 0)
             pts_balance = user_data_pay.get("bounty_points", 0)
-            cost_in_rub = amount * 2
-            cost_pts = amount * 5
+            cost_in_rub = to_rub(amount)
+            cost_pts = to_points(amount)
             
             url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
             url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -359,7 +360,7 @@ def handle_admin_templates(call):
             if cb_balance >= cost_in_rub:
                 markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
             elif cb_balance > 0:
-                remaining_stars = amount - (cb_balance // 2)
+                remaining_stars = amount - rub_to_stars(cb_balance)
                 markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
             else:
                 markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -370,12 +371,7 @@ def handle_admin_templates(call):
             btn_pts = InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}")
             btn_no_pts = InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT")
             
-            try:
-                if pts_balance >= cost_pts: markup.add(btn_pts)
-                else: markup.add(btn_no_pts)
-            except NameError:
-                if pts_balance >= cost_pts: fine_markup.add(btn_pts)
-                else: fine_markup.add(btn_no_pts)
+            markup.add(btn_pts if pts_balance >= cost_pts else btn_no_pts)
             
             markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
             markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
@@ -416,8 +412,8 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
+        cost_in_rub = to_rub(amount)
+        cost_pts = to_points(amount)
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -427,7 +423,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         if cb_balance >= cost_in_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
         elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
+            remaining_stars = amount - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
         else:
             markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -438,12 +434,7 @@ def process_custom_fine(message, target_uid, thread_id, call_msg):
         btn_pts = InlineKeyboardButton(f"🎰 Оплатить очками ({cost_pts} очк.)", callback_data=f"checkout_points_fine_{amount}")
         btn_no_pts = InlineKeyboardButton(f"🎰 Не хватает {cost_pts - pts_balance} Очков (Играть)", url="https://t.me/FAQMKBOT")
         
-        try:
-            if pts_balance >= cost_pts: markup.add(btn_pts)
-            else: markup.add(btn_no_pts)
-        except NameError:
-            if pts_balance >= cost_pts: fine_markup.add(btn_pts)
-            else: fine_markup.add(btn_no_pts)
+        markup.add(btn_pts if pts_balance >= cost_pts else btn_no_pts)
             
         markup.add(InlineKeyboardButton("💳 Ошибка оплаты? (Альтернатива)", callback_data=f"req_manual_pay_{amount}"))
         markup.add(InlineKeyboardButton("👑 Купить VIP-иммунитет", url="https://t.me/Elitepost_bot"))
@@ -459,13 +450,13 @@ def handle_buy_indulgence(call):
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
     uid = call.from_user.id
-    amount = 2000
-    cost_in_rub = amount * 2
+    amount = cfg("indulgence_price")
+    cost_in_rub = to_rub(amount)
     
     user_data_pay = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data_pay.get("cashback_balance", 0)
     pts_balance = user_data_pay.get("bounty_points", 0)
-    cost_pts = amount * 5
+    cost_pts = to_points(amount)
     
     url_usdt = get_crypto_pay_url(f"indulgence_{uid}", amount, "Покупка Индульгенции (Снятие бана)", asset="USDT")
     url_ton = get_crypto_pay_url(f"indulgence_{uid}", amount, "Покупка Индульгенции (Снятие бана)", asset="TON")
@@ -475,10 +466,10 @@ def handle_buy_indulgence(call):
     if cb_balance >= cost_in_rub:
         markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_indulgence_{amount}"))
     elif cb_balance > 0:
-        remaining_stars = amount - (cb_balance // 2)
+        remaining_stars = amount - rub_to_stars(cb_balance)
         markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_indulgence_{amount}_{cb_balance}"))
     else:
-        markup.add(InlineKeyboardButton(f"💳 Оплатить 2000⭐️", callback_data=f"checkout_pay_indulgence_{amount}"))
+        markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_indulgence_{amount}"))
     
     if url_usdt: markup.add(InlineKeyboardButton("🟢 USDT (CryptoBot)", url=url_usdt))
     if url_ton: markup.add(InlineKeyboardButton("💎 TON (CryptoBot)", url=url_ton))
@@ -495,7 +486,7 @@ def handle_buy_indulgence(call):
         "Эта опция позволяет мгновенно снять **ВСЕ** текущие ограничения и штрафы без вопросов, "
         "общения со службой поддержки и записи видео-кружков.\n\n"
         "✨ Бонус: Вы получите уникальный статус **📜 Индульгенция** во всех чатах.\n\n"
-        "💰 Стоимость: **2000⭐️**"
+        f"💰 Стоимость: **{amount}⭐️**"
     )
     
     try:
@@ -632,8 +623,8 @@ def handle_rejections(call):
                 user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
                 pts_balance = user_data_pay.get("bounty_points", 0)
-                cost_in_rub = amount * 2
-                cost_pts = amount * 5
+                cost_in_rub = to_rub(amount)
+                cost_pts = to_points(amount)
                 
                 url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
                 url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -643,7 +634,7 @@ def handle_rejections(call):
                 if cb_balance >= cost_in_rub:
                     fine_markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
                 elif cb_balance > 0:
-                    remaining_stars = amount - (cb_balance // 2)
+                    remaining_stars = amount - rub_to_stars(cb_balance)
                     fine_markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
                 else:
                     fine_markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -946,8 +937,8 @@ def handle_manual_bill(message):
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
+        cost_in_rub = to_rub(amount)
+        cost_pts = to_points(amount)
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -957,7 +948,7 @@ def handle_manual_bill(message):
         if cb_balance >= cost_in_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
         elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
+            remaining_stars = amount - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
         else:
             markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -990,8 +981,8 @@ def process_admin_invoice(message):
         user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
         cb_balance = user_data_pay.get("cashback_balance", 0)
         pts_balance = user_data_pay.get("bounty_points", 0)
-        cost_in_rub = amount * 2
-        cost_pts = amount * 5
+        cost_in_rub = to_rub(amount)
+        cost_pts = to_points(amount)
         
         url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
         url_ton = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -1001,7 +992,7 @@ def process_admin_invoice(message):
         if cb_balance >= cost_in_rub:
             markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
         elif cb_balance > 0:
-            remaining_stars = amount - (cb_balance // 2)
+            remaining_stars = amount - rub_to_stars(cb_balance)
             markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
         else:
             markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
@@ -1042,17 +1033,70 @@ def handle_admin_replies(message):
     except Exception: logger.warning(f"Ошибка ручного ответа админа юзеру {target_uid}")
 
 # ================= АРТЕФАКТЫ И ТЕГИ =================
-@bot.callback_query_handler(func=lambda call: call.data == 'claim_custom_tag')
+@bot.callback_query_handler(func=lambda call: call.data in ('claim_custom_tag', 'tagc_inv') or call.data.startswith('tagc_menu_'))
 def handle_claim_tag(call):
+    # Раньше ответ уходил в process_tag_input, которой не существовало, а кнопки
+    # «🏷 Назначить тег» (инвентарь) и «✍️ Придумать другой тег» (после отказа) вообще никуда не вели.
     try: bot.answer_callback_query(call.id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     try:
-        msg = bot.send_message(call.message.chat.id, "✍️ **Создание личного тега**\n\nПридумайте и напишите ваш новый статус (максимум 15 символов).\n_Внимание: Тег будет проверен модератором!_")
+        uid = call.from_user.id
+        if db['temp_tags'].find_one({"uid": uid}):
+            bot.send_message(call.message.chat.id, "⏳ Ваш тег уже на проверке у модератора. Дождитесь решения.")
+            return
+        if not _free_tag_coupon(uid):
+            bot.send_message(call.message.chat.id, "❌ У вас нет свободного купона на тег.")
+            return
+        msg = bot.send_message(call.message.chat.id, "✍️ **Создание личного тега**\n\nПридумайте и напишите ваш новый статус (максимум 15 символов).\n_Внимание: Тег будет проверен модератором!_\n\nДля отмены отправьте /start", parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_tag_input)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+
+def _free_tag_coupon(uid):
+    return db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0})
+
+
+def process_tag_input(message):
+    uid = message.from_user.id
+    text = (message.text or "").strip()
+    if text.startswith('/'):
+        if text == '/start':
+            from handlers.start_menu import send_welcome
+            send_welcome(message)
+        return
+    if not text or len(text) > 15 or re.search(r'(https?://|t\.me/|@\w)', text, re.I):
+        msg = bot.send_message(message.chat.id, "❌ Тег — от 1 до 15 символов, без ссылок и @упоминаний. Напишите другой вариант или /start для выхода:")
+        bot.register_next_step_handler(msg, process_tag_input)
+        return
+    # Купон бронируем атомарно: двойная отправка не создаст две заявки
+    coupon = db['promocodes'].find_one_and_update(
+        {"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0},
+        {"$set": {"used_count": 1}})
+    if not coupon:
+        bot.send_message(message.chat.id, "❌ Свободный купон на тег не найден (уже использован или на проверке).")
+        return
+    name = message.from_user.first_name or "Без имени"
+    db['temp_tags'].update_one({"uid": uid}, {"$set": {"tag": text, "name": name, "coupon": coupon["_id"], "ts": time.time()}}, upsert=True)
+    from config import PRIZES_THREAD_ID
+    markup = InlineKeyboardMarkup(row_width=2).add(
+        InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}"))
+    try:
+        bot.send_message(STAFF_GROUP_ID,
+                         f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ</b>\n\n👤 От: {html.escape(name)} (<code>{uid}</code>)\n"
+                         f"📝 Желаемый тег: <b>{html.escape(text)}</b>\n\nОдобрить установку?",
+                         parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
+    except Exception as e:
+        # Админы не узнали о заявке — возвращаем купон, чтобы он не завис
+        logger.warning(f"Заявка на тег не ушла в ЦУП: {e}")
+        db['promocodes'].update_one({"_id": coupon["_id"]}, {"$set": {"used_count": 0}})
+        db['temp_tags'].delete_one({"uid": uid})
+        bot.send_message(message.chat.id, "⚠️ Не удалось отправить заявку модераторам. Купон сохранён, попробуйте позже.")
+        return
+    bot.send_message(message.chat.id, f"⏳ Тег «{text}» отправлен на модерацию. Как только админ решит — бот напишет.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
 def handle_admin_tag_decision(call):
@@ -1079,7 +1123,7 @@ def handle_admin_tag_decision(call):
         try: bot.send_message(target_uid, f"🎉 **Поздравляем!**\nВаш личный тег **«{tag_text}»** успешно одобрен и установлен во всех чатах сети!")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     elif action == "rej":
-        if coupon: db['promocodes'].update_one({"_id": coupon}, {"$inc": {"used_count": -1}})
+        if coupon: db['promocodes'].update_one({"_id": coupon}, {"$set": {"used_count": 0}})
         try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ВЕРДИКТ: ОТКЛОНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Придумать другой тег", callback_data=f"tagc_menu_{coupon}" if coupon else "claim_custom_tag"))
@@ -1120,19 +1164,93 @@ def process_premium_claim(message):
         
     uid = message.from_user.id
     name = message.from_user.first_name
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID {uid}"
+    
+    # 👇 НОВОЕ: Сохраняем заявку в базу данных для Веб-панели 👇
+    db['premium_claims'].insert_one({
+        "uid": uid,
+        "username": username,
+        "timestamp": time.time(),
+        "status": "pending"
+    }) # <--- ДОБАВИЛИ СКОБКУ }
+    
+    from config import PRIZES_THREAD_ID, APP_URL  # APP_URL раньше не импортировался
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url=f"https://{str(APP_URL or '').replace('https://', '').rstrip('/')}/glaz"))
+    try:
+        bot.send_message(
+            STAFF_GROUP_ID, 
+            f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM)</b> 🏆\n\n"
+            f"👤 Победитель: {name} ({username})\n\n"
+            f"❗️ <i>Заявка добавлена в Веб-панель (раздел «Награды»).</i>", 
+            parse_mode="HTML", 
+            reply_markup=markup,
+            message_thread_id=PRIZES_THREAD_ID # Отправляем в папку призов
+        )
+        bot.send_message(message.chat.id, "✅ Заявка на получение Premium отправлена! С вами скоро свяжутся.")
+    except Exception as e: 
+        logger.debug(f"Игнор ошибки: {e}")
 
-    # Автоматическое исполнение: ордер сгорает только при успешном аресте (цель найдена, не админ, не в муте)
+@bot.callback_query_handler(func=lambda call: call.data.startswith('prem_done_'))
+def handle_prem_done(call):
+    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    target_uid = int(call.data.split('_')[2])
+    
+    # 👇 ДОБАВЛЯЕМ УДАЛЕНИЕ ЗАЯВКИ ИЗ ВЕБ-ПАНЕЛИ 👇
+    db['premium_claims'].delete_one({"uid": target_uid})
+    # 👆 ========================================= 👆
+
+    try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЫДАНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    try: bot.send_message(target_uid, "🎉 Администрация подтвердила выдачу Telegram Premium! Наслаждайтесь!")
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('use_arrest_'))
+def handle_use_arrest(call):
+    try: bot.answer_callback_query(call.id)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    code = call.data.split('_')[2]
+    promo = db['promocodes'].find_one({"_id": code, "is_active": True, "used_count": 0})
+    if not promo:
+        try: bot.send_message(call.message.chat.id, "❌ Этот ордер уже был использован или не существует.")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+        
+    try:
+        msg = bot.send_message(call.message.chat.id, f"🚓 **Использование Ордера: {code}**\n\nНапишите @username или ID пользователя, которого нужно отправить в мут на 1 час (и укажите причину):")
+        bot.register_next_step_handler(msg, process_arrest_claim, code=code)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def process_arrest_claim(message, code):
+    if not message.text:
+        msg = bot.send_message(message.chat.id, "❌ Пожалуйста, отправьте текст.")
+        bot.register_next_step_handler(msg, process_arrest_claim, code=code)
+        return
+
+    if message.text == '/start':
+        from handlers.start_menu import send_welcome
+        send_welcome(message)
+        return
+
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    # Автоматическое исполнение: ордер сгорает только при успешном аресте (цель найдена, не админ, не в муте).
+    # Раньше ордер списывался, а в ЦУП уходила заявка с кнопками, у которых не было обработчика — мут не выдавался.
     from handlers.artifacts import execute_arrest
     ok, text = execute_arrest(uid, name, code, message.text)
     try:
         bot.send_message(message.chat.id, text)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     if not ok and "уже использован" not in text:
-        # Ордер не потрачен - даём ещё одну попытку ввести цель
         try:
             msg = bot.send_message(message.chat.id, "✍️ Отправьте другую цель (@username или ID) или /start для выхода:")
             bot.register_next_step_handler(msg, process_arrest_claim, code=code)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
 
 # Страховка для СТАРЫХ сообщений в ЦУП (отправлены до автоматизации): кнопки теперь работают
 def _arrest_target_from_text(txt):
@@ -1151,6 +1269,7 @@ def _arrest_target_from_text(txt):
         cs = db['chat_stats'].find_one({"username": uname})
         if cs: return cs['uid']
     return None
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('arrest_done_') or call.data.startswith('arrest_rej_'))
 def handle_arrest_staff(call):
@@ -1784,7 +1903,9 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                         "response_format": {"type": "json_object"},
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.4,
-                        "max_tokens": 1000
+                        "max_tokens": 2500,
+                        "reasoning_effort": "low",     # иначе «мысли» gpt-oss съедают лимит и ответ пустой
+                        "include_reasoning": False
                     },
                     timeout=20
                 )
@@ -1830,8 +1951,8 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 user_data_pay = paid_collection.find_one({"uid": uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
                 pts_balance = user_data_pay.get("bounty_points", 0)
-                cost_in_rub = amount * 2
-                cost_pts = amount * 5
+                cost_in_rub = to_rub(amount)
+                cost_pts = to_points(amount)
                 
                 url_usdt = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
                 url_ton = get_crypto_pay_url(f"fine_{uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="TON")
@@ -1841,7 +1962,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                 if cb_balance >= cost_in_rub:
                     markup.add(InlineKeyboardButton(f"💰 Оплатить с баланса ({cost_in_rub}₽)", callback_data=f"checkout_balance_fine_{amount}"))
                 elif cb_balance > 0:
-                    remaining_stars = amount - (cb_balance // 2)
+                    remaining_stars = amount - rub_to_stars(cb_balance)
                     markup.add(InlineKeyboardButton(f"💳 Списать {cb_balance}₽ и доплатить {remaining_stars}⭐️", callback_data=f"checkout_partial_fine_{amount}_{cb_balance}"))
                 else:
                     markup.add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
