@@ -3338,7 +3338,7 @@ def api_admin_stats():
         text = (
             f"🔗 CPA СТАТИСТИКА (ГЛОБАЛЬНАЯ)\n\n"
             f"👁 Всего заявок (кликов): {total}\n"
-            f"⏳ На проверке (Холд 14 дней): {hold}\n"
+            f"⏳ На проверке (Холд {cfg('cpa_hold_days')} дн.): {hold}\n"
             f"🚫 Забраковано всего: {total_fraud}\n"
             f"   ├ Сбежали из чата: {fraud_left}\n"
             f"   └ Забанены за спам: {fraud_banned}\n"

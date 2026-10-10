@@ -1,9 +1,9 @@
-Flask==2.3.2
-pyTelegramBotAPI==4.32.0   # ← обновляем до свежей версии
-gunicorn==20.1.0
-pytz==2023.3
+pyTelegramBotAPI==4.32.0
 pymongo
+Flask==2.3.2
+gunicorn
+setuptools
 requests>=2.31.0
 urllib3>=2.0.0
-imagehash
-Pillow
+APScheduler>=3.10.0
+cloudscraper

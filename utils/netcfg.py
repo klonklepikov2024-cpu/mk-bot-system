@@ -19,6 +19,8 @@ DEFAULTS = {
     "shop_price_50": 50,       # магазин: 50 очков, ⭐️
     "shop_price_300": 200,     # магазин: 300 очков, ⭐️
     "shop_price_1000": 500,    # магазин: 1000 очков + щит, ⭐️
+    "cpa_hold_days": 14,       # холд лида CPA (для текстов статистики)
+    "support_group_price": "от 60 до 150 звёзд",  # текст: сколько стоит вопрос в платной группе поддержки
 }
 
 _cache = {"t": 0.0, "d": {}}
@@ -41,8 +43,10 @@ def cfg(key):
     raw = _doc().get(key)
     if raw is None or raw == "":
         return default
+    if isinstance(default, str):
+        return str(raw).strip() or default
     try:
-        v = type(default)(float(raw)) if isinstance(default, (int, float)) else raw
+        v = type(default)(float(raw))
         return v if v > 0 else default
     except (TypeError, ValueError):
         return default
