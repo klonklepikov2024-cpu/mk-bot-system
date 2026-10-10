@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>Создание пароля | Глаз Саурона</title>
+    <style>
+        body { background-color: #121212; color: #ffffff; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background-color: #1e1e1e; padding: 40px; border-radius: 10px; box-shadow: 0 4px 25px rgba(0,0,0,0.7); border-bottom: 4px solid #bb86fc; width: 320px; text-align: center; }
+        h2 { color: #bb86fc; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+        p { color: #aaa; font-size: 14px; margin-bottom: 20px; }
+        .form-input { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 5px; border: 1px solid #333; background-color: #2d2d2d; color: #fff; font-size: 16px; box-sizing: border-box; }
+        .form-input:focus { border-color: #bb86fc; outline: none; }
+        .btn { width: 100%; padding: 12px; background-color: #bb86fc; color: #121212; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 16px; text-transform: uppercase; }
+        .error { color: #cf6679; font-weight: bold; margin-bottom: 15px; font-size: 14px; }
+        .ok { color: #7bd88f; font-weight: bold; }
+        a { color: #bb86fc; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        {% if expired %}
+            <h2>⌛ Ссылка устарела</h2>
+            <p>Напиши боту команду <b>/webpass</b>, и он пришлёт новую ссылку.</p>
+        {% elif done %}
+            <h2>✅ Готово</h2>
+            <p class="ok">Пароль для <b>{{ login }}</b> сохранён.</p>
+            <p><a href="{{ url_for('login') }}">Перейти ко входу</a></p>
+        {% else %}
+            <h2>🔑 Новый пароль</h2>
+            <p>Логин: <b>{{ login }}</b><br>Минимум 12 символов, не только цифры.</p>
+            {% if error %}<div class="error">{{ error }}</div>{% endif %}
+            <form method="POST">
+                <input type="password" name="password" class="form-input" placeholder="Новый пароль" autocomplete="new-password" required>
+                <input type="password" name="password2" class="form-input" placeholder="Повтори пароль" autocomplete="new-password" required>
+                <button type="submit" class="btn">Сохранить</button>
+            </form>
+        {% endif %}
+    </div>
+</body>
+</html>

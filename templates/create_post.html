@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Elite Poster</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#110D13; --s1:#1B161E; --s2:#2A2330; --s3:#17121A; --line:#332B37; --line2:#241E28;
+  --text:#F5EFF3; --muted:#ADA2B0; --dim:#8D8292; --accent:#F0527F; --on-accent:#1A0710;
+  --ok:#7BE0B0; --danger:#FF8FA8; --danger-line:#5A2A38;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:Manrope,system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+body{min-height:100vh}
+button,textarea,input{font-family:inherit}
+button{cursor:pointer}
+button:disabled{cursor:default}
+.display{font-family:Unbounded,sans-serif}
+.app{max-width:520px;margin:0 auto;padding-bottom:110px}
+header.top{display:flex;align-items:center;justify-content:space-between;padding:20px 20px 12px}
+.brand{font-family:Unbounded,sans-serif;font-weight:700;font-size:18px;letter-spacing:.04em}
+.sub{font-size:12px;color:var(--muted)}
+.vip{width:44px;height:44px;border-radius:22px;border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-family:Unbounded,sans-serif;font-size:11px;font-weight:700;color:var(--accent)}
+nav.tabs{margin:4px 20px 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;background:var(--s1);border-radius:14px}
+nav.tabs button{height:40px;border:0;border-radius:10px;background:transparent;color:var(--muted);font-size:14px;font-weight:600}
+nav.tabs button.on{background:var(--s2);color:var(--text);font-weight:700}
+main{padding:22px 20px 0;display:flex;flex-direction:column;gap:22px}
+.label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.row-between{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.stack{display:flex;flex-direction:column;gap:10px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.picker{text-align:left;min-height:64px;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:var(--s1);color:var(--text);display:flex;flex-direction:column;gap:4px}
+.picker span:first-child{font-size:12px;color:var(--muted)}
+.picker span:last-child{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.picker.empty span:last-child{color:var(--dim);font-weight:600}
+.hint{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);min-height:18px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--text);font-size:13px;font-weight:600}
+.chip.ghost{border-style:dashed;border-color:#4A3F50;color:var(--muted)}
+.chip.solid{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:700}
+textarea.field{width:100%;padding:16px;border-radius:18px;border:1px solid var(--line);background:var(--s3);color:var(--text);font-size:15px;line-height:1.5;resize:none;outline:none;min-height:150px}
+textarea.field:focus{border-color:var(--accent)}
+input.field{width:100%;height:48px;padding:0 14px;border-radius:14px;border:1px solid var(--line);background:var(--s3);color:var(--text);font-size:15px;outline:none}
+input.field:focus{border-color:var(--accent)}
+.media{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.media::-webkit-scrollbar{display:none}
+.tile{position:relative;width:84px;height:84px;flex-shrink:0;border-radius:16px;background:var(--s2);overflow:hidden;display:flex;align-items:center;justify-content:center;color:#6E6274}
+.tile img,.tile video{width:100%;height:100%;object-fit:cover}
+.tile.add{border:1px dashed #4A3F50;background:var(--s3);color:var(--muted)}
+.tile .x{position:absolute;top:4px;right:4px;width:28px;height:28px;border-radius:14px;border:0;background:rgba(17,13,19,.85);color:var(--text);display:flex;align-items:center;justify-content:center}
+footer.bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line2);padding:14px 20px calc(18px + env(safe-area-inset-bottom))}
+footer.bar .inner{max-width:480px;margin:0 auto;display:flex;gap:10px}
+.btn{height:54px;padding:0 18px;border-radius:16px;border:1px solid var(--line);background:var(--s1);color:var(--text);font-size:15px;font-weight:700}
+.btn.primary{flex:1;border:0;background:var(--accent);color:var(--on-accent);font-family:Unbounded,sans-serif;font-size:14px;letter-spacing:.02em}
+.btn.danger{border-color:var(--danger-line);background:transparent;color:var(--danger)}
+.btn.sm{height:44px;font-size:14px;border-radius:12px}
+.btn.grow{flex:1}
+.btn:disabled{opacity:.55}
+.tilestat{padding:12px;border-radius:14px;background:var(--s1);display:flex;flex-direction:column;gap:4px}
+.tilestat b{font-family:Unbounded,sans-serif;font-size:20px}
+.tilestat span{font-size:12px;color:var(--muted)}
+.card{padding:14px;border-radius:18px;background:var(--s1);border:1px solid var(--line2);display:flex;flex-direction:column;gap:10px}
+.card .where{font-size:14px;font-weight:700}
+.card .txt{font-size:14px;line-height:1.4;color:#D9D0D6;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:pre-line}
+.meta{display:flex;gap:14px;font-size:13px;color:var(--muted)}
+.meta span{display:flex;align-items:center;gap:6px}
+.actions{display:flex;gap:8px}
+.empty{padding:28px 18px;border-radius:18px;border:1px dashed #4A3F50;text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
+.screen{position:fixed;inset:0;background:var(--bg);z-index:30;overflow-y:auto;display:none;padding-bottom:140px}
+.screen.on{display:block}
+.screen .head{display:flex;align-items:center;gap:12px;padding:20px 20px 12px;max-width:520px;margin:0 auto}
+.back{width:44px;height:44px;flex-shrink:0;border-radius:22px;border:0;background:var(--s1);color:var(--text);display:flex;align-items:center;justify-content:center}
+.screen .body{max-width:520px;margin:0 auto;padding:0 20px;display:flex;flex-direction:column;gap:16px}
+.chatbox{border-radius:22px;background:#0B0A10;border:1px solid var(--line2);overflow:hidden}
+.chatbox .ch{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #1E1A22}
+.ava{width:34px;height:34px;border-radius:17px;background:var(--s2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)}
+.bubble{max-width:320px;border-radius:16px;background:#1E1A26;overflow:hidden}
+.bubble .pic{height:170px;background:var(--s2);display:flex;align-items:center;justify-content:center;color:#6E6274}
+.bubble .pic img,.bubble .pic video{width:100%;height:100%;object-fit:cover}
+.bubble .bt{padding:10px 12px 12px;font-size:14px;line-height:1.45;color:#EDE6EB;white-space:pre-wrap;word-wrap:break-word}
+.bubble .bt a{color:var(--accent);text-decoration:none;font-weight:700}
+.respond{max-width:320px;height:40px;border-radius:12px;background:var(--s2);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;margin-top:6px}
+.inforow{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-radius:14px;background:var(--s1);font-size:14px}
+.inforow span:first-child{color:var(--muted)}
+.inforow b{font-size:15px}
+.bars{height:110px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;align-items:end}
+.bars div{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.bars i{display:block;width:100%;border-radius:6px;background:var(--accent)}
+.bars i.zero{background:#2E2633}
+.sheet{position:fixed;inset:0;z-index:50;display:none}
+.sheet.on{display:block}
+.sheet .bg{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+.sheet .panel{position:absolute;left:0;right:0;bottom:0;max-height:82vh;display:flex;flex-direction:column;background:#151118;border-top:1px solid var(--line);border-radius:26px 26px 0 0;padding-bottom:env(safe-area-inset-bottom);max-width:520px;margin:0 auto}
+.sheet .grab{width:44px;height:5px;border-radius:3px;background:var(--line);margin:10px auto 6px}
+.sheet h3{margin:0;padding:6px 20px 12px;font-family:Unbounded,sans-serif;font-size:16px}
+.sheet .list{overflow-y:auto;padding:0 16px 16px;display:flex;flex-direction:column;gap:8px}
+.opt{width:100%;min-height:52px;padding:0 16px;border-radius:14px;border:1px solid transparent;background:var(--s1);color:var(--text);text-align:left;font-size:15px;font-weight:600}
+.opt.on{border-color:var(--accent)}
+.modal{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.7)}
+.modal.on{display:flex}
+.modal .box{width:100%;max-width:360px;background:#151118;border:1px solid var(--line);border-radius:22px;padding:22px;display:flex;flex-direction:column;gap:14px}
+.modal h4{margin:0;font-family:Unbounded,sans-serif;font-size:16px}
+.modal p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
+.toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);z-index:70;background:var(--text);color:var(--bg);padding:12px 18px;border-radius:14px;font-size:14px;font-weight:700;display:none;max-width:90vw;text-align:center}
+.toast.on{display:block}
+.sr{position:absolute;left:-9999px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div>
+      <div class="brand">ELITE POSTER</div>
+      <div class="sub">Публикация для VIP-участников</div>
+    </div>
+    <div class="vip" aria-label="Статус VIP">VIP</div>
+  </header>
+
+  <nav class="tabs" aria-label="Разделы">
+    <button id="tab-create" class="on" onclick="showTab('create')">Создать</button>
+    <button id="tab-posts" onclick="showTab('posts')">Анкеты</button>
+    <button id="tab-drafts" onclick="showTab('drafts')">Черновики</button>
+  </nav>
+
+  <!-- СОЗДАНИЕ -->
+  <main id="view-create">
+    <section class="stack">
+      <div class="label">Куда</div>
+      <div class="grid2">
+        <button id="netBtn" class="picker empty" onclick="openSheet('netSheet')"><span>Сеть</span><span id="netText">Выбрать</span></button>
+        <button id="cityBtn" class="picker empty" onclick="openCitySheet()"><span>Город</span><span id="cityText">Сначала сеть</span></button>
+      </div>
+      <div class="hint" id="targetHint"></div>
+    </section>
+
+    <section class="stack">
+      <div class="row-between"><div class="label">Текст</div><div class="sub" id="counter">0 / 800</div></div>
+      <div class="chips" id="tplChips"></div>
+      <label for="postText" class="sr">Текст анкеты</label>
+      <textarea id="postText" class="field" maxlength="800" placeholder="Расскажите о себе и кого ищете. Параметры можно указать так: 24/180/75" oninput="onText()"></textarea>
+    </section>
+
+    <section class="stack">
+      <div class="row-between"><div class="label">Фото и видео</div><div class="sub" id="mediaCount">0 / 10</div></div>
+      <div class="media" id="mediaRow">
+        <label class="tile add" for="mediaInput" aria-label="Добавить фото или видео">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </label>
+        <input type="file" id="mediaInput" class="sr" accept="image/*,video/*" multiple onchange="addMedia(event)">
+      </div>
+    </section>
+  </main>
+
+  <!-- АНКЕТЫ -->
+  <main id="view-posts" style="display:none">
+    <section class="grid3">
+      <div class="tilestat"><b id="sumReplies">—</b><span>откликов за 7 дн.</span></div>
+      <div class="tilestat"><b id="sumChats">—</b><span>чатов с анкетой</span></div>
+      <div class="tilestat"><b id="sumBump">—</b><span>можно поднять</span></div>
+    </section>
+    <section class="stack" id="postsList"></section>
+    <button class="btn danger sm" id="delAllBtn" onclick="deleteAll()" style="display:none">Снять все анкеты</button>
+  </main>
+
+  <!-- ЧЕРНОВИКИ -->
+  <main id="view-drafts" style="display:none">
+    <section class="stack">
+      <div class="row-between"><div class="label">Шаблоны</div><div class="sub" id="tplCount"></div></div>
+      <div class="stack" id="tplList"></div>
+    </section>
+    <section class="stack">
+      <div class="label">Незаконченные</div>
+      <div class="stack" id="draftList"></div>
+    </section>
+  </main>
+</div>
+
+<footer class="bar" id="footCreate"><div class="inner">
+  <button class="btn" onclick="saveDraft()">В черновик</button>
+  <button class="btn primary" onclick="openPreview()">Предпросмотр</button>
+</div></footer>
+<footer class="bar" id="footDrafts" style="display:none"><div class="inner">
+  <button class="btn grow" onclick="openTemplateModal()">Новый шаблон</button>
+</div></footer>
+
+<!-- ПРЕДПРОСМОТР -->
+<div class="screen" id="previewScreen">
+  <div class="head">
+    <button class="back" aria-label="Назад" onclick="closeScreen('previewScreen')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div><div class="display" style="font-weight:700;font-size:17px">Так увидят в чате</div><div class="sub">Проверьте перед отправкой</div></div>
+  </div>
+  <div class="body">
+    <div class="chips" id="pvNets"></div>
+    <div class="chatbox">
+      <div class="ch"><div class="ava" id="pvAva">МК</div><div><div style="font-size:14px;font-weight:700" id="pvChat">Чат</div><div style="font-size:11px;color:var(--dim)">группа</div></div></div>
+      <div style="padding:14px">
+        <div class="bubble"><div class="pic" id="pvPic" style="display:none"></div><div class="bt" id="pvText"></div></div>
+        <div class="respond">Откликнуться ♥</div>
+      </div>
+    </div>
+    <div class="inforow"><span>Чатов в рассылке</span><b id="pvCount">0</b></div>
+    <div class="inforow"><span>Отклики придут</span><b>в бот, анонимно</b></div>
+  </div>
+  <footer class="bar"><div class="inner">
+    <button class="btn" onclick="closeScreen('previewScreen')">Изменить</button>
+    <button class="btn primary" id="publishBtn" onclick="publish()">Опубликовать</button>
+  </div></footer>
+</div>
+
+<!-- ПОДРОБНО ОБ АНКЕТЕ -->
+<div class="screen" id="detailScreen">
+  <div class="head">
+    <button class="back" aria-label="Назад" onclick="closeScreen('detailScreen')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div style="min-width:0"><div class="display" style="font-weight:700;font-size:16px" id="dtWhere"></div><div class="sub" id="dtSub"></div></div>
+  </div>
+  <div class="body">
+    <section class="card">
+      <div class="row-between"><div style="font-size:14px;font-weight:700">Отклики за неделю</div><div class="display" style="font-size:20px;font-weight:700" id="dtTotal">0</div></div>
+      <div class="bars" id="dtBars"></div>
+    </section>
+    <section class="stack"><div class="label">Где висит</div><div class="stack" id="dtChats"></div></section>
+    <section class="stack">
+      <label for="dtText" class="label">Править текст</label>
+      <textarea id="dtText" class="field" maxlength="800" style="min-height:110px"></textarea>
+    </section>
+  </div>
+  <footer class="bar"><div class="inner" style="flex-direction:column">
+    <button class="btn primary" id="dtSave" onclick="saveEdit()">Сохранить во всех чатах</button>
+    <div style="display:flex;gap:10px">
+      <button class="btn sm grow" id="dtBump" onclick="bump(currentPost && currentPost.id)">Поднять наверх</button>
+      <button class="btn sm grow danger" onclick="removePost(currentPost && currentPost.id)">Снять анкету</button>
+    </div>
+  </div></footer>
+</div>
+
+<!-- ШТОРКИ -->
+<div class="sheet" id="netSheet"><div class="bg" onclick="closeSheet('netSheet')"></div><div class="panel"><div class="grab"></div><h3>Сеть</h3><div class="list" id="netList"></div></div></div>
+<div class="sheet" id="citySheet"><div class="bg" onclick="closeSheet('citySheet')"></div><div class="panel"><div class="grab"></div><h3>Город</h3>
+  <div style="padding:0 16px 10px"><label for="citySearch" class="sr">Поиск города</label><input id="citySearch" class="field" placeholder="Найти город" oninput="renderCities()"></div>
+  <div class="list" id="cityList"></div></div></div>
+
+<!-- МОДАЛКИ -->
+<div class="modal" id="msgModal"><div class="box"><h4 id="msgTitle"></h4><p id="msgText"></p><div class="actions" id="msgActions"></div></div></div>
+<div class="modal" id="tplModal"><div class="box">
+  <h4>Шаблон</h4>
+  <label for="tplName" class="label">Название</label><input id="tplName" class="field" maxlength="30" placeholder="Например: Вечер">
+  <label for="tplText" class="label">Текст</label><textarea id="tplText" class="field" maxlength="800" style="min-height:120px"></textarea>
+  <div class="actions"><button class="btn sm grow" onclick="closeModal('tplModal')">Отмена</button><button class="btn sm grow primary" onclick="saveTemplate()">Сохранить</button></div>
+</div></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('#110D13'); tg.setBackgroundColor('#110D13'); } catch (e) {} }
+const INIT = tg ? (tg.initData || '') : '';
+const NETS = {all: 'Все сети', mk: 'Мужской Клуб', parni: 'ПАРНИ 18+', ns: 'НС', rainbow: 'Радуга', gayznak: 'Гей Знакомства'};
+const SHORT = {mk: 'МК', parni: 'ПАРНИ', ns: 'НС', rainbow: 'Радуга', gayznak: 'ГЗ'};
+let matrix = {}, netKey = '', city = '', files = [], items = [], posts = [], currentPost = null, preview = null, editingDraft = null, editingTpl = null, bumpHours = 12;
+
+// ---------- помощники ----------
+function el(tag, props, kids) {
+  const n = document.createElement(tag);
+  if (props) for (const k in props) { if (k === 'text') n.textContent = props[k]; else if (k === 'cls') n.className = props[k]; else if (k.startsWith('on')) n.addEventListener(k.slice(2), props[k]); else n.setAttribute(k, props[k]); }
+  (kids || []).forEach(c => c && n.appendChild(c));
+  return n;
+}
+function haptic(kind) { try { if (!tg) return; if (kind === 'ok') tg.HapticFeedback.notificationOccurred('success'); else if (kind === 'err') tg.HapticFeedback.notificationOccurred('error'); else tg.HapticFeedback.impactOccurred('light'); } catch (e) {} }
+function plural(n, a, b, c) { const m = n % 10, h = n % 100; if (m === 1 && h !== 11) return a; if (m >= 2 && m <= 4 && (h < 10 || h >= 20)) return b; return c; }
+function age(h) { if (h < 1) return 'только что'; if (h < 24) return h + ' ч'; const d = Math.floor(h / 24); return d + ' ' + plural(d, 'день', 'дня', 'дней'); }
+function toast(t) { const n = document.getElementById('toast'); n.textContent = t; n.classList.add('on'); clearTimeout(n._t); n._t = setTimeout(() => n.classList.remove('on'), 2400); }
+function msg(title, text, buttons) {
+  document.getElementById('msgTitle').textContent = title;
+  document.getElementById('msgText').textContent = text;
+  const a = document.getElementById('msgActions'); a.innerHTML = '';
+  (buttons || [{label: 'Понятно', primary: true}]).forEach(b => a.appendChild(el('button', {cls: 'btn sm grow' + (b.primary ? ' primary' : '') + (b.danger ? ' danger' : ''), text: b.label, onclick: () => { closeModal('msgModal'); if (b.fn) b.fn(); }})));
+  document.getElementById('msgModal').classList.add('on');
+}
+function confirmDo(title, text, label, fn) { msg(title, text, [{label: 'Отмена'}, {label: label, danger: true, fn: fn}]); }
+function closeModal(id) { document.getElementById(id).classList.remove('on'); }
+async function api(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({'X-Telegram-Init-Data': INIT}, opts.headers || {});
+  let body = opts.body;
+  if (opts.json) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(Object.assign({init_data: INIT}, opts.json)); }
+  const r = await fetch(path, {method: opts.method || (body ? 'POST' : 'GET'), headers, body});
+  let data = {}; try { data = await r.json(); } catch (e) {}
+  if (!r.ok || data.success === false || data.status === 'error') throw new Error(data.message || 'Сервер не ответил. Попробуйте ещё раз.');
+  return data;
+}
+
+// ---------- вкладки и экраны ----------
+function showTab(t) {
+  ['create', 'posts', 'drafts'].forEach(x => { document.getElementById('view-' + x).style.display = x === t ? '' : 'none'; document.getElementById('tab-' + x).classList.toggle('on', x === t); });
+  document.getElementById('footCreate').style.display = t === 'create' ? '' : 'none';
+  document.getElementById('footDrafts').style.display = t === 'drafts' ? '' : 'none';
+  if (t === 'posts') loadPosts();
+  if (t === 'drafts') loadDrafts();
+  haptic();
+}
+function openScreen(id) { document.getElementById(id).classList.add('on'); document.getElementById(id).scrollTop = 0; if (tg) tg.BackButton.show(); }
+function closeScreen(id) { document.getElementById(id).classList.remove('on'); if (tg && !document.querySelector('.screen.on')) tg.BackButton.hide(); }
+if (tg) tg.BackButton.onClick(() => { const s = [...document.querySelectorAll('.screen.on')].pop(); if (s) closeScreen(s.id); });
+function openSheet(id) { document.getElementById(id).classList.add('on'); }
+function closeSheet(id) { document.getElementById(id).classList.remove('on'); }
+
+// ---------- сеть и город ----------
+function renderNets() {
+  const list = document.getElementById('netList'); list.innerHTML = '';
+  Object.keys(NETS).forEach(k => list.appendChild(el('button', {cls: 'opt' + (k === netKey ? ' on' : ''), text: NETS[k], onclick: () => pickNet(k)})));
+}
+function citiesFor(k) {
+  if (k !== 'all') return (matrix[k] || []).slice().sort();
+  const cnt = {}; Object.keys(SHORT).forEach(n => (matrix[n] || []).forEach(c => cnt[c] = (cnt[c] || 0) + 1));
+  return Object.keys(cnt).filter(c => cnt[c] >= 2).sort();
+}
+function pickNet(k) {
+  netKey = k; closeSheet('netSheet'); renderNets();
+  document.getElementById('netText').textContent = NETS[k]; document.getElementById('netBtn').classList.remove('empty');
+  if (city && !citiesFor(k).includes(city)) city = '';
+  updateCity(); haptic();
+}
+function openCitySheet() { if (!netKey) { toast('Сначала выберите сеть'); return; } document.getElementById('citySearch').value = ''; renderCities(); openSheet('citySheet'); }
+function renderCities() {
+  const q = document.getElementById('citySearch').value.trim().toLowerCase();
+  const list = document.getElementById('cityList'); list.innerHTML = '';
+  const cs = citiesFor(netKey).filter(c => c.toLowerCase().includes(q));
+  if (!cs.length) list.appendChild(el('div', {cls: 'empty', text: 'Город не найден'}));
+  cs.forEach(c => list.appendChild(el('button', {cls: 'opt' + (c === city ? ' on' : ''), text: c, onclick: () => { city = c; closeSheet('citySheet'); updateCity(); haptic(); }})));
+}
+function netsWithCity() { return Object.keys(SHORT).filter(n => (netKey === 'all' || netKey === n) && (matrix[n] || []).includes(city)); }
+function updateCity() {
+  const t = document.getElementById('cityText'), b = document.getElementById('cityBtn');
+  t.textContent = city || (netKey ? 'Выбрать' : 'Сначала сеть'); b.classList.toggle('empty', !city);
+  const h = document.getElementById('targetHint'); h.textContent = '';
+  if (city) h.textContent = 'Сети: ' + netsWithCity().map(n => NETS[n]).join(', ');
+}
+
+// ---------- текст и медиа ----------
+function onText() { document.getElementById('counter').textContent = document.getElementById('postText').value.length + ' / 800'; }
+function addMedia(ev) {
+  const add = [...ev.target.files];
+  for (const f of add) {
+    if (files.length >= 10) { toast('Не больше 10 файлов'); break; }
+    if (f.size > 45 * 1024 * 1024) { toast('Файл больше 45 МБ: ' + f.name); continue; }
+    files.push(f);
+  }
+  ev.target.value = ''; renderMedia(); haptic();
+}
+function renderMedia() {
+  const row = document.getElementById('mediaRow');
+  row.querySelectorAll('.tile:not(.add)').forEach(n => { const m = n.querySelector('img,video'); if (m) URL.revokeObjectURL(m.src); n.remove(); });
+  files.forEach((f, i) => {
+    const url = URL.createObjectURL(f);
+    const media = f.type.startsWith('video') ? el('video', {src: url, muted: '', playsinline: ''}) : el('img', {src: url, alt: 'Вложение ' + (i + 1)});
+    row.appendChild(el('div', {cls: 'tile'}, [media, el('button', {cls: 'x', 'aria-label': 'Убрать вложение ' + (i + 1), text: '✕', onclick: () => { files.splice(i, 1); renderMedia(); }})]));
+  });
+  document.getElementById('mediaCount').textContent = files.length + ' / 10';
+}
+
+// ---------- предпросмотр и публикация ----------
+function validate() {
+  const text = document.getElementById('postText').value.trim();
+  if (!netKey || !city) { msg('Куда публикуем?', 'Выберите сеть и город.'); return null; }
+  if (!text) { msg('Нет текста', 'Напишите пару слов о себе.'); return null; }
+  return text;
+}
+async function openPreview() {
+  const text = validate(); if (!text) return;
+  try {
+    preview = await api('/api/poster/preview', {json: {text, network: NETS[netKey], city}});
+  } catch (e) { msg('Не получилось', e.message); return; }
+  const nets = netsWithCity();
+  const chips = document.getElementById('pvNets'); chips.innerHTML = '';
+  nets.forEach((n, i) => chips.appendChild(el('button', {cls: 'chip' + (i === 0 ? ' solid' : ''), text: NETS[n], onclick: (ev) => { chips.querySelectorAll('.chip').forEach(c => c.classList.remove('solid')); ev.currentTarget.classList.add('solid'); setPvChat(n); }})));
+  setPvChat(nets[0]);
+  // Текст готовит сервер (имя и текст уже экранированы); премиум-эмодзи Telegram показываем обычными
+  document.getElementById('pvText').innerHTML = preview.html.replace(/<tg-emoji[^>]*>(.*?)<\/tg-emoji>/g, '$1');
+  const pic = document.getElementById('pvPic'); pic.innerHTML = '';
+  if (files.length === 1) { const f = files[0]; const u = URL.createObjectURL(f); pic.appendChild(f.type.startsWith('video') ? el('video', {src: u, muted: '', playsinline: ''}) : el('img', {src: u, alt: 'Фото анкеты'})); pic.style.display = ''; }
+  else if (files.length > 1) { pic.appendChild(el('div', {cls: 'sub', text: 'Альбом из ' + files.length + ' файлов, текст под ним'})); pic.style.display = ''; }
+  else pic.style.display = 'none';
+  document.getElementById('pvCount').textContent = preview.chats;
+  openScreen('previewScreen');
+}
+function setPvChat(n) { if (!n) return; document.getElementById('pvChat').textContent = NETS[n] + ' · ' + city; document.getElementById('pvAva').textContent = SHORT[n]; }
+async function publish() {
+  const text = validate(); if (!text || !preview) return;
+  const btn = document.getElementById('publishBtn'); btn.disabled = true; btn.textContent = 'Отправляю…';
+  const fd = new FormData();
+  fd.append('init_data', INIT); fd.append('text', text); fd.append('network', NETS[netKey]); fd.append('city', city);
+  fd.append('header_idx', preview.header_idx);
+  if (editingDraft) fd.append('draft_id', editingDraft);
+  files.forEach(f => fd.append('media', f));
+  try {
+    const r = await api('/api/submit_mini_app', {body: fd, method: 'POST'});
+    haptic('ok'); closeScreen('previewScreen');
+    document.getElementById('postText').value = ''; files = []; editingDraft = null; renderMedia(); onText();
+    msg('Отправлено', 'Анкета уходит в ' + r.chats + ' ' + plural(r.chats, 'чат', 'чата', 'чатов') + '. Бот напишет, когда закончит.', [{label: 'К моим анкетам', primary: true, fn: () => showTab('posts')}]);
+  } catch (e) { haptic('err'); msg('Не получилось', e.message); }
+  btn.disabled = false; btn.textContent = 'Опубликовать';
+}
+
+// ---------- мои анкеты ----------
+function icon(path) { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('width', '15'); s.setAttribute('height', '15'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '2'); s.setAttribute('aria-hidden', 'true'); const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', path); s.appendChild(p); return s; }
+async function loadPosts() {
+  const list = document.getElementById('postsList'); list.innerHTML = ''; list.appendChild(el('div', {cls: 'empty', text: 'Загружаю…'}));
+  let d; try { d = await api('/api/get_user_posts'); } catch (e) { list.innerHTML = ''; list.appendChild(el('div', {cls: 'empty', text: e.message})); return; }
+  posts = d.posts || [];
+  document.getElementById('sumReplies').textContent = d.replies_week;
+  document.getElementById('sumChats').textContent = d.chats_total;
+  document.getElementById('sumBump').textContent = d.can_bump_count;
+  document.getElementById('tab-posts').textContent = posts.length ? 'Анкеты · ' + posts.length : 'Анкеты';
+  document.getElementById('delAllBtn').style.display = posts.length ? '' : 'none';
+  list.innerHTML = '';
+  if (!posts.length) { list.appendChild(el('div', {cls: 'empty', text: 'Активных анкет нет. Создайте первую на вкладке «Создать».'})); return; }
+  posts.forEach(p => {
+    const bumpBtn = p.can_bump ? el('button', {cls: 'btn sm grow primary', text: 'Поднять наверх', onclick: () => bump(p.id)})
+      : el('button', {cls: 'btn sm grow', disabled: '', text: p.has_text ? 'Поднять через ' + p.bump_in_hours + ' ч' : 'Старая анкета'});
+    list.appendChild(el('article', {cls: 'card'}, [
+      el('div', {cls: 'row-between'}, [el('div', {cls: 'where', text: p.network + ' · ' + p.city}), el('div', {cls: 'sub', text: age(p.age_hours)})]),
+      el('div', {cls: 'txt', text: p.text || 'Текст старой анкеты не сохранился'}),
+      el('div', {cls: 'meta'}, [
+        el('span', {}, [icon('M21 12a8 8 0 01-11.6 7.1L4 20l1-4.6A8 8 0 1121 12z'), el('span', {text: p.replies + ' ' + plural(p.replies, 'отклик', 'отклика', 'откликов')})]),
+        el('span', {}, [icon('M4 6h16M4 12h16M4 18h10'), el('span', {text: p.chats.length + ' ' + plural(p.chats.length, 'чат', 'чата', 'чатов')})]),
+      ]),
+      el('div', {cls: 'actions'}, [bumpBtn, el('button', {cls: 'btn sm', text: 'Подробнее', onclick: () => openDetail(p)})]),
+    ]));
+  });
+}
+async function openDetail(p) {
+  currentPost = p;
+  document.getElementById('dtWhere').textContent = p.network + ' · ' + p.city;
+  document.getElementById('dtSub').textContent = 'Висит ' + age(p.age_hours) + (p.bump_count ? ', поднята ' + p.bump_count + ' ' + plural(p.bump_count, 'раз', 'раза', 'раз') : '');
+  const chats = document.getElementById('dtChats'); chats.innerHTML = '';
+  p.chats.forEach(c => {
+    const st = c.status === 'gone' ? 'удалена в чате' : c.status === 'error' ? 'не отправилась' : c.replies + ' ' + plural(c.replies, 'отклик', 'отклика', 'откликов');
+    const v = el('span', {text: st}); if (c.status !== 'live') v.style.color = 'var(--danger)';
+    chats.appendChild(el('div', {cls: 'inforow'}, [el('span', {text: c.name, style: 'color:var(--text);font-weight:600'}), v]));
+  });
+  const ta = document.getElementById('dtText'); ta.value = p.text || ''; ta.disabled = !p.can_edit;
+  ta.placeholder = p.text ? '' : 'Текст этой старой анкеты не сохранился. Впишите новый — он заменит старый во всех чатах.';
+  document.getElementById('dtSave').disabled = !p.can_edit;
+  document.getElementById('dtSave').textContent = p.can_edit ? 'Сохранить во всех чатах' : 'Старую анкету править нельзя';
+  const bb = document.getElementById('dtBump'); bb.disabled = !p.can_bump; bb.textContent = p.can_bump ? 'Поднять наверх' : (p.has_text ? 'Поднять через ' + p.bump_in_hours + ' ч' : 'Поднять нельзя');
+  const bars = document.getElementById('dtBars'); bars.innerHTML = ''; document.getElementById('dtTotal').textContent = '…';
+  openScreen('detailScreen');
+  try {
+    const d = await api('/api/poster/stats?id=' + encodeURIComponent(p.id));
+    const max = Math.max(1, ...d.days.map(x => x.n)); let total = 0;
+    d.days.forEach(x => { total += x.n; const bar = el('i', {cls: x.n ? '' : 'zero'}); bar.style.height = Math.max(4, Math.round(x.n / max * 80)) + 'px'; bars.appendChild(el('div', {}, [bar, el('span', {text: x.label.slice(0, 5)})])); });
+    document.getElementById('dtTotal').textContent = total;
+  } catch (e) { document.getElementById('dtTotal').textContent = '—'; }
+}
+async function bump(id) {
+  if (!id) return;
+  try { await api('/api/poster/bump', {json: {id}}); haptic('ok'); toast('Анкета поднимается во всех чатах'); closeScreen('detailScreen'); setTimeout(loadPosts, 1500); }
+  catch (e) { haptic('err'); msg('Не получилось', e.message); }
+}
+async function saveEdit() {
+  if (!currentPost) return;
+  const text = document.getElementById('dtText').value.trim();
+  try { const r = await api('/api/poster/edit', {json: {id: currentPost.id, text}}); haptic('ok');
+    msg('Сохранено', 'Текст обновлён в ' + r.edited + ' ' + plural(r.edited, 'чате', 'чатах', 'чатах') + (r.gone ? '. В ' + r.gone + ' анкету уже удалили.' : '.'), [{label: 'Хорошо', primary: true, fn: () => { closeScreen('detailScreen'); loadPosts(); }}]);
+  } catch (e) { haptic('err'); msg('Не получилось', e.message); }
+}
+function removePost(id) {
+  if (!id) return;
+  confirmDo('Снять анкету?', 'Она исчезнет из всех чатов, где опубликована.', 'Снять', async () => {
+    try { await api('/api/delete_post', {json: {post_id: id}}); haptic('ok'); toast('Анкета снята'); closeScreen('detailScreen'); loadPosts(); } catch (e) { msg('Не получилось', e.message); }
+  });
+}
+function deleteAll() {
+  confirmDo('Снять все анкеты?', 'Все ваши анкеты исчезнут из всех чатов. Это нельзя отменить.', 'Снять все', async () => {
+    try { const r = await api('/api/delete_all_posts', {json: {}}); haptic('ok'); toast('Снято анкет: ' + r.count); loadPosts(); } catch (e) { msg('Не получилось', e.message); }
+  });
+}
+
+// ---------- черновики и шаблоны ----------
+let drafts = [];
+async function fetchDrafts() { try { const d = await api('/api/poster/drafts'); drafts = d.items || []; } catch (e) { drafts = []; } renderTplChips(); }
+function renderTplChips() {
+  const box = document.getElementById('tplChips'); box.innerHTML = '';
+  drafts.filter(d => d.kind === 'template').slice(0, 3).forEach(t => box.appendChild(el('button', {cls: 'chip', text: 'Шаблон «' + t.name + '»', onclick: () => useText(t)})));
+  box.appendChild(el('button', {cls: 'chip ghost', text: 'Сохранить как шаблон', onclick: () => openTemplateModal(null, document.getElementById('postText').value)}));
+}
+function useText(t, asDraft) {
+  document.getElementById('postText').value = t.text; onText();
+  if (t.network) { const k = Object.keys(NETS).find(x => NETS[x] === t.network); if (k) pickNet(k); }
+  if (t.city && netKey && citiesFor(netKey).includes(t.city)) { city = t.city; updateCity(); }
+  editingDraft = asDraft ? t.id : null;
+  showTab('create'); toast(asDraft ? 'Черновик открыт' : 'Шаблон вставлен');
+}
+async function loadDrafts() {
+  await fetchDrafts();
+  const tpls = drafts.filter(d => d.kind === 'template'), drs = drafts.filter(d => d.kind === 'draft');
+  document.getElementById('tplCount').textContent = tpls.length + ' из 5';
+  const tl = document.getElementById('tplList'); tl.innerHTML = '';
+  if (!tpls.length) tl.appendChild(el('div', {cls: 'empty', text: 'Сохраните текст, который часто публикуете, и вставляйте его одним касанием.'}));
+  tpls.forEach(t => tl.appendChild(el('div', {cls: 'card', style: 'flex-direction:row;align-items:center;gap:12px'}, [
+    el('div', {cls: 'ava display', text: (t.name || 'Ш').slice(0, 1).toUpperCase(), style: 'width:40px;height:40px;border-radius:12px;color:var(--accent);font-size:14px'}),
+    el('div', {style: 'flex:1;min-width:0'}, [el('div', {text: t.name, style: 'font-size:15px;font-weight:700'}), el('div', {cls: 'sub', text: t.text, style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px'})]),
+    el('button', {cls: 'btn sm', text: 'Вставить', onclick: () => useText(t)}),
+    el('button', {cls: 'btn sm', 'aria-label': 'Изменить шаблон', text: '✎', onclick: () => openTemplateModal(t)}),
+  ])));
+  const dl = document.getElementById('draftList'); dl.innerHTML = '';
+  if (!drs.length) dl.appendChild(el('div', {cls: 'empty', text: 'Черновиков нет. Кнопка «В черновик» сохраняет недописанную анкету.'}));
+  drs.forEach(d => dl.appendChild(el('div', {cls: 'card', style: 'border-style:dashed;border-color:#4A3F50'}, [
+    el('div', {cls: 'row-between'}, [el('span', {cls: 'sub', text: (d.network && d.city) ? d.network + ' · ' + d.city : 'Город не выбран'}), el('span', {cls: 'sub', text: new Date(d.ts * 1000).toLocaleDateString('ru-RU')})]),
+    el('div', {cls: 'txt', text: d.text}),
+    el('div', {cls: 'actions'}, [
+      el('button', {cls: 'btn sm primary', text: 'Продолжить', style: 'flex:0 0 auto;font-family:Manrope;font-size:14px', onclick: () => useText(d, true)}),
+      el('button', {cls: 'btn sm', text: 'Удалить', onclick: () => delDraft(d.id)}),
+    ]),
+  ])));
+}
+async function saveDraft() {
+  const text = document.getElementById('postText').value.trim();
+  if (!text) { toast('Пустой черновик сохранять не нужно'); return; }
+  try { const r = await api('/api/poster/drafts/save', {json: {id: editingDraft, kind: 'draft', text, network: netKey ? NETS[netKey] : null, city}}); editingDraft = r.id; haptic('ok'); toast('Сохранено в черновики'); fetchDrafts(); }
+  catch (e) { msg('Не получилось', e.message); }
+}
+function openTemplateModal(t, text) {
+  editingTpl = t ? t.id : null;
+  document.getElementById('tplName').value = t ? t.name : '';
+  document.getElementById('tplText').value = t ? t.text : (text || '');
+  document.getElementById('tplModal').classList.add('on');
+}
+async function saveTemplate() {
+  const name = document.getElementById('tplName').value.trim(), text = document.getElementById('tplText').value.trim();
+  if (!text) { toast('Добавьте текст шаблона'); return; }
+  try { await api('/api/poster/drafts/save', {json: {id: editingTpl, kind: 'template', name: name || 'Шаблон', text}}); closeModal('tplModal'); haptic('ok'); toast('Шаблон сохранён'); loadDrafts(); }
+  catch (e) { msg('Не получилось', e.message); }
+}
+function delDraft(id) { confirmDo('Удалить черновик?', 'Его нельзя будет восстановить.', 'Удалить', async () => { try { await api('/api/poster/drafts/delete', {json: {id}}); loadDrafts(); } catch (e) { msg('Не получилось', e.message); } }); }
+
+// ---------- старт ----------
+(async function init() {
+  renderNets(); onText(); renderMedia();
+  try { const r = await fetch('/api/get_cities_matrix'); matrix = await r.json(); } catch (e) {}
+  try { const me = await api('/api/poster/me'); bumpHours = me.bump_hours; }
+  catch (e) { msg('Нет доступа', e.message); }
+  fetchDrafts();
+})();
+</script>
+</body>
+</html>

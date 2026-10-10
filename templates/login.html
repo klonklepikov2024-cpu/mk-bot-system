@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход | Глаз Саурона</title>
+    <style>
+        body { background-color: #121212; color: #ffffff; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-card { background-color: #1e1e1e; padding: 40px; border-radius: 10px; box-shadow: 0 4px 25px rgba(0,0,0,0.7); border-bottom: 4px solid #bb86fc; width: 320px; text-align: center; }
+        h2 { color: #bb86fc; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 30px; }
+        .form-input { width: 100%; padding: 12px; margin-bottom: 20px; border-radius: 5px; border: 1px solid #333; background-color: #2d2d2d; color: #fff; font-size: 16px; box-sizing: border-box; }
+        .form-input:focus { border-color: #bb86fc; outline: none; }
+        .login-btn { width: 100%; padding: 12px; background-color: #bb86fc; color: #121212; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 16px; text-transform: uppercase; transition: 0.2s; }
+        .login-btn:hover { background-color: #9965db; }
+        .error { color: #cf6679; font-weight: bold; margin-bottom: 15px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>👁️ Авторизация</h2>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="POST">
+            <input type="text" name="username" class="form-input" placeholder="Логин терминала" required>
+            <input type="password" name="password" class="form-input" placeholder="Ключ доступа" required>
+            <button type="submit" class="login-btn">Включить Глаз</button>
+        </form>
+    </div>
+</body>
+</html>
