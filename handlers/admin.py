@@ -1825,7 +1825,9 @@ def process_ticket_with_ai(uid, user_text, thread_id):
                         "response_format": {"type": "json_object"},
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.4,
-                        "max_tokens": 1000
+                        "max_tokens": 2500,
+                        "reasoning_effort": "low",     # иначе «мысли» gpt-oss съедают лимит и ответ пустой
+                        "include_reasoning": False
                     },
                     timeout=20
                 )
