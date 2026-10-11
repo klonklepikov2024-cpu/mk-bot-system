@@ -997,21 +997,34 @@
                 profileTab.className = "tab-content" + isActive;
                 userNameEl.className = "font-bold text-lg leading-tight transition-colors duration-500";
                 
-                if (data.karma >= 100) {
-                    profileTab.classList.add('bg-gradient-to-b', 'from-white/20', 'to-transparent', 'border', 'border-white/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(255,255,255,0.2)]', 'p-4', '-m-4', 'mb-4');
-                    userNameEl.classList.add('text-white', 'drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]');
-                    userNameEl.innerText = "[Святой] " + user.first_name;
-                } else if (data.karma <= -100) {
-                    profileTab.classList.add('bg-gradient-to-b', 'from-red-900/40', 'to-transparent', 'border', 'border-red-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(239,68,68,0.2)]', 'p-4', '-m-4', 'mb-4');
-                    userNameEl.classList.add('text-red-500', 'drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]');
-                    userNameEl.innerText = "[Изгой] " + user.first_name;
-                } else if (data.golden_frame) {
-                    profileTab.classList.add('bg-gradient-to-b', 'from-yellow-900/40', 'to-transparent', 'border', 'border-yellow-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(234,179,8,0.15)]', 'p-4', '-m-4', 'mb-4');
-                    userNameEl.classList.add('text-yellow-400', 'drop-shadow-[0_0_8px_rgba(234,179,8,0.8)]');
-                    userNameEl.innerText = user.first_name;
-                } else {
-                    userNameEl.innerText = user.first_name;
+                // Ступени рамки профиля по карме: чем выше/ниже - тем ярче
+                const KARMA_FRAMES = [
+                    {min: 100,  label: '[Святой] ',    name: 'text-white',       from: 'from-white/20',       border: 'border-white/60',       glow: 'shadow-[0_0_34px_rgba(255,255,255,0.30)]'},
+                    {min: 75,   label: '[Праведник] ', name: 'text-sky-300',     from: 'from-sky-500/25',     border: 'border-sky-400/60',     glow: 'shadow-[0_0_28px_rgba(56,189,248,0.25)]'},
+                    {min: 50,   label: '[Добряк] ',    name: 'text-emerald-300', from: 'from-emerald-500/25', border: 'border-emerald-400/60', glow: 'shadow-[0_0_24px_rgba(52,211,153,0.22)]'},
+                    {max: -100, label: '[Изгой] ',     name: 'text-red-500',     from: 'from-red-900/50',     border: 'border-red-500/70',     glow: 'shadow-[0_0_34px_rgba(239,68,68,0.30)]'},
+                    {max: -75,  label: '[Злодей] ',    name: 'text-orange-500',  from: 'from-orange-900/40',  border: 'border-orange-500/60',  glow: 'shadow-[0_0_28px_rgba(249,115,22,0.25)]'},
+                    {max: -50,  label: '[Хулиган] ',   name: 'text-amber-400',   from: 'from-amber-900/40',   border: 'border-amber-500/60',   glow: 'shadow-[0_0_24px_rgba(245,158,11,0.22)]'}
+                ];
+                const kv = Number(data.karma) || 0;
+                const tier = KARMA_FRAMES.find(t => (t.min !== undefined && kv >= t.min) || (t.max !== undefined && kv <= t.max));
+                let namePrefix = '';
+                if (tier) {
+                    profileTab.classList.add('bg-gradient-to-b', tier.from, 'to-transparent', 'border', tier.border, 'rounded-3xl', tier.glow, 'p-4', '-m-4', 'mb-4');
+                    userNameEl.classList.add(tier.name, 'drop-shadow-[0_0_8px_currentColor]');
+                    namePrefix = tier.label;
                 }
+                // Купленная Золотая Рамка видна всегда: без ступени кармы - целиком золотая, со ступенью - золотое кольцо и значок
+                if (data.golden_frame) {
+                    if (!tier) {
+                        profileTab.classList.add('bg-gradient-to-b', 'from-yellow-900/40', 'to-transparent', 'border', 'border-yellow-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(234,179,8,0.15)]', 'p-4', '-m-4', 'mb-4');
+                        userNameEl.classList.add('text-yellow-400', 'drop-shadow-[0_0_8px_rgba(234,179,8,0.8)]');
+                    } else {
+                        profileTab.classList.add('ring-2', 'ring-yellow-400/70');
+                    }
+                    namePrefix = '⚜️ ' + namePrefix;
+                }
+                userNameEl.innerText = namePrefix + user.first_name;
 
                 // --- ЗАЛ СЛАВЫ (АЧИВКИ) ---
                 window._achCatalog = data.ach_catalog || [];
