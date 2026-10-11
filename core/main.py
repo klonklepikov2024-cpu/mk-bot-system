@@ -1944,18 +1944,28 @@ def api_inventory_action():
         
         # 2. ВЕШАЕМ НА ДРУГОГО (ТРОЛЛИНГ ИЛИ ПОДАРОК НА ВРЕМЯ)
         else:
-            db['promocodes'].update_one({"_id": promo["_id"]}, {"$inc": {"used_count": 1}})
-            
-            # Сохраняем старый тег жертвы, чтобы потом вернуть
-            target_data = db['users'].find_one({"_id": target_uid}) or {}
-            old_tag = target_data.get("custom_tag", "")
+            # Атомарно сжигаем купон (защита от двойного нажатия)
+            if not db['promocodes'].find_one_and_update({"_id": promo["_id"], "is_active": True, "used_count": 0}, {"$inc": {"used_count": 1}}):
+                return jsonify({"error": "Этот купон уже использован!"}), 400
             
             import time
-            expire_time = int(time.time()) + duration 
+            now_ts = int(time.time())
+            expire_time = now_ts + duration 
+            
+            # «Базовый» тег (к нему откатимся, когда истекут ВСЕ временные): если уже есть активные наложения - берём базу самого первого
+            target_data = db['users'].find_one({"_id": target_uid}) or {}
+            active_tags = list(db['temp_troll_tags'].find({"uid": target_uid, "expire_at": {"$gt": now_ts}}).sort("created", 1))
+            if active_tags:
+                base_tag = active_tags[0].get("base_tag", active_tags[0].get("old_tag", ""))
+            else:
+                base_tag = target_data.get("custom_tag", "")
             
             db['temp_troll_tags'].insert_one({
                 "uid": target_uid,
-                "old_tag": old_tag,
+                "tag": tag_text,
+                "base_tag": base_tag,
+                "old_tag": base_tag,
+                "created": now_ts,
                 "expire_at": expire_time
             })
             
@@ -3668,7 +3678,7 @@ RP_COMMANDS = {
 }
 
 # Ловим команды, но СТРОГО игнорируем системные
-@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники')))
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники', '!амнистия', 'амнистия')))
 def handle_rp_commands(message):
     # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
     if message.sender_chat:
@@ -4603,8 +4613,12 @@ def elite_amnesty(message):
         return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
         
     import time
-    # Списываем 20 кармы
-    paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": -20}})
+    if target_id == uid:
+        return bot.reply_to(message, "🕊 Амнистию нельзя применить к самому себе.")
+    # Атомарно списываем 20 кармы (только если у Святого всё ещё 100+)
+    paid_ok = paid_collection.find_one_and_update({"uid": uid, "social_rating": {"$gte": 100}}, {"$inc": {"social_rating": -20}})
+    if not paid_ok:
+        return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
     # Снимаем все муты
     db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
     paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
@@ -5171,9 +5185,10 @@ def handle_karma_vote(message):
     vote_key = f"karma_{voter_id}_{target_id}"
     last_vote = db['settings'].find_one({"_id": vote_key})
     
-    if last_vote and (now - last_vote.get('time', 0) < 3600):
-        left_mins = int((3600 - (now - last_vote['time'])) / 60)
-        return bot.reply_to(message, f"⏳ Вы уже оценивали этого гражданина! Система примет ваш следующий голос через {left_mins} мин.")
+    KARMA_COOLDOWN = 120  # секунд (было 3600)
+    if last_vote and (now - last_vote.get('time', 0) < KARMA_COOLDOWN):
+        left_sec = int(KARMA_COOLDOWN - (now - last_vote['time']))
+        return bot.reply_to(message, f"⏳ Вы уже оценивали этого гражданина! Система примет ваш следующий голос через {left_sec // 60} мин {left_sec % 60} сек.")
         
     db['settings'].update_one({"_id": vote_key}, {"$set": {"time": now}}, upsert=True)
     

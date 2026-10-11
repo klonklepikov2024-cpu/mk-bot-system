@@ -113,27 +113,35 @@ def execute_arrest(uid, first_name, promo_id, target_info):
     return True, "🚓 АРЕСТ ПРОШЕЛ УСПЕШНО!\nЖертва отправлена в мут на 1 час (Щиты пробиты!)."
 
 def expire_temp_tags():
-    """Фоновая задача: Снимает временные клейма (Троллинг-теги)"""
+    """Фоновая задача: Снимает временные клейма (Троллинг-теги).
+    Правила: на игроке виден тег САМОГО ПОСЛЕДНЕГО из активных наложений.
+    Истёк не верхний слой - тег не меняется. Истёк верхний - показываем предыдущий активный.
+    Истекли все - возвращается базовый (исходный) тег игрока."""
     now = int(time.time())
-    
-    # Находим все протухшие теги (время которых истекло)
     expired = list(db['temp_troll_tags'].find({"expire_at": {"$lte": now}}))
-    
+    by_uid = {}
     for t in expired:
-        target_uid = t['uid']
-        old_tag = t.get('old_tag', "")
-        
-        # Возвращаем старый тег (или удаляем кастомный тег вообще, если его не было)
-        if old_tag:
-            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": old_tag}})
+        by_uid.setdefault(t['uid'], []).append(t)
+
+    for target_uid, items in by_uid.items():
+        db['temp_troll_tags'].delete_many({"_id": {"$in": [t['_id'] for t in items]}})
+        remaining = list(db['temp_troll_tags'].find({"uid": target_uid, "expire_at": {"$gt": now}}).sort("created", 1))
+        cur_tag = (db['users'].find_one({"_id": target_uid}) or {}).get("custom_tag", "")
+
+        if remaining:
+            top_tag = remaining[-1].get("tag")  # у старых записей тега нет - ничего не трогаем
+            if top_tag and cur_tag != top_tag:
+                db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": top_tag}})
+            continue
+
+        first = sorted(items, key=lambda x: x.get("created", 0))[0]
+        base = first.get("base_tag", first.get("old_tag", ""))
+        if base:
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": base}})
         else:
             db['users'].update_one({"_id": target_uid}, {"$unset": {"custom_tag": ""}})
-            
-        # Очищаем запись из темп-базы
-        db['temp_troll_tags'].delete_one({"_id": t['_id']})
-        
         try:
-            bot.send_message(target_uid, "✨ Время действия временного статуса истекло! Ваш старый тег восстановлен.")
+            bot.send_message(target_uid, "✨ Время действия временного статуса истекло! Ваш прежний тег восстановлен.")
         except Exception as e: logger.warning(f"Не удалось отправить сообщение: {e}")
 
 def promo_expiry_job():
