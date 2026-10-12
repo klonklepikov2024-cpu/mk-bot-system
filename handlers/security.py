@@ -653,6 +653,10 @@ def handle_enter_gift_code(call):
     bot.register_next_step_handler(msg, process_gift_code)
 
 def process_gift_code(message):
+    if not message.text:  # прислали стикер/фото вместо текста — раньше падало с ошибкой
+        msg = bot.send_message(message.chat.id, "✏️ Пришлите промокод текстом (или /start для выхода):")
+        bot.register_next_step_handler(msg, process_gift_code)
+        return
     if message.text == '/start':
         from handlers.start_menu import send_welcome
         send_welcome(message)
@@ -993,11 +997,11 @@ def handle_inv_use_arrest(call):
 
 def process_angel_id(message):
     uid = message.from_user.id
-    if not message.text.isdigit():
+    if not message.text or not message.text.strip().isdigit():
         bot.send_message(message.chat.id, "❌ Ошибка: ID должен состоять только из цифр.")
         return
         
-    target_uid = int(message.text)
+    target_uid = int(message.text.strip())
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
     if user_data.get("immunity", 0) < 1:
@@ -1016,6 +1020,10 @@ def process_angel_id(message):
 
 # ================= ⚒ ТЕНЕВОЙ ЛОМБАРД И КУЗНИЦА =================
 def process_pawn_promo(message):
+    if not message.text:  # прислали стикер/фото вместо текста — раньше падало с ошибкой
+        msg = bot.send_message(message.chat.id, "✏️ Пришлите промокод текстом (или /start для выхода):")
+        bot.register_next_step_handler(msg, process_pawn_promo)
+        return
     if message.text == '/start':
         from handlers.start_menu import send_welcome
         send_welcome(message)
