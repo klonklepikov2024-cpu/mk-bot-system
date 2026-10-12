@@ -386,6 +386,8 @@ def handle_admin_templates(call):
     # Сначала ищем шаблон в облаке Mongo...
     db_tpl = db['bot_templates'].find_one({"_id": call.data})
     template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(call.data)
+    from utils.textvars import fill as _fill_vars
+    template_text = _fill_vars(template_text)  # {переменные} → текущие цифры из панели
     
     if template_text:
         try:
@@ -1990,6 +1992,8 @@ def process_ticket_with_ai(uid, user_text, thread_id):
         elif action.startswith("tpl_"):
             db_tpl = db['bot_templates'].find_one({"_id": action})
             template_text = db_tpl["text"] if db_tpl else TEMPLATES.get(action)
+            from utils.textvars import fill as _fill_vars
+            template_text = _fill_vars(template_text)
             if template_text:
                 bot.send_message(uid, template_text, parse_mode="Markdown")
                 bot.send_message(STAFF_GROUP_ID, f"✅ Автопилот выдал: {action}\nПричина: {reason}", message_thread_id=thread_id)
