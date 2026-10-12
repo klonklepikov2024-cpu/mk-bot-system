@@ -10,7 +10,7 @@ from database.mongo import paid_collection, archive_collection, db
 from utils.logger import logger
 from utils.templates import NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url  # раньше не импортировался: меню оплаты после промокода падало
-from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, _ints  # настройки из панели /glaz
 
 # ================= ЧЕК-АУТ И ГЕНЕРАЦИЯ СЧЕТОВ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('checkout_'))
@@ -635,7 +635,7 @@ def handle_bank_check(message):
     
     text = (
         f"🏦 **СВОДКА КАССЫ КАЗИНО**\n\n"
-        f"💎 Фонд Premium: **{current_fund} / 1500 ⭐️**\n"
+        f"💎 Фонд Premium: **{current_fund} / {cfg('casino_premium_cost')} ⭐️**\n"
         f"💸 На руках у юзеров (Кэшбек): **{total_cb_held} ₽**\n\n"
         f"_Фонд пополняется на 20% от всех покупок в боте._"
     )
@@ -693,9 +693,7 @@ def handle_start_donate(call):
     
     markup = InlineKeyboardMarkup(row_width=3)
     markup.add(
-        InlineKeyboardButton("50 ⭐️", callback_data="send_don_50"),
-        InlineKeyboardButton("150 ⭐️", callback_data="send_don_150"),
-        InlineKeyboardButton("500 ⭐️", callback_data="send_don_500")
+        *[InlineKeyboardButton(f"{v} ⭐️", callback_data=f"send_don_{v}") for v in (_ints("donate_buttons") or [50, 150, 500])[:4]]
     )
     markup.add(InlineKeyboardButton("✍️ Указать свою сумму", callback_data="send_don_custom"))
     

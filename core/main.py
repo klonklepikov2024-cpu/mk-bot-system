@@ -32,7 +32,7 @@ import handlers.contests
 import handlers.market
 import handlers.start_menu
 from handlers.casino import create_unique_promo, msk_today, msk_day_of, msk_time_left
-from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, exchange_packs, withdraw_min, weighted, odds, _ints  # настройки из панели /glaz
 
 app = Flask(__name__, template_folder='templates')
 
@@ -159,7 +159,17 @@ def validate_webapp_data(init_data, token):
 
 @app.route('/webapp')
 def webapp_page():
-    return render_template('webapp.html')
+    # Цифры для кнопок мини-приложения — из панели /glaz (сервер проверяет те же значения)
+    try:
+        econ = {
+            "packs": sorted(exchange_packs().items()),
+            "min_phone": cfg("cb_min_phone"), "min_crypto": withdraw_min("crypto"), "min_card": cfg("cb_min_card"),
+            "spin_price": cfg("casino_spin_price"), "chest_price": cfg("chest_price"), "craft_shards": cfg("craft_shards"),
+        }
+    except Exception:
+        econ = {"packs": [(50, 50), (150, 175), (250, 300), (500, 650)], "min_phone": 500, "min_crypto": 1000,
+                "min_card": 3500, "spin_price": 50, "chest_price": 1000, "craft_shards": 50}
+    return render_template('webapp.html', econ=econ)
 
 # ================= 🏆 ЗАЛ СЛАВЫ: КАТАЛОГ ДОСТИЖЕНИЙ =================
 # "auto": функция (юзер, поле_картошки) -> (текущее, цель). Такие медали выдаются сами при открытии профиля.
@@ -439,7 +449,7 @@ def api_get_market():
         base_price = 500
         if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
         elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
-        elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
+        elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
         
         real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
         rec_price = int(real_value * 0.6)
@@ -571,7 +581,7 @@ def api_buy_market():
     base_price = 500
     if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
     elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
-    elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
+    elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
     
     real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
     rec_price = int(real_value * 0.6)
@@ -644,7 +654,7 @@ def api_spin_roulette():
     username_str = f"@{username}" if username else f"ID {uid}"
     first_name = user_info.get('first_name', 'Аноним')
 
-    SPIN_PRICE = 50
+    SPIN_PRICE = cfg("casino_spin_price")
     updated_user = paid_collection.find_one_and_update(
         {"uid": uid, "bounty_points": {"$gte": SPIN_PRICE}},
         {"$inc": {"bounty_points": -SPIN_PRICE}}
@@ -658,7 +668,7 @@ def api_spin_roulette():
     db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"roulette_spins": 1}}, upsert=True)
 
     if not updated_user:
-        return jsonify({"error": "Недостаточно очков! Нужно 50 💎."}), 400
+        return jsonify({"error": f"Недостаточно очков! Нужно {SPIN_PRICE} 💎."}), 400
 
     import random
     val = random.randint(1, 64)
@@ -673,7 +683,7 @@ def api_spin_roulette():
     prize_name = ""
     
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
-    premium_cost_stars = 1500
+    premium_cost_stars = cfg("casino_premium_cost")
 
     if val == 63 and bank_data.get("balance", 0) >= premium_cost_stars:
         db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
@@ -691,16 +701,17 @@ def api_spin_roulette():
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val == 63:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
-        prize_msg = "🎰 МИНИ-ДЖЕКПОТ!\nФонд Premium пуст, поэтому вы получаете +1000 Очков и 5 Осколков!"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_mini_points"), "jackpot_shards": cfg("casino_mini_shards")}})
+        prize_msg = f"🎰 МИНИ-ДЖЕКПОТ!\nФонд Premium пуст, поэтому вы получаете +{cfg('casino_mini_points')} Очков и {cfg('casino_mini_shards')} Осколков!"
         prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
 
     # === НОВЫЙ БЛОК: УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ ===
-    cert_cost_stars = 1250
+    cert_cost_stars = cfg("casino_cert_cost")
+    cert_rub = cfg("casino_cert_rub")
     if val == 62 and bank_data.get("balance", 0) >= cert_cost_stars:
         db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cert_cost_stars}})
-        prize_msg = "🛍 СУПЕР-ПРИЗ!!!\nВы выиграли Универсальный Сертификат (1500 ₽)!\nЗаявка отправлена админам."
-        prize_id, prize_name = "certificate", "Сертификат 1500₽"
+        prize_msg = f"🛍 СУПЕР-ПРИЗ!!!\nВы выиграли Универсальный Сертификат ({cert_rub} ₽)!\nЗаявка отправлена админам."
+        prize_id, prize_name = "certificate", f"Сертификат {cert_rub}₽"
         
         import time
         db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
@@ -713,15 +724,15 @@ def api_spin_roulette():
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val == 62:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
-        prize_msg = "🎰 МИНИ-ДЖЕКПОТ!\nФонд пуст, поэтому вы получаете +1000 Очков и 5 Осколков!"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_mini_points"), "jackpot_shards": cfg("casino_mini_shards")}})
+        prize_msg = f"🎰 МИНИ-ДЖЕКПОТ!\nФонд пуст, поэтому вы получаете +{cfg('casino_mini_points')} Очков и {cfg('casino_mini_shards')} Осколков!"
         prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
 
     elif val == 64:
         code = f"JACKPOT-{random.randint(1000, 9999)}"
         code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
-        prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nЗолотой Билет (VIP) и 300 очков!\nКод: {code}"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_jackpot_points")}})
+        prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nЗолотой Билет (VIP) и {cfg('casino_jackpot_points')} очков!\nКод: {code}"
         prize_id, prize_name = "jackpot", "ДЖЕКПОТ VIP"
 
     elif val in [7, 21, 35]:
@@ -741,7 +752,7 @@ def api_spin_roulette():
 
     elif val in [10, 20, 40, 50]:
         # 🔥 ВЛИЯНИЕ КАРМЫ: ШТРАФ 50% ДЛЯ ИЗГОЕВ 🔥
-        tax_pct = 0.5 if updated_user.get("social_rating", 0) <= -50 else 0.3
+        tax_pct = (cfg("casino_tax_outcast_pct") if updated_user.get("social_rating", 0) <= -50 else cfg("casino_tax_pct")) / 100
         
         lost_points = int(updated_user.get("bounty_points", 0) * tax_pct)
         has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
@@ -764,10 +775,10 @@ def api_spin_roulette():
             prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
             prize_id, prize_name = "tax_cactus", "Спас Кактус"
         else:
-            if tax_pct == 0.5:
-                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано 50% баланса (-{lost_points} очков)."
+            if tax_pct != cfg("casino_tax_pct") / 100:
+                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
             else:
-                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано 30% баланса (-{lost_points} очков)."
+                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
             prize_id, prize_name = "tax", f"Налог -{int(tax_pct*100)}%"
 
     elif val in [5, 17, 29]:
@@ -787,7 +798,7 @@ def api_spin_roulette():
         prize_id, prize_name = "amnesty", "Амнистия"
 
     elif val in [15, 30, 45, 60]:
-        win_points = random.choice([100, 150, 250])
+        win_points = random.choice(_ints("casino_points_wins") or [100])
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": win_points}})
         prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {win_points} 💎!"
         prize_id, prize_name = "big_points", f"{win_points} 💎"
@@ -806,7 +817,8 @@ def api_spin_roulette():
         prize_id, prize_name = "discount", "Скидка"
 
     elif val in [11, 33]:
-        win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
+        _vals, _w = weighted("casino_cash_wins")
+        win_rub = random.choices(_vals, weights=_w, k=1)[0]
         cost_in_stars = rub_to_stars(win_rub)
         if bank_data.get("balance", 0) >= cost_in_stars:
             db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
@@ -866,14 +878,14 @@ def api_claim_bonus():
     
     # Награды в зависимости от стрика
     shards_reward = 0
-    if current_streak == 1: points_reward = 15
-    elif current_streak == 2: points_reward = 25
-    elif current_streak == 3: points_reward = 40
-    elif current_streak >= 7: 
-        points_reward = 100
+    # Награды по дням серии — из панели /glaz («15, 25, 40, 50, 50, 50, 100»); последний день — мега-приз + осколок
+    streak_tbl = _ints("bonus_streak") or [15, 25, 40, 50, 50, 50, 100]
+    if current_streak >= len(streak_tbl):
+        points_reward = streak_tbl[-1]
         shards_reward = 1
-        current_streak = 0 # Сброс после мега-приза (или можно оставить, чтоб фармил каждый день по 100)
-    else: points_reward = 50
+        current_streak = 0 # Сброс после мега-приза
+    else:
+        points_reward = streak_tbl[current_streak - 1]
 
     update_data = {
         "$inc": {"bounty_points": points_reward, "jackpot_shards": shards_reward},
@@ -882,8 +894,8 @@ def api_claim_bonus():
     
     paid_collection.update_one({"uid": uid}, update_data, upsert=True)
     
-    msg = f"🎁 День {current_streak if current_streak > 0 else 7}! Вы получили {points_reward} 💎."
-    if shards_reward > 0: msg += "\n🧩 +1 Осколок за 7 дней подряд!"
+    msg = f"🎁 День {current_streak if current_streak > 0 else len(streak_tbl)}! Вы получили {points_reward} 💎."
+    if shards_reward > 0: msg += f"\n🧩 +1 Осколок за {len(streak_tbl)} дней подряд!"
     
     return jsonify({"success": True, "msg": msg, "streak": current_streak})
 
@@ -939,27 +951,29 @@ def api_craft():
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
     if action == 'shards':
-        if user_data.get("jackpot_shards", 0) < 50: return jsonify({"error": "Нужно 50 осколков!"}), 400
+        need_shards = cfg("craft_shards")
+        if user_data.get("jackpot_shards", 0) < need_shards: return jsonify({"error": f"Нужно {need_shards} осколков!"}), 400
         spent = paid_collection.find_one_and_update(
-            {"uid": uid, "jackpot_shards": {"$gte": 50}},
-            {"$inc": {"jackpot_shards": -50}}
+            {"uid": uid, "jackpot_shards": {"$gte": need_shards}},
+            {"$inc": {"jackpot_shards": -need_shards}}
         )
-        if not spent: return jsonify({"error": "Нужно 50 осколков!"}), 400
+        if not spent: return jsonify({"error": f"Нужно {need_shards} осколков!"}), 400
         
         import random
         chance = random.randint(1, 100)
-        if chance <= 60:
+        t_vip, t_shield = odds("craft_odds", 3)   # шансы — из панели /glaz
+        if chance <= t_vip:
             code = f"JACKPOT-{random.randint(1000, 9999)}"
             import datetime
             code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
             return jsonify({"success": True, "msg": f"🎉 Собран Золотой Билет VIP!\nКод: {code}"})
-        elif chance <= 90:
+        elif chance <= t_shield:
             paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
             return jsonify({"success": True, "msg": "🛡 Вы сковали Щит Иммунитета!"})
         else:
             # 🔥 БЕЗОПАСНЫЙ КРАФТ С ПРОВЕРКОЙ КАССЫ 🔥
             bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
-            premium_cost = 1500
+            premium_cost = cfg("casino_premium_cost")
             
             if bank_data.get("balance", 0) >= premium_cost:
                 db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost}})
@@ -1039,18 +1053,18 @@ def api_open_chest():
     parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
     uid = json.loads(parsed_data['user'])['id']
     
-    PRICE = 1000
+    PRICE = cfg("chest_price")
     user_data = paid_collection.find_one({"uid": uid}) or {}
     points = user_data.get("bounty_points", 0)
     
-    if points < PRICE: return jsonify({"error": "Нужно 1000 очков!"}), 400
+    if points < PRICE: return jsonify({"error": f"Нужно {PRICE} очков!"}), 400
 
     # ⬇ было: tasks_progress.update_one(...) затем update_one(-PRICE), remaining = points - PRICE
     charged = paid_collection.find_one_and_update(
         {"uid": uid, "bounty_points": {"$gte": PRICE}},
         {"$inc": {"bounty_points": -PRICE}}
     )
-    if not charged: return jsonify({"error": "Нужно 1000 очков!"}), 400
+    if not charged: return jsonify({"error": f"Нужно {PRICE} очков!"}), 400
     remaining = charged.get("bounty_points", 0) - PRICE
     import datetime
     today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
@@ -1061,9 +1075,10 @@ def api_open_chest():
     karma = user_data.get("social_rating", 0)
     
     # 🔥 ВЛИЯНИЕ КАРМЫ НА СУНДУК 🔥
-    cat_threshold = 45
-    if karma >= 50: cat_threshold = 5   # Святые почти не встречают кота
-    elif karma <= -50: cat_threshold = 70 # Злых кот грабит по-черному
+    t_cat, t_shards, t_shield = odds("chest_odds", 4)   # кот / осколки / щит / джекпот — из панели /glaz
+    cat_threshold = t_cat
+    if karma >= 50: cat_threshold = min(5, t_cat)   # Святые почти не встречают кота
+    elif karma <= -50: cat_threshold = max(70, t_cat) # Злых кот грабит по-черному
     
     if chance <= cat_threshold:
         rubles = user_data.get("cashback_balance", 0)
@@ -1093,17 +1108,20 @@ def api_open_chest():
             db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": stolen_pts}})
             
         return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen_pts} очков, пока убегал!"})
-    elif chance <= 80:
+    elif chance <= max(t_shards, cat_threshold):
         shards = random.randint(1, 4)
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
         return jsonify({"success": True, "msg": f"📦 Сундук открыт!\nНайдено пыль и +{shards} Осколок(ка)."})
-    elif chance <= 95:
+    elif chance <= max(t_shield, cat_threshold):
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
         return jsonify({"success": True, "msg": "🛡 ОТЛИЧНЫЙ ДРОП!\nВы нашли Щит Иммунитета!"})
     else:
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+        jp_rub = cfg("chest_jackpot_rub")
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": jp_rub}})
         import time
-        db['ruble_ledger'].insert_one({"uid": uid, "amount": 500, "reason": "Джекпот в Секретном Сундуке", "timestamp": time.time()})
+        db['ruble_ledger'].insert_one({"uid": uid, "amount": jp_rub, "reason": "Джекпот в Секретном Сундуке", "timestamp": time.time()})
+        # Раньше ответа не было: деньги начислялись, а приложение показывало ошибку
+        return jsonify({"success": True, "msg": f"💎 ДЖЕКПОТ!!!\nСундук оказался набит деньгами: +{jp_rub} ₽ кэшбэка!"})
 
 @app.route('/api/get_cpa', methods=['POST'])
 def api_get_cpa():
@@ -1233,8 +1251,8 @@ def api_exchange():
     if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
     uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
-    # Курс определяет сервер, а не браузер (cost -> reward)
-    EXCHANGE_PACKS = {50: 50, 150: 175, 250: 300, 500: 650}
+    # Курс определяет сервер, а не браузер (cost -> reward); пакеты — в панели /glaz
+    EXCHANGE_PACKS = exchange_packs()
     try:
         cost = int(data.get('cost'))
     except (TypeError, ValueError):
@@ -1471,8 +1489,7 @@ def api_payout():
     details = data.get('details')
     
     if amount <= 0: return jsonify({"error": "Сумма должна быть больше нуля!"}), 400
-    if amount < 500: return jsonify({"error": "Минимум 500₽ для вывода!"}), 400
-    if method == "На карту" and amount < 3500: return jsonify({"error": "На карту минимум 3500₽!"}), 400
+    if amount < withdraw_min(method): return jsonify({"error": f"Для этого способа минимум {withdraw_min(method)}₽!"}), 400
     if not details or len(details) < 5: return jsonify({"error": "Укажите корректные реквизиты!"}), 400
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
@@ -1606,7 +1623,7 @@ def api_get_my_promos():
         base_price = 500
         if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
         elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
-        elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
+        elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
         
         # Считаем Рекомендованную цену (60% от номинала)
         if p.get('type') == 'artifact' and target_type == 'tag':
@@ -1661,7 +1678,7 @@ def api_add_market_lot():
     base_price = 500
     if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
     elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
-    elif target_type == "fine": base_price = to_rub(prices_db.get("fine_price_stars", 650))
+    elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
     
     # 🔥 НОВАЯ АДЕКВАТНАЯ ОЦЕНКА 🔥
     if promo.get("type") == "artifact":

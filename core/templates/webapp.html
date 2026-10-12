@@ -91,7 +91,7 @@
         <div class="surface rounded-2xl p-4 mb-4 text-center">
             <div id="slotIcon" class="text-4xl mb-2">🎰</div>
             <h2 class="font-bold text-lg">Гача-Рулетка</h2>
-            <p class="text-sm text-gray-400 mb-3">Испытай удачу! Стоимость: 50💎</p>
+            <p class="text-sm text-gray-400 mb-3">Испытай удачу! Стоимость: {{ econ.spin_price }}💎</p>
             <button id="spinBtn" onclick="spinRoulette()" class="accent w-full py-3 rounded-xl font-bold text-white active:scale-95 transition-transform flex justify-center items-center">
                 Крутить барабан
             </button>
@@ -191,7 +191,7 @@
 
         <div class="space-y-3 mb-6">
             <button onclick="craft('shards', this)" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-blue-500/30 active:scale-95 transition-transform">
-                <div class="text-left"><div class="font-bold">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: 50 🧩</div></div><div class="text-2xl">✨</div>
+                <div class="text-left"><div class="font-bold">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: {{ econ.craft_shards }} 🧩</div></div><div class="text-2xl">✨</div>
             </button>
             <button onclick="craft('beyond', this)" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-purple-500/30 active:scale-95 transition-transform">
                 <div class="text-left"><div class="font-bold">Элитный Крафт (VIP/Beyond)</div><div class="text-xs text-gray-400">Требуется: 3000 💎 + 2 🛡 (до 3 в сутки)</div></div><div class="text-2xl">🔮</div>
@@ -209,7 +209,7 @@
                     <p class="text-[10px] text-gray-400">VIP, Щиты, Деньги или Кот!</p>
                 </div>
                 <button id="chestBtn" onclick="openChest()" class="bg-yellow-600 px-4 py-2 rounded-xl font-bold text-white shadow-md active:scale-95 transition-transform text-sm">
-                    Открыть (1000 💎)
+                    Открыть ({{ econ.chest_price }} 💎)
                 </button>
             </div>
         </div>
@@ -260,20 +260,19 @@
 
         <h3 class="font-bold text-lg mb-2">💱 Обменник кэшбэка</h3>
         <div class="grid grid-cols-2 gap-2 mb-6">
-            <button onclick="exchange(50, 50)" class="surface p-2 rounded-xl border border-gray-700 active:scale-95"><div class="font-bold">50₽ ➔ 50💎</div><div class="text-[10px] text-gray-400">1:1</div></button>
-            <button onclick="exchange(150, 175)" class="surface p-2 rounded-xl border border-green-700/50 active:scale-95"><div class="font-bold">150₽ ➔ 175💎</div><div class="text-[10px] text-green-400">Выгода 15%</div></button>
-            <button onclick="exchange(250, 300)" class="surface p-2 rounded-xl border border-blue-700/50 active:scale-95"><div class="font-bold">250₽ ➔ 300💎</div><div class="text-[10px] text-blue-400">Выгода 20%</div></button>
-            <button onclick="exchange(500, 650)" class="surface p-2 rounded-xl border border-purple-700/50 active:scale-95"><div class="font-bold">500₽ ➔ 650💎</div><div class="text-[10px] text-purple-400">Выгода 30%</div></button>
+            {% for rub, pts in econ.packs %}{% set gain = ((pts / rub - 1) * 100)|round|int %}
+            <button onclick="exchange({{ rub }}, {{ pts }})" class="surface p-2 rounded-xl border {{ 'border-gray-700' if gain <= 0 else 'border-green-700/50' }} active:scale-95"><div class="font-bold">{{ rub }}₽ ➔ {{ pts }}💎</div><div class="text-[10px] {{ 'text-gray-400' if gain <= 0 else 'text-green-400' }}">{{ '1:1' if gain == 0 else ('Выгода ' ~ gain ~ '%' if gain > 0 else gain ~ '%') }}</div></button>
+            {% endfor %}
         </div>
 
         <h3 class="font-bold text-lg mb-2">💸 Вывод средств</h3>
         <div class="surface rounded-2xl p-4 mb-6 shadow-lg border border-gray-700/50">
             <select id="payoutMethod" class="w-full text-white rounded-lg p-3 mb-2 outline-none appearance-none">
-                <option value="На телефон">📱 На телефон (от 500₽)</option>
-                <option value="USDT (TRC-20)">🟢 В крипте USDT от 1000 рублей (Сеть TRC-20)</option>
-                <option value="USDT (BEP-20)">🟡 В крипте USDT от 1000 рублей (Сеть BEP-20)</option>
-                <option value="TON">💎 В крипте TON (от 1000 рублей)</option>
-                <option value="На карту">💳 На банковскую карту (от 3500₽)</option>
+                <option value="На телефон">📱 На телефон (от {{ econ.min_phone }}₽)</option>
+                <option value="USDT (TRC-20)">🟢 В крипте USDT от {{ econ.min_crypto }} рублей (Сеть TRC-20)</option>
+                <option value="USDT (BEP-20)">🟡 В крипте USDT от {{ econ.min_crypto }} рублей (Сеть BEP-20)</option>
+                <option value="TON">💎 В крипте TON (от {{ econ.min_crypto }} рублей)</option>
+                <option value="На карту">💳 На банковскую карту (от {{ econ.min_card }}₽)</option>
             </select>
             <input type="number" id="payoutAmount" placeholder="Сумма (₽)" class="w-full text-white rounded-lg p-3 mb-2 outline-none">
             <input type="text" id="payoutDetails" placeholder="Реквизиты (Номер/Адрес)" class="w-full text-white rounded-lg p-3 mb-3 outline-none">
@@ -1549,7 +1548,7 @@
             btn.innerText = "⏳ Вскрываем..."; btn.disabled = true; icon.innerText = "📦"; icon.classList.add('animate-pulse');
             setTimeout(() => {
                 apiCall('/api/open_chest').then(data => {
-                    icon.classList.remove('animate-pulse'); btn.disabled = false; btn.innerText = "Открыть (1000 💎)";
+                    icon.classList.remove('animate-pulse'); btn.disabled = false; btn.innerText = "Открыть ({{ econ.chest_price }} 💎)";
                     if(data.error) { customAlert(data.error, "Ошибка", "❌"); } 
                     else {
                         let alertIcon = '✨';

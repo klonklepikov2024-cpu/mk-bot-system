@@ -24,7 +24,7 @@ from utils.templates import TEMPLATES, NETWORK_LINKS
 from utils.cryptobot import get_crypto_pay_url
 
 import html
-from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, fine_quick_buttons  # настройки из панели /glaz
 
 def safe_md(text, max_len=1000):
     """Очищает текст от спецсимволов Markdown и обрезает длину, чтобы не крашнуть Телеграм"""
@@ -151,7 +151,7 @@ def handle_user_messages(message):
             
             if topic_type in ["unban", "ads"]:
                 markup = InlineKeyboardMarkup(row_width=2)
-                markup.add(InlineKeyboardButton("💳 250⭐️", callback_data="fine_250"), InlineKeyboardButton("💳 650⭐️", callback_data="fine_650"), InlineKeyboardButton("💳 1563⭐️", callback_data="fine_1563"))
+                markup.add(*[InlineKeyboardButton(f"💳 {a}⭐️", callback_data=f"fine_{a}") for a in fine_quick_buttons()])
                 markup.add(InlineKeyboardButton("✍️ Указать свою сумму", callback_data="fine_custom"))
                 markup.add(
                     InlineKeyboardButton("🔞 Запрос /18", callback_data="tpl_18"),
@@ -576,7 +576,7 @@ def handle_vid_check(call):
             InlineKeyboardButton("👤 Не видно лицо", callback_data="rej_vid_face"),
             InlineKeyboardButton("🤐 Не та фраза / Нет времени", callback_data="rej_vid_phrase"),
             InlineKeyboardButton("🔇 Нет звука / Тишина", callback_data="rej_vid_sound"),
-            InlineKeyboardButton("⏳ Просрочен таймер (Штраф 650⭐️)", callback_data="rej_vid_timeout")
+            InlineKeyboardButton(f"⏳ Просрочен таймер (Штраф {cfg('fine_tag_free')}⭐️)", callback_data="rej_vid_timeout")
         )
         try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -608,7 +608,7 @@ def handle_rejections(call):
     reasons_admin = {
         "rej_doc_blur": "Размыто", "rej_doc_hidden": "Скрыты данные", "rej_doc_wrong": "Не тот документ", 
         "rej_vid_face": "Не видно лицо", "rej_vid_phrase": "Неверная фраза", "rej_vid_sound": "Нет звука",
-        "rej_vid_timeout": "Просрочен таймер (Выставлен штраф 650⭐️)"
+        "rej_vid_timeout": f"Просрочен таймер (Выставлен штраф {cfg('fine_tag_free')}⭐️)"
     }
     
     text_to_user = reasons_user.get(call.data)
@@ -620,7 +620,7 @@ def handle_rejections(call):
 
         # 🔥 АВТОМАТИЧЕСКИЙ ШТРАФ ЗА ТАЙМЕР 🔥
         if call.data == "rej_vid_timeout":
-            amount = 650
+            amount = cfg("fine_tag_free")
             try:
                 user_data_pay = paid_collection.find_one({"uid": target_uid}) or {}
                 cb_balance = user_data_pay.get("cashback_balance", 0)
@@ -1740,34 +1740,34 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 
         elif is_manual_hard:
             ban_types.append("manual_hard")
-            behavior_rules_list.append("- ЖЕСТКИЙ РУЧНОЙ БАН: СТРОГО выбирай `reply_text`. Прочитай причину в Досье и требуй указанную там сумму (если нет - 1500⭐️).")
+            behavior_rules_list.append(f"- ЖЕСТКИЙ РУЧНОЙ БАН: СТРОГО выбирай `reply_text`. Прочитай причину в Досье и требуй указанную там сумму (если нет - {cfg('fine_manual')}⭐️).")
 
         elif is_failed_verif:
-            expected_fine = 650
+            expected_fine = cfg("fine_tag_free")
             ban_types.append("failed_verif")
-            behavior_rules_list.append("- ПРОВАЛ ВЕРИФИКАЦИИ / ИГНОР ТАЙМЕРА: СТРОГО выбирай `reply_text`. Жестко напомни, что он потратил время впустую. Штраф 650⭐️.")
+            behavior_rules_list.append(f"- ПРОВАЛ ВЕРИФИКАЦИИ / ИГНОР ТАЙМЕРА: СТРОГО выбирай `reply_text`. Жестко напомни, что он потратил время впустую. Штраф {cfg('fine_tag_free')}⭐️.")
 
         else:
             # === НАЧАЛО СУММИРОВАНИЯ КОМБО-НАРУШЕНИЙ ===
             if any(x in meaningful_text for x in ["КРАСНАЯ ЗОНА", "НАРКОТИКИ", "ЗАПРЕЩЕНКА", "НАРК", "МЕФ", "СОЛИ"]):
                 if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК", "ОТРЕАГИРОВ"]): 
-                    expected_fine += 1563
+                    expected_fine += cfg("fine_nark_react")
                     ban_types.append("nark_react")
-                    behavior_rules_list.append("- РЕАКЦИИ НА ЗАПРЕЩЕНКУ: Объясни, что за поддержку запрещенного контента предусмотрен штраф. Добавь к счету 1563⭐️.")
+                    behavior_rules_list.append(f"- РЕАКЦИИ НА ЗАПРЕЩЕНКУ: Объясни, что за поддержку запрещенного контента предусмотрен штраф. Добавь к счету {cfg('fine_nark_react')}⭐️.")
                 else: 
-                    expected_fine += 2000
+                    expected_fine += cfg("fine_nark")
                     ban_types.append("nark")
-                    behavior_rules_list.append("- НАРКОТИКИ (КРАСНАЯ ЗОНА): Если спорит -> холодно осади. Добавь к счету 2000⭐️.")
+                    behavior_rules_list.append(f"- НАРКОТИКИ (КРАСНАЯ ЗОНА): Если спорит -> холодно осади. Добавь к счету {cfg('fine_nark')}⭐️.")
 
             if any(x in meaningful_text for x in ["ЧЕРНАЯ ЗОНА", "НЕСОВЕРШЕННОЛЕТ", "<18", "ЦП", "ДП", "ДЕТСКОЕ"]):
                 if any(r in meaningful_text for r in ["РЕАКЦИ", "ЛАЙК", "РУЧК"]): 
-                    expected_fine += 1563
+                    expected_fine += cfg("fine_minor_react")
                     ban_types.append("minor_react")
-                    behavior_rules_list.append("- РЕАКЦИИ НА ДЕТСКОЕ: Объясни про штраф за поддержку детского контента. Добавь к счету 1563⭐️.")
+                    behavior_rules_list.append(f"- РЕАКЦИИ НА ДЕТСКОЕ: Объясни про штраф за поддержку детского контента. Добавь к счету {cfg('fine_minor_react')}⭐️.")
                 else: 
-                    expected_fine += 2000
+                    expected_fine += cfg("fine_minor")
                     ban_types.append("black_zone")
-                    behavior_rules_list.append("- НЕСОВЕРШЕННОЛЕТНИЙ (<18): Нахождение в сети строго с 18 лет. Штраф за обман. Добавь к счету 2000⭐️.")
+                    behavior_rules_list.append(f"- НЕСОВЕРШЕННОЛЕТНИЙ (<18): Нахождение в сети строго с 18 лет. Штраф за обман. Добавь к счету {cfg('fine_minor')}⭐️.")
 
             if any(x in meaningful_text for x in ["ОРАНЖЕВАЯ ЗОНА", "18 ЛЕТ", "18-21", "ВОЗРАСТ", "ВЕРИФИКАЦИЯ ВОЗРАСТ", "НЕТ 18"]):
                 ban_types.append("orange_zone")
@@ -1775,39 +1775,39 @@ def process_ticket_with_ai(uid, user_text, thread_id):
 
             if any(x in meaningful_text for x in ["ЖЕЛТАЯ ЗОНА", "КОММЕРЦИЯ", "МП", "ПОПРОШАЙ", "М.П", "ЭССКОРТ", "УСЛУГ", "ЗА МП", "ЗА М.П", "ПРАЙС"]):
                 ban_types.append("commercial")
-                expected_fine += 1563
-                behavior_rules_list.append("- КОММЕРЦИЯ (ЖЕЛТАЯ ЗОНА): Спонсоры и коммерция в сети разрешены ТОЛЬКО после оплаты взноса. Если юзер спорит — холодно осади его и задай вопрос-крючок: \"Выставить вам счет для получения официального статуса?\". Добавь к счету 1563⭐️.")
+                expected_fine += cfg("fine_commerce")
+                behavior_rules_list.append(f"- КОММЕРЦИЯ (ЖЕЛТАЯ ЗОНА): Спонсоры и коммерция в сети разрешены ТОЛЬКО после оплаты взноса. Если юзер спорит — холодно осади его и задай вопрос-крючок: \"Выставить вам счет для получения официального статуса?\". Добавь к счету {cfg('fine_commerce')}⭐️.")
                 
             if any(x in meaningful_text for x in ["СПОНСОР", "СОДЕРЖУ", "ПАПИК", "С МЕНЯ МП", "С МЕНЯ М.П", "ОПЛАЧУ", "ЗАПЛАЧУ", "СПОНСИРУЮ", "УГОЩУ"]):
                 ban_types.append("sponsor")
-                expected_fine += 750
-                behavior_rules_list.append("- СПОНСОРСТВО (ПАПИК): Объясни, что поиск содержания разрешен только после оплаты взноса. Добавь к счету 750⭐️.")
+                expected_fine += cfg("fine_tag_sponsor")
+                behavior_rules_list.append(f"- СПОНСОРСТВО (ПАПИК): Объясни, что поиск содержания разрешен только после оплаты взноса. Добавь к счету {cfg('fine_tag_sponsor')}⭐️.")
 
             if any(x in meaningful_text for x in ["БИО", "ССЫЛКА В"]):
                 ban_types.append("bio")
-                expected_fine += 250
-                behavior_rules_list.append("- ССЫЛКА БИО: Если еще НЕ просил удалить ссылку — выбери `tpl_bio`. Если шаблон уже отправлен, или юзер спрашивает как оплатить — СТРОГО выставляй счет. Добавь к счету 250⭐️.")
+                expected_fine += cfg("fine_bio")
+                behavior_rules_list.append(f"- ССЫЛКА БИО: Если еще НЕ просил удалить ссылку — выбери `tpl_bio`. Если шаблон уже отправлен, или юзер спрашивает как оплатить — СТРОГО выставляй счет. Добавь к счету {cfg('fine_bio')}⭐️.")
 
             if any(x in meaningful_text for x in ["СПАМ", "ФЛУД", "РЕКЛАМ", "ЕБАНАТ", "КОПИПАСТ", "БАЯН"]):
                 ban_types.append("spam")
-                expected_fine += 500
-                behavior_rules_list.append("- ФЛУД В ЧАТАХ: Если еще не отправлял шаблон — выбери `tpl_flood` и предложи досрочно снять мут. Иначе выставляй счет. Добавь к счету 500⭐️.")
+                expected_fine += cfg("fine_flood")
+                behavior_rules_list.append(f"- ФЛУД В ЧАТАХ: Если еще не отправлял шаблон — выбери `tpl_flood` и предложи досрочно снять мут. Иначе выставляй счет. Добавь к счету {cfg('fine_flood')}⭐️.")
 
             if any(x in meaningful_text for x in ["БОТ", "VIP", "ВИП", "БТБ", "БВБ", "ТРАНСБОТ", "V БЛОК", "ТЯНУЛ ВРЕМЯ", "НЕ ОПЛАТИЛ"]):
                 ban_types.append("bot_block")
-                expected_fine += 250
-                behavior_rules_list.append("- СИСТЕМНЫЕ НАРУШЕНИЯ: Напомни, что он заблокировал бота/сбежал. Добавь к счету 250⭐️. Как элитную альтернативу можешь надменно предложить ему сразу купить иммунитет (тег «Свободен») за 650⭐️.")
+                expected_fine += cfg("fine_bot_block")
+                behavior_rules_list.append(f"- СИСТЕМНЫЕ НАРУШЕНИЯ: Напомни, что он заблокировал бота/сбежал. Добавь к счету {cfg('fine_bot_block')}⭐️. Как элитную альтернативу можешь надменно предложить ему сразу купить иммунитет (тег «Свободен») за {cfg('fine_tag_free')}⭐️.")
 
             if any(x in meaningful_text for x in ["1 МАЯ", "ПАРАМЕТР", "ФОРМАТ"]):
                 ban_types.append("may_1")
-                expected_fine += 650
-                behavior_rules_list.append("- ОШИБКА ФОРМАТА АНКЕТЫ: Объясни, что параметры пишутся строго через слеш (например: 24/180/75). Ты ОБЯЗАТЕЛЬНО должен предложить 2 варианта: 1. Бесплатный кружок (написать «Готов») ИЛИ 2. Покупка иммунитета (650⭐️).")
+                expected_fine += cfg("fine_tag_free")
+                behavior_rules_list.append(f"- ОШИБКА ФОРМАТА АНКЕТЫ: Объясни, что параметры пишутся строго через слеш (например: 24/180/75). Ты ОБЯЗАТЕЛЬНО должен предложить 2 варианта: 1. Бесплатный кружок (написать «Готов») ИЛИ 2. Покупка иммунитета ({cfg('fine_tag_free')}⭐️).")
 
             # Если вообще ничего не нашли — это базовый карантин
             if not ban_types:
-                expected_fine = 650
+                expected_fine = cfg("fine_tag_free")
                 ban_types.append("basic")
-                behavior_rules_list.append("- СТАТУС: БАЗОВАЯ ПРОВЕРКА (Карантин). Вежливо объясни, что это автоматическая защита от ботов.\n- Предложи ДВА варианта: 1. Записать кружок (написать «Готов»). 2. Приобрести иммунитет за 650⭐️ (Без видео).")
+                behavior_rules_list.append(f"- СТАТУС: БАЗОВАЯ ПРОВЕРКА (Карантин). Вежливо объясни, что это автоматическая защита от ботов.\n- Предложи ДВА варианта: 1. Записать кружок (написать «Готов»). 2. Приобрести иммунитет за {cfg('fine_tag_free')}⭐️ (Без видео).")
                 circle_tech_info = "\nТЕХНИЧЕСКАЯ СПРАВКА:\n- 🔑 ВЕРИФИКАЦИЯ: Юзер должен отправить ровно одно слово: «Готов». Только после этого бот выдаст код и таймер! ВАЖНО: СЛОВО «ГОТОВ» НУЖНО ТОЛЬКО ДЛЯ ВИДЕО-КРУЖКА. ДЛЯ ШТРАФА ОНО НЕ НУЖНО!"
                 
             # Если в списке есть "basic" или "may_1", меняем правило тупика на мягкое
@@ -1942,7 +1942,7 @@ def process_ticket_with_ai(uid, user_text, thread_id):
             amount = int(result.get("fine_amount", 0))
             if amount < 1: 
                 # 🔥 Если ИИ вдруг забыл указать сумму — берем посчитанную сумму комбо!
-                amount = expected_fine if expected_fine > 0 else 650
+                amount = expected_fine if expected_fine > 0 else cfg("fine_tag_free")
             
             try:
                 ai_text = result.get("response_text", "")
@@ -2184,7 +2184,7 @@ def handle_req_manual_pay(call):
     
     # 👑 Предлагаем ВИПку только тем, у кого базовый штраф <= 650
     vip_text = ""
-    if amount <= 650:
+    if amount <= cfg("fine_tag_free"):
         try:
             vip_stars = int((db['settings'].find_one({"_id": "skynet_pricing"}) or {}).get("vip_price", 275))
         except Exception:

@@ -12,6 +12,7 @@ from database.mongo import client, db, paid_collection
 
 from config import APP_URL
 from utils.logger import logger
+from utils.netcfg import cfg, job_on  # тумблеры и время автособытий — из панели /glaz
 WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
 
 tz = ZoneInfo("Europe/Moscow")
@@ -173,6 +174,7 @@ def check_auctions_task():
 
 def auto_spawn_auction_lot():
     """Скайнет автоматически выставляет случайный элитный лот на аукцион"""
+    if not job_on("job_auction"): return   # выключено в панели /glaz
     import time
     import random
     from database.mongo import db
@@ -240,6 +242,7 @@ def auto_spawn_auction_lot():
 
 def personal_farm_notifications():
     """Проверяет грядки, пишет в ЛС и генерирует нападение Вредителей!"""
+    if not job_on("job_farm_dm"): return   # выключено в панели /glaz
     from core.bot import bot
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     from config import APP_URL
@@ -326,6 +329,7 @@ def personal_farm_notifications():
 
 def colorado_beetle_invasion():
     """Расползание Колорадского Жука по картофельному полю: с уведомлением в ЛС и защитой обработанных полей"""
+    if not job_on("job_beetle"): return   # выключено в панели /glaz
     import time, random
     from core.bot import bot
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -387,6 +391,7 @@ def colorado_beetle_invasion():
 
 def daily_bonus_reminder():
     """Вечернее пуш-уведомление для тех, кто забыл забрать Ежедневный Бонус"""
+    if not job_on("job_bonus_push"): return   # выключено в панели /glaz
     from core.bot import bot
     now = datetime.datetime.now()
     
@@ -487,23 +492,24 @@ def broadcast_teaser(text, button_text, tab_name):
 
 def smart_funnel_teaser():
     """Умная рекламная карусель с системой Анти-Попугай"""
+    if not job_on("job_funnel"): return   # выключено в панели /glaz
     # 🔥 ПРЕДОХРАНИТЕЛЬ: СВЕРКА С БАЗОЙ ДАННЫХ 🔥
     now = int(time.time())
     timer_data = db['settings'].find_one({"_id": "teaser_timer"})
     last_time = timer_data.get("last_time", 0) if timer_data else 0
     
-    # 21600 секунд = 6 часов. Если прошло меньше — молча выходим
-    if now - last_time < 21600:
+    # Интервал — из панели /glaz (по умолчанию 6 часов). Если прошло меньше — молча выходим
+    if now - last_time < cfg("job_funnel_every_h") * 3600:
         return
 
     teasers = [
         {
-            "text": "🎰 <b>УДАЧА ЛЮБИТ СМЕЛЫХ!</b>\n\nДавно не крутили Гача-Рулетку? А ведь там можно выбить <b>Осколки джекпота</b>, <b>Щиты иммунитета</b> или реальные <b>Рубли</b>!\n\n<i>Стоимость прокрута: всего 50 💎</i>",
+            "text": f"🎰 <b>УДАЧА ЛЮБИТ СМЕЛЫХ!</b>\n\nДавно не крутили Гача-Рулетку? А ведь там можно выбить <b>Осколки джекпота</b>, <b>Щиты иммунитета</b> или реальные <b>Рубли</b>!\n\n<i>Стоимость прокрута: всего {cfg('casino_spin_price')} 💎</i>",
             "btn": "🎰 Крутить барабан",
             "tab": "profile"
         },
         {
-            "text": "⚒ <b>НАКОВАЛЬНЯ ЖДЕТ!</b>\n\nЗнали ли вы, что из <b>50 Осколков</b> можно выковать Золотой Билет (VIP)? А за 3000 очков и 2 щита — получить статус <b>BEYOND</b>!\n\n<i>Проверьте свой инвентарь.</i>",
+            "text": f"⚒ <b>НАКОВАЛЬНЯ ЖДЕТ!</b>\n\nЗнали ли вы, что из <b>{cfg('craft_shards')} Осколков</b> можно выковать Золотой Билет (VIP)? А за 3000 очков и 2 щита — получить статус <b>BEYOND</b>!\n\n<i>Проверьте свой инвентарь.</i>",
             "btn": "🎒 Открыть Рюкзак",
             "tab": "inventory"
         },
@@ -589,6 +595,7 @@ import requests
 
 def holiday_contest_scout():
     """Разведчик Скайнета: Ищет крупные праздники за 10 дней и предлагает лонгрид-конкурс"""
+    if not job_on("job_scout"): return   # выключено в панели /glaz
     now = datetime.datetime.now(tz)
     target_date = now + datetime.timedelta(days=10) # Ищем за 10 дней до события
     month_day = target_date.strftime("%m-%d")
@@ -728,6 +735,7 @@ def holiday_contest_scout():
 
 def drop_cyber_bomb():
     """Сбрасывает кибер-бомбу в рандомный чат"""
+    if not job_on("job_bomb"): return   # выключено в панели /glaz
     from core.bot import bot
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
     from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
@@ -766,6 +774,7 @@ def drop_cyber_bomb():
 
 def stray_cat_tax():
     """Соседский кот сжирает деньги лентяев (Неактив 30 дней)"""
+    if not job_on("job_cat"): return   # выключено в панели /glaz
     import time
     thirty_days_ago = time.time() - (30 * 86400)
     
@@ -903,6 +912,7 @@ def refund_expired_courts():
 
 def collectors_task():
     """Проверка просроченных кредитов и выдача мутов"""
+    if not job_on("job_collectors"): return   # выключено в панели /glaz
     import time
     now = time.time()
     
@@ -969,6 +979,53 @@ def refund_expired_user_airdrops():
 
 # ================= ЗАПУСК ПЛАНИРОВЩИКА =================
 
+# ================= ⏰ РАСПИСАНИЕ ИЗ ПАНЕЛИ /glaz =================
+_WEEKDAYS = {"пн": "mon", "вт": "tue", "ср": "wed", "чт": "thu", "пт": "fri", "сб": "sat", "вс": "sun"}
+_APPLIED = {}   # job_id -> что уже применено (в памяти: после перезапуска применяется заново)
+
+
+def _hm(text, default):
+    try:
+        h, m = str(text).strip().split(":")
+        h, m = int(h), int(m)
+        if 0 <= h < 24 and 0 <= m < 60:
+            return h, m
+    except Exception:
+        pass
+    return default
+
+
+def _wanted_triggers():
+    out = {}
+    h, m = _hm(cfg("job_bonus_push_time"), (20, 0)); out["bonus_reminder"] = ("cron", {"hour": h, "minute": m})
+    h, m = _hm(cfg("job_scout_time"), (10, 0)); out["holiday_scout"] = ("cron", {"hour": h, "minute": m})
+    h, m = _hm(cfg("job_cat_time"), (12, 0)); out["stray_cat_tax"] = ("cron", {"hour": h, "minute": m})
+    try:
+        day, tm = str(cfg("job_auction_when")).strip().lower().split()
+        dow = _WEEKDAYS.get(day[:2], "fri")
+    except Exception:
+        dow, tm = "fri", "18:00"
+    h, m = _hm(tm, (18, 0)); out["auto_auction_spawn"] = ("cron", {"day_of_week": dow, "hour": h, "minute": m})
+    out["bomb_drop"] = ("interval", {"minutes": max(10, int(cfg("job_bomb_every_min")))})
+    out["colorado_invasion"] = ("interval", {"minutes": max(5, int(cfg("job_beetle_every_min")))})
+    return out
+
+
+def sync_job_schedule():
+    """Раз в минуту: если в панели поменяли время/интервал события — переставляем задачу без деплоя."""
+    try:
+        for job_id, (kind, args) in _wanted_triggers().items():
+            sig = (kind, tuple(sorted(args.items())))
+            if _APPLIED.get(job_id) == sig:
+                continue
+            if scheduler.get_job(job_id):
+                scheduler.reschedule_job(job_id, trigger=kind, **args)
+                _APPLIED[job_id] = sig
+                logger.info(f"⏰ Расписание «{job_id}» из панели: {kind} {args}")
+    except Exception as e:
+        logger.warning(f"sync_job_schedule: {e}")
+
+
 def start_scheduler():
     if not scheduler.running:
         # 1. Ежеминутные технические задачи
@@ -1016,5 +1073,9 @@ def start_scheduler():
         scheduler.add_job(expire_temp_tags, 'interval', minutes=5, id='expire_temp_tags', replace_existing=True)
         scheduler.add_job(promo_expiry_job, 'cron', hour=11, minute=0, id='promo_expiry', replace_existing=True)
         
+        # ⏰ Время и интервалы событий — из панели /glaz (проверка раз в минуту)
+        scheduler.add_job(sync_job_schedule, 'interval', minutes=1, id='sync_job_schedule', replace_existing=True)
+
         scheduler.start()
+        sync_job_schedule()
         print("⏰ APScheduler запущен (Воронка + Ферма + Розыгрыши + Пуши + Коты + Коллекторы)!")

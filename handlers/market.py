@@ -17,7 +17,7 @@ def get_base_price_rub(target_type):
     prices_db = db['settings'].find_one({"_id": "prices"}) or {}
     if target_type == "vip": return to_rub(prices_db.get("vip_price_stars", 250))
     if target_type == "ads": return to_rub(prices_db.get("ads_price_stars", 150))
-    if target_type == "fine": return to_rub(prices_db.get("fine_price_stars", 650))
+    if target_type == "fine": return to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
     return 500 # Дефолт для неизвестных артефактов
 
 # ================= ГЛАВНОЕ МЕНЮ РЫНКА =================

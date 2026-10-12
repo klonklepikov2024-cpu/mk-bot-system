@@ -10,6 +10,7 @@ from utils.validators import is_user_locked, can_withdraw, take_points_capped, c
 from config import STAFF_GROUP_ID, chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak
 from database.mongo import paid_collection, db
 from utils.logger import logger
+from utils.netcfg import cfg, odds, withdraw_min, exchange_packs  # настройки из панели /glaz
 
 # ================= МЕНЮ СЛУЖБЫ БЕЗОПАСНОСТИ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('sec_'))
@@ -119,7 +120,7 @@ def handle_shop_rewards_menu(call):
     )
     # 🔥 НОВЫЙ ЛОТ: СЕКРЕТНЫЙ СУНДУК
     markup.add(
-        InlineKeyboardButton("📦 Секретный Сундук (1000 очков)", callback_data="buy_secret_chest")
+        InlineKeyboardButton(f"📦 Секретный Сундук ({cfg('chest_price')} очков)", callback_data="buy_secret_chest")
     )
     markup.add(InlineKeyboardButton("💳 Купить очки за ⭐️", callback_data="shop_points_menu"))
     markup.add(InlineKeyboardButton("🎁 Ввести промокод", callback_data="enter_gift_code"))
@@ -153,7 +154,7 @@ def handle_forge_main(call):
     markup = InlineKeyboardMarkup(row_width=1)
     
     if shards >= 50:
-        markup.add(InlineKeyboardButton("🧩 СОБРАТЬ ДЖЕКПОТ (50 осколков)", callback_data="exchange_shards"))
+        markup.add(InlineKeyboardButton(f"🧩 СОБРАТЬ ДЖЕКПОТ ({cfg('craft_shards')} осколков)", callback_data="exchange_shards"))
     else:
         markup.add(InlineKeyboardButton(f"🧩 Копите осколки ({shards}/50)", callback_data="dummy_shards"))
         
@@ -332,8 +333,8 @@ def handle_cashback_request(call):
     user_data = paid_collection.find_one({"uid": uid}) or {}
     cb_balance = user_data.get("cashback_balance", 0)
     
-    if cb_balance < 500:
-        try: bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — 500 рублей! У вас: {cb_balance}₽.", show_alert=True)
+    if cb_balance < cfg("cb_min_phone"):
+        try: bot.answer_callback_query(call.id, f"❌ Минимальная сумма для вывода — {cfg('cb_min_phone')} рублей! У вас: {cb_balance}₽.", show_alert=True)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
@@ -342,9 +343,9 @@ def handle_cashback_request(call):
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("💳 На банковскую карту (от 3500₽)", callback_data=f"paymeth_card_{cb_balance}"),
-        InlineKeyboardButton("📱 На баланс телефона (от 500₽)", callback_data=f"paymeth_phone_{cb_balance}"),
-        InlineKeyboardButton("💎 В крипте (Выбор сети)", callback_data=f"paymeth_cryptomenu_{cb_balance}"),
+        InlineKeyboardButton(f"💳 На банковскую карту (от {cfg('cb_min_card')}₽)", callback_data=f"paymeth_card_{cb_balance}"),
+        InlineKeyboardButton(f"📱 На баланс телефона (от {cfg('cb_min_phone')}₽)", callback_data=f"paymeth_phone_{cb_balance}"),
+        InlineKeyboardButton(f"💎 В крипте (от {withdraw_min('crypto')}₽)", callback_data=f"paymeth_cryptomenu_{cb_balance}"),
         InlineKeyboardButton("🔙 Отмена", callback_data="btn_game_club")
     )
     
@@ -387,8 +388,8 @@ def handle_payout_method(call):
     method = parts[1]
     cb_balance = int(parts[2])
     
-    if method == "card" and cb_balance < 3500:
-        try: bot.answer_callback_query(call.id, f"❌ Для вывода на карту нужно минимум 3500₽!\nУ вас: {cb_balance}₽.", show_alert=True)
+    if cb_balance < withdraw_min(method):
+        try: bot.answer_callback_query(call.id, f"❌ Для этого способа нужно минимум {withdraw_min(method)}₽!\nУ вас: {cb_balance}₽.", show_alert=True)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
 
@@ -424,7 +425,7 @@ def process_payout_details(message, cb_balance, method):
     if not ok:
         bot.send_message(message.chat.id, f"⛔️ Вывод заморожен: {reason}")
         return
-    if not details or cb_balance < 500 or (method == "card" and cb_balance < 3500):
+    if not details or cb_balance < withdraw_min(method):
         bot.send_message(message.chat.id, "❌ Некорректная заявка. Начните заново.")
         return
 
@@ -549,8 +550,9 @@ def handle_shards_exchange(call):
     uid = call.from_user.id
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
-    if user_data.get("jackpot_shards", 0) < 50:
-        try: bot.answer_callback_query(call.id, "❌ Недостаточно осколков! Нужно 50 шт.", show_alert=True)
+    need_shards = cfg("craft_shards")
+    if user_data.get("jackpot_shards", 0) < need_shards:
+        try: bot.answer_callback_query(call.id, f"❌ Недостаточно осколков! Нужно {need_shards} шт.", show_alert=True)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
@@ -559,17 +561,18 @@ def handle_shards_exchange(call):
     
     # Атомарно списываем 50 осколков: сработает только если их хватает прямо сейчас
     spent = paid_collection.find_one_and_update(
-        {"uid": uid, "jackpot_shards": {"$gte": 50}},
-        {"$inc": {"jackpot_shards": -50}}
+        {"uid": uid, "jackpot_shards": {"$gte": need_shards}},
+        {"$inc": {"jackpot_shards": -need_shards}}
     )
     if not spent:
         return
     
     # 🔥 НОВАЯ МЕХАНИКА ШАНСОВ (60% VIP, 30% Щит, 10% TG Premium) 🔥
     chance = random.randint(1, 100)
+    t_vip, t_shield = odds("craft_odds", 3)   # шансы VIP / щит / Premium — из панели /glaz
     
-    if chance <= 60:
-        # 60% ШАНС: VIP-БИЛЕТ СО СГОРАНИЕМ (72 часа)
+    if chance <= t_vip:
+        # ШАНС: VIP-БИЛЕТ СО СГОРАНИЕМ (72 часа)
         import datetime
         from handlers.casino import create_unique_promo
         code = create_unique_promo("JACKPOT", {
@@ -584,8 +587,8 @@ def handle_shards_exchange(call):
             bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В кабинет", callback_data="btn_game_club")))
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
-    elif chance <= 90:
-        # 30% ШАНС: ЩИТ ИММУНИТЕТА
+    elif chance <= t_shield:
+        # ШАНС: ЩИТ ИММУНИТЕТА
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
         msg = f"🛡 **ПОЗДРАВЛЯЕМ!** 🛡\n\nВы собрали из осколков **Щит Иммунитета**!\nВаш аккаунт теперь защищен от одного случайного нарушения или страйка."
         
@@ -970,7 +973,7 @@ def handle_inv_angel(call):
 # 🔥 ФИКС ЗАЛИПАНИЯ КНОПКИ ОСКОЛКОВ 🔥
 @bot.callback_query_handler(func=lambda call: call.data == 'dummy_shards')
 def handle_dummy_shards(call):
-    try: bot.answer_callback_query(call.id, "🧩 Крутите рулетку, чтобы собрать 50 осколков для джекпота!", show_alert=True)
+    try: bot.answer_callback_query(call.id, f"🧩 Крутите рулетку, чтобы собрать {cfg('craft_shards')} осколков для джекпота!", show_alert=True)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # 🔥 ФИКС ЗАЛИПАНИЯ КНОПКИ ОРДЕРА 🔥
@@ -1054,7 +1057,7 @@ def handle_buy_chest(call):
     user_data = paid_collection.find_one({"uid": uid}) or {}
     points = user_data.get("bounty_points", 0)
     
-    PRICE = 1000
+    PRICE = cfg("chest_price")
     
     if points < PRICE:
         try: bot.answer_callback_query(call.id, f"❌ Не хватает очков! Сундук стоит {PRICE}, а у вас {points}.", show_alert=True)
@@ -1074,8 +1077,9 @@ def handle_buy_chest(call):
     
     # 2. ГАЧА-РАНДОМ!
     chance = random.randint(1, 100)
+    t_cat, t_shards, t_shield = odds("chest_odds", 4)   # кот / осколки / щит / джекпот — из панели /glaz
     
-    if chance <= 45: 
+    if chance <= t_cat: 
         # 🐈‍⬛ 45% ШАНС: КОТ-ВОРИШКА! 
         # Он крадет от 10% до 25% от ОСТАВШЕГОСЯ баланса!
         steal_percent = random.uniform(0.10, 0.25)
@@ -1092,21 +1096,22 @@ def handle_buy_chest(call):
             f"_Надо было слушать маму и не играть в азартные игры..._"
         )
         
-    elif chance <= 80: 
-        # 🧩 35% ШАНС: Утешительные осколки
+    elif chance <= t_shards: 
+        # 🧩 ШАНС: Утешительные осколки
         shards = random.randint(1, 4)
         paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
         msg = f"📦 **Секретный Сундук открыт!**\n\nНа дне сундука лежало немного пыли и **+{shards} Осколка рулетки** 🧩.\n_Ну, хотя бы не кот..._"
         
-    elif chance <= 95: 
-        # 🛡 15% ШАНС: Щит иммунитета
+    elif chance <= t_shield: 
+        # 🛡 ШАНС: Щит иммунитета
         paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
         msg = f"🛡 **ОТЛИЧНЫЙ ДРОП!**\n\nВы нашли в сундуке **Щит Иммунитета**!\nОн защитит вас от одного случайного бана или мута."
         
     else: 
         # 💎 5% ШАНС: ДЖЕКПОТ (Кэшбек 500 руб)
-        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
-        msg = f"💎 **О БОЖЕ, ЭТО ДЖЕКПОТ!!!** 💎\n\nСундук оказался набит деньгами! Вы получили **500 рублей кэшбэка** на внутренний баланс! 💰"
+        jp_rub = cfg("chest_jackpot_rub")
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": jp_rub}})
+        msg = f"💎 **О БОЖЕ, ЭТО ДЖЕКПОТ!!!** 💎\n\nСундук оказался набит деньгами! Вы получили **{jp_rub} рублей кэшбэка** на внутренний баланс! 💰"
         
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 В магазин", callback_data="shop_rewards_menu"))
     try: bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
@@ -1120,13 +1125,11 @@ def handle_exchange_cb_menu(call):
     cb_balance = user_data.get("cashback_balance", 0)
     
     markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton("📦 50 очков — 50₽ (1:1)", callback_data="do_exchange_50_50"),
-        InlineKeyboardButton("🔥 175 очков — 150₽ (Выгода 15%)", callback_data="do_exchange_150_175"),
-        InlineKeyboardButton("💥 300 очков — 250₽ (Выгода 20%)", callback_data="do_exchange_250_300"),
-        InlineKeyboardButton("💎 650 очков — 500₽ (Выгода 30%)", callback_data="do_exchange_500_650"),
-        InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club")
-    )
+    for rub, pts in sorted(exchange_packs().items()):
+        gain = round((pts / rub - 1) * 100) if rub else 0
+        tail = "1:1" if gain == 0 else (f"Выгода {gain}%" if gain > 0 else f"{gain}%")
+        markup.add(InlineKeyboardButton(f"💱 {pts} очков — {rub}₽ ({tail})", callback_data=f"do_exchange_{rub}_{pts}"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
     
     text = (
         f"💱 **ОБМЕННИК КЭШБЕКА**\n\n"
@@ -1140,9 +1143,17 @@ def handle_exchange_cb_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('do_exchange_'))
 def handle_do_exchange(call):
     parts = call.data.split('_')
-    cost_rub = int(parts[2])
-    pts_reward = int(parts[3])
+    try:
+        cost_rub = int(parts[2])
+    except (IndexError, ValueError):
+        return
+    # Курс берём с сервера: раньше «очки» брались из самой кнопки, и подделанная кнопка давала любые очки за 1 ₽
+    pts_reward = exchange_packs().get(cost_rub)
     uid = call.from_user.id
+    if not pts_reward:
+        try: bot.answer_callback_query(call.id, "❌ Такого пакета обмена больше нет. Откройте обменник заново.", show_alert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     
     # 🔥 АТОМАРНАЯ ТРАНЗАКЦИЯ: Ищем юзера с нужным балансом и сразу списываем/начисляем
     updated_user = paid_collection.find_one_and_update(

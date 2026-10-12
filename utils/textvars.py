@@ -7,7 +7,8 @@ import re
 from database.mongo import db
 
 _KEYS = ("quarantine_hours", "strike_hours", "strikes", "flood_hours", "fine_free", "fine_sponsor",
-         "indulgence_price", "support_price", "spam_fine", "vip_price", "beyond_price", "rub_per_star")
+         "indulgence_price", "support_price", "spam_fine", "vip_price", "beyond_price", "rub_per_star",
+         "fine_nark", "fine_minor", "fine_nark_react", "fine_minor_react", "fine_commerce", "fine_bio", "fine_flood", "fine_bot_block", "fine_manual")
 _RX = re.compile(r"\{(" + "|".join(_KEYS) + r")\}")
 
 
@@ -31,6 +32,15 @@ def values():
         "indulgence_price": g(cfg, "indulgence_price", 2000), "support_price": g(cfg, "support_price", 50),
         "spam_fine": g(cfg, "spam_fine", 111), "vip_price": g(price, "vip_price", 250),
         "beyond_price": g(price, "beyond_price", 250), "rub_per_star": g(cfg, "rub_per_star", 2),
+        "fine_nark": g(cfg, "fine_nark", 2000),
+        "fine_minor": g(cfg, "fine_minor", 2000),
+        "fine_nark_react": g(cfg, "fine_nark_react", 1563),
+        "fine_minor_react": g(cfg, "fine_minor_react", 1563),
+        "fine_commerce": g(cfg, "fine_commerce", 1563),
+        "fine_bio": g(cfg, "fine_bio", 250),
+        "fine_flood": g(cfg, "fine_flood", 500),
+        "fine_bot_block": g(cfg, "fine_bot_block", 250),
+        "fine_manual": g(cfg, "fine_manual", 1500),
     }
 
 

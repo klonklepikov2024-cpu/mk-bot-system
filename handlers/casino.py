@@ -26,7 +26,7 @@ def create_unique_promo(prefix, fields):
 
 # ===== Ежедневный бонус: день считается по Москве =====
 from zoneinfo import ZoneInfo
-from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices  # настройки из панели /glaz
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, weighted, _ints  # настройки из панели /glaz
 MSK = ZoneInfo("Europe/Moscow")
 
 def msk_today():
@@ -69,20 +69,21 @@ def handle_manual_dice(message):
 # ================= ОБНОВЛЕННАЯ ТАБЛИЦА ПРИЗОВ =================
 @bot.message_handler(commands=['prizes', 'призы', 'куш'])
 def show_casino_prizes(message):
+    _pw = _ints("casino_points_wins") or [100]
     text = (
         "🎰 **ТАБЛИЦА ПРИЗОВ РУЛЕТКИ** 🎰\n\n"
-        "Стоимость игры: **50 очков** (`/spin`)\n\n"
+        f"Стоимость игры: **{cfg('casino_spin_price')} очков** (`/spin`)\n\n"
         "💎 **СУПЕР-ПРИЗ:** Telegram Premium на 3 месяца!\n"
-        "🛍 **СУПЕР-ПРИЗ:** Универсальный Сертификат (1000 ₽)!\n"
-        "🏆 **ДЖЕКПОТ (7️⃣7️⃣7️⃣):** Золотой Билет (VIP-доступ) + 💰 300 очков!\n\n"
+        f"🛍 **СУПЕР-ПРИЗ:** Универсальный Сертификат ({cfg('casino_cert_rub')} ₽)!\n"
+        f"🏆 **ДЖЕКПОТ (7️⃣7️⃣7️⃣):** Золотой Билет (VIP-доступ) + 💰 {cfg('casino_jackpot_points')} очков!\n\n"
         "🌟 **РЕДКОСТЬ:** Личный Кастомный Тег (Статус) в чатах!\n"
         "🔥 **ЭПИЧЕСКИЙ:** 🛡 Щит Иммунитета *(Авто-защита от бана)*\n"
         "🚓 **АРТЕФАКТ:** Ордер на Арест *(Отправь любого в мут!)*\n\n"
         "🕊 **АМНИСТИЯ:** Снятие 1 штрафа (или +100 очков).\n"
-        "💸 **КУШ:** Кэшбэк от 100 до 250 очков!\n"
+        f"💸 **КУШ:** Кэшбэк от {min(_pw)} до {max(_pw)} очков!\n"
         "📢 **СКИДКИ:** Промокоды до -50% на услуги.\n\n"
-        "💀 **ОПАСНОСТЬ:** Сектор «Налоговая» (Сжигает 30% ваших очков).\n\n"
-        "🥉 **ОБЫЧНЫЙ (Неудача):** 🧩 **1-2 Осколка Джекпота** *(50 шт = 100% Супер-Приз)*"
+        f"💀 **ОПАСНОСТЬ:** Сектор «Налоговая» (Сжигает {cfg('casino_tax_pct')}% ваших очков).\n\n"
+        f"🥉 **ОБЫЧНЫЙ (Неудача):** 🧩 **1-2 Осколка Джекпота** *({cfg('craft_shards')} шт = Наковальня)*"
     )
     try:
         bot.reply_to(message, text, parse_mode="Markdown")
@@ -93,7 +94,7 @@ def show_casino_prizes(message):
 @bot.message_handler(commands=['spin', 'казино', 'рулетка'])
 def handle_casino_spin(message):
     uid = message.from_user.id
-    SPIN_PRICE = 50 # Стоимость одной прокрутки
+    SPIN_PRICE = cfg("casino_spin_price")  # Стоимость одной прокрутки — из панели /glaz
 
     # 🔥 Казино работает только в личке бота: в группе - короткая подсказка, которая сама исчезает
     if message.chat.type != 'private':
@@ -172,7 +173,7 @@ def handle_casino_spin(message):
 @bot.callback_query_handler(func=lambda call: call.data == 'spin_for_cashback')
 def handle_spin_for_cashback(call):
     uid = call.from_user.id
-    SPIN_PRICE = 50
+    SPIN_PRICE = cfg("casino_spin_price")
     
     user_data = paid_collection.find_one({"uid": uid}) or {}
     if user_data.get("cashback_balance", 0) < SPIN_PRICE:
@@ -223,7 +224,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
     pm_markup = None
 
     bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
-    premium_cost_stars = 1500 
+    premium_cost_stars = cfg("casino_premium_cost")
 
     # Деньги забираем из фонда атомарно: сработает, только если их хватает прямо сейчас
     premium_won = False
@@ -244,12 +245,13 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     elif val == 63: 
         # 1.5 РЕЗЕРВНЫЙ СУПЕР-ПРИЗ (Выпал 63, но в кассе пусто)
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
-        msg = f"🎰 **МИНИ-ДЖЕКПОТ!** 🎰\n\nВы были в миллиметре от Главного Приза, но срываете отличный куш!\n🎁 **Приз:** +1000 Очков Бдительности и 5 Осколков рулетки!"
-        pm_msg = f"💎 **Ваш выигрыш:** +1000 Очков и 5 Осколков. Главный приз (Premium) пока копится в фонде казино, попробуйте позже!"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_mini_points"), "jackpot_shards": cfg("casino_mini_shards")}})
+        msg = f"🎰 **МИНИ-ДЖЕКПОТ!** 🎰\n\nВы были в миллиметре от Главного Приза, но срываете отличный куш!\n🎁 **Приз:** +{cfg('casino_mini_points')} Очков Бдительности и {cfg('casino_mini_shards')} Осколков рулетки!"
+        pm_msg = f"💎 **Ваш выигрыш:** +{cfg('casino_mini_points')} Очков и {cfg('casino_mini_shards')} Осколков. Главный приз (Premium) пока копится в фонде казино, попробуйте позже!"
 
     # === НОВЫЙ БЛОК: УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ (Вероятность как у Premium) ===
-    cert_cost_stars = 1250 # Это эквивалент 1000 рублей
+    cert_cost_stars = cfg("casino_cert_cost")  # сколько ⭐️ уходит из фонда за сертификат
+    cert_rub = cfg("casino_cert_rub")
     
     cert_won = False
     if val == 62:
@@ -260,33 +262,33 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     if val == 62 and cert_won:
         # Фонд позволяет: звёзды уже списаны, выдаем сертификат!        
-        msg = f"🛍 **СУПЕР-ПРИЗ!!!** 🛍\n\nНевероятно! Барабан остановился на счастливом секторе!\n🎁 **Приз:** Универсальный Сертификат на 1000 ₽!\n_(Можно потратить на продукты, Ozon, Я.Еду и еще 150+ магазинов)_\n\n_🎁 Заявка отправлена администраторам!_"
-        pm_msg = f"🛍 **ВЫ ВЫИГРАЛИ УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ (1000 ₽)!** 🛍\n\nНажмите кнопку ниже, чтобы забрать ваш приз напрямую у администрации!"
+        msg = f"🛍 **СУПЕР-ПРИЗ!!!** 🛍\n\nНевероятно! Барабан остановился на счастливом секторе!\n🎁 **Приз:** Универсальный Сертификат на {cert_rub} ₽!\n_(Можно потратить на продукты, Ozon, Я.Еду и еще 150+ магазинов)_\n\n_🎁 Заявка отправлена администраторам!_"
+        pm_msg = f"🛍 **ВЫ ВЫИГРАЛИ УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ ({cert_rub} ₽)!** 🛍\n\nНажмите кнопку ниже, чтобы забрать ваш приз напрямую у администрации!"
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🎁 Забрать Сертификат", callback_data="claim_premium")) # Используем ту же кнопку, она идеально подходит
         
         try: 
             bot.send_message(
                 STAFF_GROUP_ID, 
-                f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ (СЕРТИФИКАТ)!** 🚨\n\nПользователь `{uid}` (@{username}) выбил **Универсальный Сертификат на 1000₽**! Из фонда казино списано {cert_cost_stars}⭐️.\n\n_Ожидайте заявку в ЦУП для выдачи приза!_"
+                f"🚨 **ВНИМАНИЕ! СОРВАН СУПЕР-ПРИЗ (СЕРТИФИКАТ)!** 🚨\n\nПользователь `{uid}` (@{username}) выбил **Универсальный Сертификат на {cert_rub}₽**! Из фонда казино списано {cert_cost_stars}⭐️.\n\n_Ожидайте заявку в ЦУП для выдачи приза!_"
             )
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
     elif val == 62:
         # Фонд пуст: выдаем утешительный мини-джекпот
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000, "jackpot_shards": 5}})
-        msg = f"🎰 **МИНИ-ДЖЕКПОТ!** 🎰\n\nВы выбили сектор Сертификата, но касса казино пока пуста! Вы забираете резервный куш:\n🎁 **Приз:** +1000 Очков Бдительности и 5 Осколков рулетки!"
-        pm_msg = f"💎 **Ваш выигрыш:** +1000 Очков и 5 Осколков. Главный приз (Сертификат) пока копится в фонде казино, попробуйте позже!"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_mini_points"), "jackpot_shards": cfg("casino_mini_shards")}})
+        msg = f"🎰 **МИНИ-ДЖЕКПОТ!** 🎰\n\nВы выбили сектор Сертификата, но касса казино пока пуста! Вы забираете резервный куш:\n🎁 **Приз:** +{cfg('casino_mini_points')} Очков Бдительности и {cfg('casino_mini_shards')} Осколков рулетки!"
+        pm_msg = f"💎 **Ваш выигрыш:** +{cfg('casino_mini_points')} Очков и {cfg('casino_mini_shards')} Осколков. Главный приз (Сертификат) пока копится в фонде казино, попробуйте позже!"
 
     # 2. 🎰 ЛЕГЕНДАРНЫЙ ДЖЕКПОТ (7️⃣7️⃣7️⃣ — val: 64)
     elif val == 64:
         code = create_unique_promo("JACKPOT", {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
-        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 300}})
-        msg = f"🚨 **ДЖЕКПОТ!!! 7️⃣7️⃣7️⃣** 🚨\n\n🎟 **Приз:** Золотой Билет (VIP) + 💰 300 очков!\n_🎁 Промокод отправлен в ЛС!_"
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_jackpot_points")}})
+        msg = f"🚨 **ДЖЕКПОТ!!! 7️⃣7️⃣7️⃣** 🚨\n\n🎟 **Приз:** Золотой Билет (VIP) + 💰 {cfg('casino_jackpot_points')} очков!\n_🎁 Промокод отправлен в ЛС!_"
         
         pm_msg = (
             f"🎉 **ВАШ ДЖЕКПОТ!**\n"
             f"🎫 VIP-доступ (100% скидка): `{code}`\n"
-            f"💰 Начислено: 300 очков.\n\n"
+            f"💰 Начислено: {cfg('casino_jackpot_points')} очков.\n\n"
             f"📖 **Как активировать VIP:**\n"
             f"1. Перейдите в [@Elitepost_bot](https://t.me/Elitepost_bot)\n"
             f"2. Раздел: «Вступить в VIP чат» -> «Готов пройти верификацию»\n"
@@ -327,7 +329,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     elif val in [10, 20, 40, 50]:
         # 🔥 ВЛИЯНИЕ КАРМЫ: ШТРАФ 50% ДЛЯ ИЗГОЕВ 🔥
-        tax_pct = 0.5 if user_data.get("social_rating", 0) <= -50 else 0.3
+        tax_pct = (cfg("casino_tax_outcast_pct") if user_data.get("social_rating", 0) <= -50 else cfg("casino_tax_pct")) / 100
         
         lost_points = int(points * tax_pct)
         has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
@@ -349,10 +351,10 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
         if has_cactus:
             msg = f"🌵 **НАЛОГОВАЯ ПРОВЕРКА!**\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
         else:
-            if tax_pct == 0.5:
-                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано 50% баланса (-{lost_points} очков)."
+            if tax_pct != cfg("casino_tax_pct") / 100:
+                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
             else:
-                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nСписано 30% баланса (-{lost_points} очков)."
+                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nСписано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
 
     # 6. 🚓 ОРДЕР НА АРЕСТ (Социальный артефакт — val: 5, 17, 29)
     elif val in [5, 17, 29]:
@@ -381,7 +383,7 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     # 8. 💸 КЭШБЭК / УМНОЖИТЕЛЬ (val: 15, 30, 45, 60)
     elif val in [15, 30, 45, 60]:
-        win_points = random.choice([100, 150, 250])
+        win_points = random.choice(_ints("casino_points_wins") or [100])
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": win_points}})
         msg = f"💸 **КРУПНЫЙ КУШ!**\n\nВы выиграли **{win_points} очков**!"
         pm_msg = f"💸 Ваш выигрыш: +{win_points} очков."
@@ -408,7 +410,8 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
 
     # 9.5 🌟 ЗАМАСКИРОВАННЫЙ КЭШБЭК (Реальные рубли на баланс — val: 11, 33)
     elif val in [11, 33]:
-        win_rub = random.choices([100, 250, 500], weights=[75, 20, 5], k=1)[0]
+        _vals, _w = weighted("casino_cash_wins")
+        win_rub = random.choices(_vals, weights=_w, k=1)[0]
         cost_in_stars = rub_to_stars(win_rub)
         
         # Проверяем и забираем деньги из кассы казино одним атомарным действием
@@ -477,8 +480,9 @@ def handle_daily_bonus(message):
             return
 
     # Выдача награды: от 15 до 50 очков
-    bonus_points = random.randint(15, 50)
-    bonus_shards = 1 if random.randint(1, 100) <= 5 else 0 # 5% шанс на 1 осколок
+    _lo, _hi = sorted((cfg("bonus_min"), cfg("bonus_max")))
+    bonus_points = random.randint(_lo, _hi)   # диапазон — из панели /glaz
+    bonus_shards = 1 if random.randint(1, 100) <= cfg("bonus_shard_pct") else 0
 
     update_data = {
         "$inc": {"bounty_points": bonus_points, "jackpot_shards": bonus_shards},
