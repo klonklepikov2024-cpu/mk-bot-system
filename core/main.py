@@ -125,6 +125,9 @@ def mute_user(chat_id, user_id, seconds, reason=""):
             until_date=until,
             permissions=perms
         )
+        try:   # метка «игровой мут»: по ней Ангел-Хранитель понимает, что этот мут можно снять
+            paid_collection.update_one({"uid": user_id}, {"$set": {"game_mute_until": until, "game_mute_reason": str(reason)[:100]}}, upsert=True)
+        except Exception: pass
         return True
     except Exception as e:
         from config import STAFF_GROUP_ID
@@ -1871,16 +1874,19 @@ def api_inventory_action():
     elif action == 'angel':
         target_uid = resolve_uid(data.get('target_info'))
         if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
+        from utils.validators import angel_check
+        ok, why = angel_check(uid, target_uid)   # проверка ДО списания щита
+        if not ok: return jsonify({"error": why}), 400
         
         user_data = paid_collection.find_one({"uid": uid}) or {}
         if user_data.get("immunity", 0) < 1: return jsonify({"error": "Нет активных Щитов!"}), 400
         
         if not paid_collection.find_one_and_update({"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
             return jsonify({"error": "Нет активных Щитов!"}), 400
-        paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
+        paid_collection.update_one({"uid": target_uid}, {"$unset": {"game_mute_until": "", "game_mute_reason": ""}})
         
         import time
-        db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": time.time()})
+        db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_unmute", "source": "angel", "timestamp": time.time()})
         return jsonify({"success": True, "msg": f"👼 Чудо свершилось!\nВы пожертвовали щит. Юзер {target_uid} спасен!"})
         
     elif action == 'arrest':
@@ -5457,8 +5463,8 @@ def prison_break(message):
 
         if random.randint(1, 100) <= 40:
             # УСПЕХ: Снимаем мут и гуантанамо
-            db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
-            paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
+            db['skynet_tasks'].insert_one({"uid": target_id, "action": "global_unmute", "timestamp": time.time()})
+            paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": "", "game_mute_until": "", "game_mute_reason": ""}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": 2}})
             _say(message.chat.id, f"✅ <b>ПОБЕГ УДАЛСЯ!</b>\nОхрана не успела среагировать. {safe_target} на свободе!\n\n<i>Спасатель получает +2 к Карме за преданность братве.</i>", parse_mode="HTML")
         else:

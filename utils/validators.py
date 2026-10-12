@@ -83,3 +83,49 @@ def craft_slot(uid, kind, limit):
 def craft_release(uid, kind):
     """Возвращает слот, если крафт не состоялся (не хватило ресурсов)."""
     db['craft_limits'].update_one({"_id": _craft_key(uid, kind)}, {"$inc": {"n": -1}})
+
+
+# ================= 👼 АНГЕЛ-ХРАНИТЕЛЬ: ПРОВЕРКА ДОПУСКА =================
+# Белый список. Ангел снимает ТОЛЬКО игровые муты:
+#   • «Ордер на Арест» (Скайнет пишет его причину в users.net_mute_reason; любой более поздний
+#     мут — админский, зоны, копипаст — перезаписывает её);
+#   • локальные игровые муты из mute_user() (бомба, рулетка, суд, побег, кальмар…): метка paid_users.game_mute_until.
+# Не снимает: Гуантанамо («Ангелы бессильны»), баны, страйки, долговой/админский/авто-мут.
+GAME_NET_PREFIXES = ("Ордер на Арест",)
+ANGEL_PROOF_PREFIXES = ("Ордер Гуантанамо",)
+
+def angel_check(uid, target_uid):
+    """(можно?, причина отказа). Вызывать ДО списания щита."""
+    now = time.time()
+    me = paid_collection.find_one({"uid": uid}) or {}
+    # 1) Спасатель сам не должен быть ограничен/забанен
+    if (is_user_locked(uid) or has_active_group_restriction(uid)
+            or me.get("strikes", 0) >= 3 or me.get("hard_punish")
+            or _ts(me.get("guantanamo_until", 0)) > now
+            or _ts(me.get("game_mute_until", 0)) > now):
+        return False, "🚫 Пока вы сами под ограничением, Ангела призвать нельзя."
+
+    # 2) Жёсткие случаи цели
+    t = paid_collection.find_one({"uid": target_uid}) or {}
+    g_reason = str(t.get("game_mute_reason") or "")
+    if _ts(t.get("guantanamo_until", 0)) > now or g_reason.startswith(ANGEL_PROOF_PREFIXES):
+        return False, "🚷 Ордер Гуантанамо: Ангелы бессильны."
+    if is_user_locked(target_uid) or t.get("strikes", 0) >= 3 or t.get("hard_punish"):
+        return False, "⛔ Это наказание наложено администрацией или системой — Ангел бессилен."
+
+    # 3) Сетевой мут Скайнета: если он есть, он обязан быть игровым арестом
+    u = db['users'].find_one({"_id": target_uid}, {"net_mute_until": 1, "net_mute_reason": 1}) or {}
+    try:
+        nm = int(u["net_mute_until"]) if u.get("net_mute_until") is not None else None
+    except (TypeError, ValueError):
+        nm = None
+    net_active = nm is not None and (nm == 0 or nm > now)
+    net_game = net_active and str(u.get("net_mute_reason") or "").startswith(GAME_NET_PREFIXES)
+    if net_active and not net_game:
+        return False, "⛔ На цели мут от администрации или системы — Ангел бессилен."
+
+    # 4) Белый список: игровой арест или локальный игровой мут
+    local_game = _ts(t.get("game_mute_until", 0)) > now
+    if not (net_game or local_game):
+        return False, "👼 Ангел снимает только игровые муты (арест, карцер и т.п.). Это ограничение другого происхождения."
+    return True, ""

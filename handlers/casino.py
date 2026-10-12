@@ -505,7 +505,7 @@ def handle_guardian_angel(message):
     args = message.text.split()
     
     if len(args) != 2:
-        try: bot.reply_to(message, "👼 **Ангел-Хранитель**\n\nПозволяет снять блокировку с любого пользователя (друга) за счет вашего Щита Иммунитета!\n\n**Использование:** `/angel [ID_пользователя]`\n_Пример:_ `/angel 123456789`\n\nСвой ID можно узнать у бота [@getmyid_bot](https://t.me/getmyid_bot)", parse_mode="Markdown")
+        try: bot.reply_to(message, "👼 **Ангел-Хранитель**\n\nСнимает игровой мут (арест-ордер, карцер и т.п.) с друга за счет вашего Щита Иммунитета! Баны, админские наказания и Гуантанамо Ангелу неподвластны.\n\n**Использование:** `/angel [ID_пользователя]`\n_Пример:_ `/angel 123456789`\n\nСвой ID можно узнать у бота [@getmyid_bot](https://t.me/getmyid_bot)", parse_mode="Markdown")
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         return
         
@@ -516,6 +516,12 @@ def handle_guardian_angel(message):
         return
         
     target_uid = int(target_id_str)
+    from utils.validators import angel_check
+    ok, why = angel_check(uid, target_uid)   # проверка ДО списания щита
+    if not ok:
+        try: bot.reply_to(message, why)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
     
     user_data = paid_collection.find_one({"uid": uid}) or {}
     if user_data.get("immunity", 0) < 1:
@@ -530,7 +536,7 @@ def handle_guardian_angel(message):
         return
     
     # Разбаниваем друга (обнуляем страйки и статус)
-    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
+    paid_collection.update_one({"uid": target_uid}, {"$unset": {"game_mute_until": "", "game_mute_reason": ""}})
     
     # Запись в досье Скайнета
     now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -541,12 +547,12 @@ def handle_guardian_angel(message):
     )
     
     # Приказ Скайнету на физический разбан во всех чатах
-    db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+    db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_unmute", "source": "angel", "timestamp": datetime.datetime.now()})
     
-    try: bot.reply_to(message, f"👼 **Магия сработала!**\n\nВы пожертвовали своим Щитом, чтобы спасти пользователя `{target_uid}`. Приказ на снятие всех ограничений передан Скайнету!", parse_mode="Markdown")
+    try: bot.reply_to(message, f"👼 **Магия сработала!**\n\nВы пожертвовали своим Щитом, чтобы спасти пользователя `{target_uid}`. Приказ на снятие игрового мута передан Скайнету!", parse_mode="Markdown")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     
-    try: bot.send_message(target_uid, "👼 **ЧУДО! АНГЕЛ-ХРАНИТЕЛЬ СНИЗОШЕЛ С НЕБЕС!**\n\nКто-то из ваших друзей пожертвовал своим Щитом Иммунитета, чтобы спасти вас!\nВсе ваши блокировки и страйки аннулированы. Ограничения сняты. Приятного общения!", parse_mode="Markdown")
+    try: bot.send_message(target_uid, "👼 **ЧУДО! АНГЕЛ-ХРАНИТЕЛЬ СНИЗОШЕЛ С НЕБЕС!**\n\nКто-то из ваших друзей пожертвовал своим Щитом Иммунитета, чтобы спасти вас!\nИгровой мут снят. Приятного общения!", parse_mode="Markdown")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= 🎁 ВНЕЗАПНЫЕ АИРДРОПЫ В ЧАТАХ =================

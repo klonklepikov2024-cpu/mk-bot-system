@@ -959,7 +959,7 @@ def handle_btn_inventory(call):
         
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="btn_game_club"))
     
-    text = f"🎒 **Ваш Инвентарь Артефактов**\n\n🛡 Щиты Иммунитета: **{shields} шт.**\n🚓 Ордера на арест: **{orders} шт.**\n\n_Щиты срабатывают автоматически при нарушениях, но вы также можете потратить их, чтобы разбанить друга!_"
+    text = f"🎒 **Ваш Инвентарь Артефактов**\n\n🛡 Щиты Иммунитета: **{shields} шт.**\n🚓 Ордера на арест: **{orders} шт.**\n\n_Щиты срабатывают автоматически при нарушениях, но вы также можете потратить их, чтобы снять игровой мут с друга!_"
     try: bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
@@ -967,7 +967,7 @@ def handle_btn_inventory(call):
 def handle_inv_angel(call):
     try: bot.answer_callback_query(call.id)
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    msg = bot.send_message(call.message.chat.id, "👼 **Ангел-Хранитель**\n\nНапишите ID пользователя (друга), с которого нужно снять все блокировки и страйки за счет вашего Щита:")
+    msg = bot.send_message(call.message.chat.id, "👼 **Ангел-Хранитель**\n\nНапишите ID пользователя (друга), с которого нужно снять игровой мут (арест, карцер) за счет вашего Щита:")
     bot.register_next_step_handler(msg, process_angel_id)
 
 # 🔥 ФИКС ЗАЛИПАНИЯ КНОПКИ ОСКОЛКОВ 🔥
@@ -1005,6 +1005,11 @@ def process_angel_id(message):
         return
         
     target_uid = int(message.text.strip())
+    from utils.validators import angel_check
+    ok, why = angel_check(uid, target_uid)   # проверка ДО списания щита
+    if not ok:
+        bot.send_message(message.chat.id, why)
+        return
     user_data = paid_collection.find_one({"uid": uid}) or {}
     
     if user_data.get("immunity", 0) < 1:
@@ -1014,11 +1019,11 @@ def process_angel_id(message):
     if not paid_collection.find_one_and_update({"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
         bot.send_message(message.chat.id, "❌ У вас нет активных Щитов Иммунитета!")
         return
-    paid_collection.update_one({"uid": target_uid}, {"$set": {"strikes": 0, "status": 0}, "$unset": {"topic_type": ""}})
-    db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": datetime.datetime.now()})
+    paid_collection.update_one({"uid": target_uid}, {"$unset": {"game_mute_until": "", "game_mute_reason": ""}})
+    db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_unmute", "source": "angel", "timestamp": datetime.datetime.now()})
     
     bot.send_message(message.chat.id, f"👼 **Магия сработала!** Вы спасли пользователя `{target_uid}`. Приказ передан Скайнету!", parse_mode="Markdown")
-    try: bot.send_message(target_uid, "👼 **ЧУДО!** Кто-то из друзей пожертвовал своим Щитом, чтобы спасти вас! Все блокировки сняты.")
+    try: bot.send_message(target_uid, "👼 **ЧУДО!** Кто-то из друзей пожертвовал своим Щитом, чтобы спасти вас! Игровой мут снят.")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
 # ================= ⚒ ТЕНЕВОЙ ЛОМБАРД И КУЗНИЦА =================
