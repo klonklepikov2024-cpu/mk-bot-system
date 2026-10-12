@@ -1837,10 +1837,14 @@ def api_inventory_action():
         t_info = str(target_info).strip()
         if t_info.isdigit(): return int(t_info)
         if t_info.startswith('@'):
-            uname = t_info.replace('@', '').lower()
-            u = db['users'].find_one({"username": uname})
+            # В базе ник бывает записан и с «@», и в другом регистре — ищем все варианты
+            import re as _re
+            uname = t_info.lstrip('@').strip()
+            if not uname: return None
+            rx = {"$regex": "^@?" + _re.escape(uname) + "$", "$options": "i"}
+            u = db['users'].find_one({"username": rx})
             if u: return u['_id']
-            cs = db['chat_stats'].find_one({"username": uname})
+            cs = db['chat_stats'].find_one({"username": rx})
             if cs: return cs['uid']
         return None
 
@@ -2024,7 +2028,11 @@ def api_inventory_action():
         if user_data.get("bounty_points", 0) < 200:
             return jsonify({"error": "У вас нет 200 💎 для запуска вируса!"}), 400
             
-        if target_data.get("bounty_points", 0) < 100:
+        # Семейная копилка жертвы (грабится только в Судную ночь) — та же, что у команды «!копилка»
+        target_fam_id = _family_bank_id(target_uid, target_data) if is_anarchy else None
+        target_fam_bal = (db['family_banks'].find_one({"_id": target_fam_id}) or {}).get("balance", 0) if target_fam_id else 0
+        # Раньше пустой кошелёк отменял атаку целиком, и копилки копящих семей были неуязвимы
+        if target_data.get("bounty_points", 0) < 100 and target_fam_bal <= 0:
             return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
             
         # 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ
@@ -2088,9 +2096,9 @@ def api_inventory_action():
             else:
                 steal_pct = random.uniform(0.05, 0.15)
                 
-            # Крадем с личного счета
-            stolen = int(target_data.get("bounty_points", 0) * steal_pct)
-            if stolen < 10: stolen = 10
+            # Крадем с личного счета (пустой кошелёк — просто 0, копилку это не отменяет)
+            wallet = max(0, int(target_data.get("bounty_points", 0)))
+            stolen = min(wallet, max(10, int(wallet * steal_pct)))
             # ⬇ было: update_one(-stolen) жертве и +stolen хакеру
             stolen = take_points_capped(target_uid, stolen)   # жертва не уйдёт в минус
             paid_collection.update_one({"uid": target_uid}, {"$set": {"last_hacked_time": now}})
@@ -2101,27 +2109,31 @@ def api_inventory_action():
             # 🔥 5. ВЗЛОМ СЕМЕЙНОЙ КОПИЛКИ ВО ВРЕМЯ АНАРХИИ 🔥
             family_stolen = 0
             partner_id = target_data.get("partner_id")
+            family_id = target_fam_id
             
-            if is_anarchy and partner_id:
-                family_id = f"family_{min(target_uid, partner_id)}_{max(target_uid, partner_id)}"
+            if is_anarchy and family_id:
                 fam_db = db['family_banks'].find_one({"_id": family_id}) or {}
                 fam_balance = fam_db.get("balance", 0)
                 
                 if fam_balance > 0:
                     # Крадем от 10% до 25% из семейного общака
                     fam_steal_pct = random.uniform(0.10, 0.25)
-                    family_stolen = int(fam_balance * fam_steal_pct)
-                    if family_stolen < 1: family_stolen = 1
+                    family_stolen = max(1, int(fam_balance * fam_steal_pct))
                     
-                    db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": -family_stolen}})
-                    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": family_stolen}})
+                    # атомарно: только если в копилке ещё есть столько (параллельные взломы не уводят её в минус)
+                    if db['family_banks'].find_one_and_update({"_id": family_id, "balance": {"$gte": family_stolen}},
+                                                              {"$inc": {"balance": -family_stolen}}):
+                        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": family_stolen}})
+                    else:
+                        family_stolen = 0
                     
-                    extra_msg += f"\n🏦 <b>ВЗЛОМ КОПИЛКИ!</b> Вирус добрался до семейного счета жертвы и выкачал оттуда еще {family_stolen} 💎!"
-                    victim_msg += f"\n\n🏦 <b>ВНИМАНИЕ!</b> Вирус проник в ваш Семейный Фонд и вывел оттуда **{family_stolen} 💎**!"
+                    if family_stolen > 0:
+                        extra_msg += f"\n🏦 <b>ВЗЛОМ КОПИЛКИ!</b> Вирус добрался до семейного счета жертвы и выкачал оттуда еще {family_stolen} 💎!"
+                        victim_msg += f"\n\n🏦 <b>ВНИМАНИЕ!</b> Вирус проник в ваш Семейный Фонд и вывел оттуда **{family_stolen} 💎**!"
                     
-                    # Инфарктное уведомление партнеру
-                    try: bot.send_message(partner_id, f"🚨 **СЕМЕЙНЫЙ СЧЕТ ВЗЛОМАН!**\nВ рамках Судной Ночи хакер атаковал вашу семью и украл **{family_stolen} 💎** из вашей общей копилки!", parse_mode="Markdown")
-                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                        # Инфарктное уведомление партнеру
+                        try: bot.send_message(partner_id, f"🚨 **СЕМЕЙНЫЙ СЧЕТ ВЗЛОМАН!**\nВ рамках Судной Ночи хакер атаковал вашу семью и украл **{family_stolen} 💎** из вашей общей копилки!", parse_mode="Markdown")
+                        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
 
             victim_msg += "\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._"
             try: bot.send_message(target_uid, victim_msg, parse_mode="Markdown")
