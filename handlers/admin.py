@@ -1069,69 +1069,8 @@ def process_tag_input(message):
             from handlers.start_menu import send_welcome
             send_welcome(message)
         return
-    if not text or len(text) > 15 or re.search(r'(https?://|t\.me/|@\w)', text, re.I):
-        msg = bot.send_message(message.chat.id, "❌ Тег — от 1 до 15 символов, без ссылок и @упоминаний. Напишите другой вариант или /start для выхода:")
-        bot.register_next_step_handler(msg, process_tag_input)
-        return
-    # Купон бронируем атомарно: двойная отправка не создаст две заявки
-    coupon = db['promocodes'].find_one_and_update(
-        {"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0},
-        {"$set": {"used_count": 1}})
-    if not coupon:
-        bot.send_message(message.chat.id, "❌ Свободный купон на тег не найден (уже использован или на проверке).")
-        return
-    name = message.from_user.first_name or "Без имени"
-    db['temp_tags'].update_one({"uid": uid}, {"$set": {"tag": text, "name": name, "coupon": coupon["_id"], "ts": time.time()}}, upsert=True)
-    from config import PRIZES_THREAD_ID
-    markup = InlineKeyboardMarkup(row_width=2).add(
-        InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}"))
-    try:
-        bot.send_message(STAFF_GROUP_ID,
-                         f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ</b>\n\n👤 От: {html.escape(name)} (<code>{uid}</code>)\n"
-                         f"📝 Желаемый тег: <b>{html.escape(text)}</b>\n\nОдобрить установку?",
-                         parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
-    except Exception as e:
-        # Админы не узнали о заявке — возвращаем купон, чтобы он не завис
-        logger.warning(f"Заявка на тег не ушла в ЦУП: {e}")
-        db['promocodes'].update_one({"_id": coupon["_id"]}, {"$set": {"used_count": 0}})
-        db['temp_tags'].delete_one({"uid": uid})
-        bot.send_message(message.chat.id, "⚠️ Не удалось отправить заявку модераторам. Купон сохранён, попробуйте позже.")
-        return
-    bot.send_message(message.chat.id, f"⏳ Тег «{text}» отправлен на модерацию. Как только админ решит — бот напишет.")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('adm_tag_'))
-def handle_admin_tag_decision(call):
-    if str(call.message.chat.id) != str(STAFF_GROUP_ID): return
-    try: bot.answer_callback_query(call.id)
-    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    
-    action = call.data.split('_')[2]
-    target_uid = int(call.data.split('_')[3])
-    
-    tag_data = db['temp_tags'].find_one({"uid": target_uid})
-    if not tag_data:
-        try: bot.edit_message_text("❌ Данные устарели или уже обработаны.", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        return
         
-    tag_text = tag_data["tag"]
-    coupon = tag_data.get("coupon")
-    if action == "ok":
-        db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text}}, upsert=True)
-        if coupon: db['promocodes'].delete_one({"_id": coupon})
-        try: bot.edit_message_text(f"{call.message.text}\n\n✅ **ВЕРДИКТ: ОДОБРЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        try: bot.send_message(target_uid, f"🎉 **Поздравляем!**\nВаш личный тег **«{tag_text}»** успешно одобрен и установлен во всех чатах сети!")
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    elif action == "rej":
-        if coupon: db['promocodes'].update_one({"_id": coupon}, {"$set": {"used_count": 0}})
-        try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ВЕРДИКТ: ОТКЛОНЕНО**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✍️ Придумать другой тег", callback_data=f"tagc_menu_{coupon}" if coupon else "claim_custom_tag"))
-        try: bot.send_message(target_uid, f"❌ **Ваш тег «{tag_text}» был отклонен модератором.**\nПожалуйста, придумайте что-то другое, не нарушающее правила.", reply_markup=markup)
-        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-    db['temp_tags'].delete_one({"uid": target_uid})
+    bot.send_message(message.chat.id, "⚠️ Установка тегов теперь происходит автоматически через Web App! Откройте Игровой Кабинет -> Рюкзак -> Нажмите 'Тег'.")
 
 @bot.callback_query_handler(func=lambda call: call.data == 'claim_premium')
 def handle_claim_premium(call):

@@ -25,14 +25,26 @@ scheduler = BackgroundScheduler(jobstores=jobstores, timezone=tz)
 
 # Копия настроек семян для планировщика
 CROPS = {
-    "radish": {"name": "🧅 Редис", "grow_time": 4*3600, "water_req": False},
+    "radish": {"name": "🧅 Лук", "grow_time": 4*3600, "water_req": False},
     "mizuna": {"name": "🥬 Мизуна", "grow_time": 6*3600, "water_req": False},
     "tomato": {"name": "🍅 Помидоры", "grow_time": 12*3600, "water_req": False},
     "sunflower": {"name": "🌻 Подсолнух", "grow_time": 24*3600, "water_req": True},
     "watermelon": {"name": "🍉 Арбуз", "grow_time": 48*3600, "water_req": True},
     "chestnut": {"name": "🌳 К. Каштан", "grow_time": 7*24*3600, "water_req": True},
     "rhododendron": {"name": "🌸 Рододендрон", "grow_time": 3*24*3600, "water_req": True},
-    "potato": {"name": "🥔 Картоха", "grow_time": 8*3600, "water_req": True}
+    "parsley": {"name": "🌿 Петрушка", "grow_time": 8*3600, "water_req": False},
+    "cactus": {"name": "🌵 Кактус", "grow_time": 5*24*3600, "water_req": False},
+    "amanita": {"name": "🍄 К-Мухомор", "cost_shards": 20, "grow_time": 2*3600, "water_req": True},
+    "money_tree": {"name": "🌳 Ден. Дерево", "grow_time": 5*24*3600, "water_req": True},
+    "potato": {"name": "🥔 Картоха", "grow_time": 8*3600, "water_req": True},
+    # 🔥 НОВЫЕ ОВОЩИ 🔥
+    "carrot": {"name": "🥕 Морковь", "grow_time": 6*3600, "water_req": False},
+    "cabbage": {"name": "🥦 Капуста", "grow_time": 16*3600, "water_req": True},
+    "beetroot": {"name": "🫜 Свёкла", "grow_time": 10*3600, "water_req": True},
+    # 🔥 ГРИБНАЯ ПЕЩЕРА (ЗА ОСКОЛКИ) 🔥
+    "champignon": {"name": "🍄 Шампиньон", "grow_time": 3*3600, "water_req": False},
+    "chanterelle": {"name": "🍄 Лисичка", "grow_time": 6*3600, "water_req": False},
+    "truffle": {"name": "🍄 Трюфель", "grow_time": 12*3600, "water_req": True}
 }
 
 # ================= 1. БАЗОВЫЕ ФУНКЦИИ И РОЗЫГРЫШИ =================
@@ -254,11 +266,11 @@ def personal_farm_notifications():
     
     # === ЗООПАРК СКАЙНЕТА ===
     possible_pests = [
-        {"id": "goat", "emoji": "🐐", "name": "Соседская Коза", "targets": ["money_tree", "chestnut", "cactus", "amanita"]},
+        {"id": "goat", "emoji": "🐐", "name": "Соседская Коза", "targets": ["money_tree", "chestnut", "cactus", "amanita", "champignon", "chanterelle", "truffle"]},
         {"id": "crow", "emoji": "🐦", "name": "Наглая Ворона", "targets": ["sunflower", "watermelon"]},
-        {"id": "caterpillar", "emoji": "🐛", "name": "Троянская Гусеница", "targets": ["radish", "mizuna", "tomato", "parsley"]},
+        {"id": "caterpillar", "emoji": "🐛", "name": "Троянская Гусеница", "targets": ["radish", "mizuna", "tomato", "parsley", "cabbage"]},
         {"id": "locust", "emoji": "🚁", "name": "Дрон-Саранча", "targets": ["sunflower", "rhododendron"]},
-        {"id": "mole", "emoji": "⛏", "name": "Крипто-Крот", "targets": ["money_tree", "watermelon", "tomato"]},
+        {"id": "mole", "emoji": "⛏", "name": "Крипто-Крот", "targets": ["money_tree", "watermelon", "tomato", "carrot", "beetroot"]},
         {"id": "colorado", "emoji": "🪲", "name": "Колорадский Жук", "targets": ["potato"]},
         {"id": "miner", "emoji": "👾", "name": "Жук-Майнер", "targets": ["ALL"]}
     ]
@@ -284,6 +296,11 @@ def personal_farm_notifications():
             
         # --- 2. ГЕНЕРАЦИЯ НОВОГО НАПАДЕНИЯ (Шанс 2% каждые 15 мин) ---
         if random.randint(1, 100) <= 2: 
+            # 🔥 ПРОВЕРКА ПУГАЛА 🔥
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            if u_info.get("scarecrow_until", 0) > now:
+                continue # Пугало активно, вредитель улетает!
+                
             valid_pests = [p for p in possible_pests if seed in p["targets"] or "ALL" in p["targets"]]
             if valid_pests:
                 pest = random.choice(valid_pests)

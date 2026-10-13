@@ -1926,6 +1926,11 @@ def api_inventory_action():
                 duration_text = f"{val} дн."
             has_time_flag = True
             
+        # 🔥 ОГРАНИЧЕНИЕ СРОКА ПОДАРКА (МАКСИМУМ 30 ДНЕЙ) 🔥
+        if duration > 30 * 86400:
+            duration = 30 * 86400
+            duration_text = "30 дн. (Максимум)"
+            
         # Формируем сам тег (склеиваем слова между целью и временем)
         if has_time_flag:
             tag_text = " ".join(parts[1:-1])[:15]
@@ -1934,6 +1939,12 @@ def api_inventory_action():
             
         if not tag_text:
             return jsonify({"error": "Тег не может быть пустым!"}), 400
+            
+        # 🔥 ФИЛЬТР ЗАРЕЗЕРВИРОВАННЫХ СЛОВ И ШРИФТОВ 🔥
+        from core.guards import reserved_tag_reason, SHAME_TAGS
+        why_bad = reserved_tag_reason(tag_text)
+        if why_bad:
+            return jsonify({"error": f"Этот текст запрещен: {why_bad}"}), 400
             
         # Если юзер ввел "себе" или "me", вешаем на него
         if target_user_str.lower() in ["себе", "me", "я"]:
@@ -1948,38 +1959,58 @@ def api_inventory_action():
         if not promo:
             return jsonify({"error": "У вас нет купонов на тег!"}), 400
             
-        # 1. ВЕШАЕМ НА СЕБЯ (ОТПРАВЛЯЕМ НА МОДЕРАЦИЮ АДМИНАМ)
-        if target_uid == uid:
-            db['temp_tags'].update_one({"uid": uid}, {"$set": {"tag": tag_text, "name": first_name, "coupon": promo["_id"]}}, upsert=True)
+        # 🔥 ПРОВЕРКА СТАТУСОВ (КТО ДАРИТ И КОМУ) 🔥
+        if target_uid != uid:
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            t_info = db['users'].find_one({"_id": target_uid}) or {}
             
-            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
-            markup = InlineKeyboardMarkup(row_width=2).add(
-                InlineKeyboardButton("✅ Одобрить", callback_data=f"adm_tag_ok_{uid}"), 
-                InlineKeyboardButton("❌ Отклонить", callback_data=f"adm_tag_rej_{uid}")
-            )
+            def has_good_status(user_doc):
+                return user_doc.get("is_vip") or user_doc.get("is_queer") or user_doc.get("is_verified") or user_doc.get("is_sponsor") or user_doc.get("is_free") or user_doc.get("indulgence")
+
+            if not has_good_status(u_info):
+                return jsonify({"error": "Дарить теги может только Элита (VIP, Спонсор, Верифицированные и т.д.)!"}), 400
+                
+            if not has_good_status(t_info):
+                return jsonify({"error": "Получатель тоже должен быть верифицирован или иметь статус!"}), 400
+                
+            if t_info.get("shame_tag") in SHAME_TAGS or t_info.get("custom_tag") in SHAME_TAGS:
+                return jsonify({"error": "Нельзя дарить теги пользователям с позорным клеймом!"}), 400
+                
+            if db['banned'].find_one({"_id": target_uid}):
+                return jsonify({"error": "Этот пользователь находится в Черном Списке!"}), 400
+        else:
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            if u_info.get("shame_tag") in SHAME_TAGS or u_info.get("custom_tag") in SHAME_TAGS:
+                return jsonify({"error": "Нельзя устанавливать теги, пока на вас висит позорное клеймо!"}), 400
+            
+        # Атомарно сжигаем купон (защита от двойного нажатия)
+        if not db['promocodes'].find_one_and_update({"_id": promo["_id"], "is_active": True, "used_count": 0}, {"$inc": {"used_count": 1}}):
+            return jsonify({"error": "Этот купон уже использован!"}), 400
+            
+        # 1. ВЕШАЕМ НА СЕБЯ (АВТОМАТИЧЕСКИ, НАВСЕГДА)
+        if target_uid == uid:
+            # Сносим все временные наложения, чтобы они не затерли наш новый личный тег при истечении
+            db['temp_troll_tags'].delete_many({"uid": uid})
+            db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": tag_text, "tag_game": True}}, upsert=True)
+            
             try: 
                 from core.bot import bot
                 bot.send_message(
-                    STAFF_GROUP_ID, 
-                    f"👑 <b>ЗАПРОС НА КАСТОМНЫЙ ТЕГ (Web App)</b>\n\n👤 От: {first_name} (<code>{uid}</code>)\n📝 Желаемый тег: <b>{tag_text}</b>\n\nОдобрить установку?", 
-                    parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+                    uid, 
+                    f"🎉 **Поздравляем!**\nВаш личный тег **«{tag_text}»** успешно применен и установлен во всех чатах сети!", 
+                    parse_mode="Markdown"
                 )
             except Exception: pass
             
-            return jsonify({"success": True, "msg": "⏳ Ваш тег отправлен на модерацию админам. Ожидайте!"})
+            return jsonify({"success": True, "msg": f"✅ Тег «{tag_text}» успешно установлен!"})
         
         # 2. ВЕШАЕМ НА ДРУГОГО (ТРОЛЛИНГ ИЛИ ПОДАРОК НА ВРЕМЯ)
         else:
-            # Атомарно сжигаем купон (защита от двойного нажатия)
-            if not db['promocodes'].find_one_and_update({"_id": promo["_id"], "is_active": True, "used_count": 0}, {"$inc": {"used_count": 1}}):
-                return jsonify({"error": "Этот купон уже использован!"}), 400
-            
             import time
             now_ts = int(time.time())
             expire_time = now_ts + duration 
             
-            # «Базовый» тег (к нему откатимся, когда истекут ВСЕ временные): если уже есть активные наложения - берём базу самого первого
+            # «Базовый» тег (к нему откатимся, когда истекут ВСЕ временные)
             target_data = db['users'].find_one({"_id": target_uid}) or {}
             active_tags = list(db['temp_troll_tags'].find({"uid": target_uid, "expire_at": {"$gt": now_ts}}).sort("created", 1))
             if active_tags:
@@ -1996,7 +2027,8 @@ def api_inventory_action():
                 "expire_at": expire_time
             })
             
-            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text}}, upsert=True)
+            # 🔥 ИСПРАВЛЕНИЕ: Добавлен флаг tag_game: True 🔥
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text, "tag_game": True}}, upsert=True)
             
             try:
                 from core.bot import bot
@@ -2153,21 +2185,29 @@ def api_inventory_action():
 # ================= 🚜 КИБЕР-ФЕРМА: БЭКЕНД =================
 
 CROPS = {
-    "radish": {"name": "🧅 Редис", "cost_pts": 15, "grow_time": 4*3600, "water_req": False, "reward_pts": [20, 30], "shards_chance": 0},
+    "radish": {"name": "🧅 Лук", "cost_pts": 15, "grow_time": 4*3600, "water_req": False, "reward_pts": [20, 30], "shards_chance": 0},
     "mizuna": {"name": "🥬 Мизуна", "cost_pts": 35, "grow_time": 6*3600, "water_req": False, "reward_pts": [45, 60], "shards_chance": 10},
     "tomato": {"name": "🍅 Помидоры", "cost_pts": 80, "grow_time": 12*3600, "water_req": False, "reward_pts": [100, 150], "key": None},
     "sunflower": {"name": "🌻 Подсолнух", "cost_pts": 150, "grow_time": 24*3600, "water_req": True, "reward_pts": [180, 220], "key": "blue", "key_chance": 25},
     "watermelon": {"name": "🍉 Арбуз", "cost_pts": 300, "grow_time": 48*3600, "water_req": True, "reward_pts": [400, 500], "key": "red", "key_chance": 20},
     "chestnut": {"name": "🌳 К. Каштан", "cost_pts": 1000, "grow_time": 7*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
     "rhododendron": {"name": "🌸 Рододендрон", "cost_pts": 1500, "grow_time": 3*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
-    
-    # 🔥 НОВЫЕ СЕМЕНА 🔥
     "parsley": {"name": "🌿 Петрушка", "cost_pts": 100, "grow_time": 8*3600, "water_req": False, "reward_pts": [50, 80]},
     "cactus": {"name": "🌵 Кактус", "cost_pts": 800, "grow_time": 5*24*3600, "water_req": False, "reward_pts": [0, 0], "is_decor": True},
-    "amanita": {"name": "🍄 К-Мухомор", "cost_pts": 300, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]},
+    "amanita": {"name": "🍄 К-Мухомор", "cost_shards": 20, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]},
     "money_tree": {"name": "🌳 Ден. Дерево", "cost_pts": 5000, "grow_time": 5*24*3600, "water_req": True, "reward_rub": [10, 30]},
-    "potato": {"name": "🥔 Картоха", "cost_pts": 60, "grow_time": 8*3600, "water_req": True, "reward_pts": [70, 110]}
-} # <--- ОБЯЗАТЕЛЬНО ДОБАВЬТЕ ЭТУ СКОБКУ
+    "potato": {"name": "🥔 Картоха", "cost_pts": 60, "grow_time": 8*3600, "water_req": True, "reward_pts": [70, 110]},
+    
+    # 🔥 НОВЫЕ ОВОЩИ 🔥
+    "carrot": {"name": "🥕 Морковь", "cost_pts": 45, "grow_time": 6*3600, "water_req": False, "reward_pts": [52, 70], "shield_chance": 6},
+    "cabbage": {"name": "🥦 Капуста", "cost_pts": 120, "grow_time": 16*3600, "water_req": True, "reward_pts": [135, 175]},
+    "beetroot": {"name": "🫜 Свёкла", "cost_pts": 90, "grow_time": 10*3600, "water_req": True, "reward_pts": [95, 125], "shield_chance": 7},
+    
+    # 🔥 ГРИБНАЯ ПЕЩЕРА (СЛИВ ОСКОЛКОВ) 🔥
+    "champignon": {"name": "🍄 Шампиньон", "cost_shards": 5, "grow_time": 3*3600, "water_req": False},
+    "chanterelle": {"name": "🍄 Лисичка", "cost_shards": 12, "grow_time": 6*3600, "water_req": False},
+    "truffle": {"name": "🍄 Трюфель", "cost_shards": 30, "grow_time": 12*3600, "water_req": True}
+}
 
 @bot.message_handler(commands=['check_gw'])
 def force_check_gw(message):
@@ -2191,53 +2231,67 @@ def api_get_farm():
         
     uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
     
-    plots = list(db['farm_plots'].find({"uid": uid}).sort("slot_id", 1))
-    
+    # Инициализация обычных грядок (ID 1-16)
+    plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$lt": 100}}).sort("slot_id", 1))
     if len(plots) == 0:
         for i in range(1, 5):
             db['farm_plots'].insert_one({"uid": uid, "slot_id": i, "status": "empty"})
-        plots = list(db['farm_plots'].find({"uid": uid}).sort("slot_id", 1))
+        plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$lt": 100}}).sort("slot_id", 1))
+        
+    # Инициализация пещеры (ID 101-106)
+    cave_plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$gt": 100}}).sort("slot_id", 1))
+    if len(cave_plots) == 0:
+        for i in range(101, 107):
+            db['farm_plots'].insert_one({"uid": uid, "slot_id": i, "status": "empty"})
+        cave_plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$gt": 100}}).sort("slot_id", 1))
         
     import time
     now = int(time.time())
-    result = []
     
-    for plot in plots:
-        status = plot.get("status")
-        seed_type = plot.get("seed_type")
-        
-        if status == "growing" and seed_type in CROPS:
-            crop = CROPS[seed_type]
-            planted_at = plot.get("planted_at", now)
-            last_watered = plot.get("last_watered", now)
+    def process_plot_list(plot_list):
+        res = []
+        for plot in plot_list:
+            status = plot.get("status")
+            seed_type = plot.get("seed_type")
             
-            if crop["water_req"] and (now - last_watered > 86400):
-                db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
-                status = "withered"
-            elif now >= planted_at + crop["grow_time"]:
-                db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
-                status = "ready"
+            if status == "growing" and seed_type in CROPS:
+                crop = CROPS[seed_type]
+                planted_at = plot.get("planted_at", now)
+                last_watered = plot.get("last_watered", now)
                 
-        result.append({
-            "slot_id": plot["slot_id"],
-            "status": status,
-            "seed_type": seed_type,
-            "name": CROPS[seed_type]["name"] if seed_type in CROPS else "",
-            "planted_at": plot.get("planted_at"),
-            "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
-            "water_req": CROPS[seed_type]["water_req"] if seed_type in CROPS else False,
-            "last_watered": plot.get("last_watered"),
-            "fertilized": plot.get("fertilized", False),
-            "pest": plot.get("pest")
-        })
+                if crop.get("water_req", False) and (now - last_watered > 86400):
+                    db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
+                    status = "withered"
+                elif now >= planted_at + crop["grow_time"]:
+                    db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
+                    status = "ready"
+                    
+            res.append({
+                "slot_id": plot["slot_id"],
+                "status": status,
+                "seed_type": seed_type,
+                "name": CROPS[seed_type]["name"] if seed_type in CROPS else "",
+                "planted_at": plot.get("planted_at"),
+                "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
+                "water_req": CROPS.get(seed_type, {}).get("water_req", False),
+                "last_watered": plot.get("last_watered"),
+                "fertilized": plot.get("fertilized", False),
+                "pest": plot.get("pest")
+            })
+        return res
         
     user_db = paid_collection.find_one({"uid": uid}) or {}
-    keys = {
-        "blue": user_db.get("key_blue", 0),
-        "red": user_db.get("key_red", 0)
-    }
+    keys = {"blue": user_db.get("key_blue", 0), "red": user_db.get("key_red", 0)}
         
-    return jsonify({"plots": result, "keys": keys})
+    user_info = db['users'].find_one({"_id": uid}) or {}
+    scarecrow_left = max(0, int(user_info.get("scarecrow_until", 0) - now))
+            
+    return jsonify({
+        "plots": process_plot_list(plots), 
+        "cave_plots": process_plot_list(cave_plots),
+        "keys": keys, 
+        "scarecrow_left": scarecrow_left
+    })
 
 @app.route('/api/farm_action', methods=['POST'])
 def api_farm_action():
@@ -2252,9 +2306,42 @@ def api_farm_action():
     import time
     now = int(time.time())
     
+    # === ПУГАЛО (ЗАЩИТА ОТ ВРЕДИТЕЛЕЙ) ===
+    if action == 'buy_scarecrow':
+        cost_shards = 20
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": cost_shards}},
+            {"$inc": {"jackpot_shards": -cost_shards}}
+        )
+        if not user_db: return jsonify({"error": "Нужно 20 🧩 осколков!"}), 400
+        
+        # Ставим защиту на 24 часа
+        db['users'].update_one({"_id": uid}, {"$set": {"scarecrow_until": now + 86400}}, upsert=True)
+        return jsonify({"success": True, "msg": "🧑‍🌾 Пугало установлено!\nВредители не сунутся на вашу ферму 24 часа."})
+
+    # === РАСЧИСТКА ПЕЩЕРЫ (ДИНАМИТ) ===
+    if action == 'buy_cave_slot':
+        current_cave_slots = db['farm_plots'].count_documents({"uid": uid, "slot_id": {"$gt": 100}})
+        if current_cave_slots >= 12: 
+            return jsonify({"error": "Пещера расширена до максимума (12 слотов)!"}), 400
+        
+        # Цена растет: 10, 20, 30... осколков за слот
+        cost = (current_cave_slots - 5) * 10
+        if cost < 10: cost = 10
+        
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": cost}},
+            {"$inc": {"jackpot_shards": -cost}}
+        )
+        if not user_db: 
+            return jsonify({"error": f"Недостаточно осколков для покупки динамита (нужно {cost} 🧩)!"}), 400
+        
+        db['farm_plots'].insert_one({"uid": uid, "slot_id": 100 + current_cave_slots + 1, "status": "empty"})
+        return jsonify({"success": True, "msg": f"⛏ Взрыв прошел успешно!\nРасчищено место для лунки #{current_cave_slots + 1}."})
+
     # === ПОКУПКА СЛОТА (ТРАКТОР) ===
     if action == 'buy_slot':
-        current_slots = db['farm_plots'].count_documents({"uid": uid})
+        current_slots = db['farm_plots'].count_documents({"uid": uid, "slot_id": {"$lt": 100}})
         if current_slots >= 16: 
             return jsonify({"error": "У вас уже максимальное число грядок (16)!"}), 400
         
@@ -2286,21 +2373,31 @@ def api_farm_action():
         if seed_type not in CROPS: return jsonify({"error": "Таких семян нет!"}), 400
         if plot['status'] != 'empty': return jsonify({"error": "Этот слот уже занят!"}), 400
         
-        cost = CROPS[seed_type]['cost_pts']
-        user_db = paid_collection.find_one_and_update(
-            {"uid": uid, "bounty_points": {"$gte": cost}},
-            {"$inc": {"bounty_points": -cost}}
-        )
-        if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
+        crop = CROPS[seed_type]
         
-        grow_time = CROPS[seed_type]['grow_time']
+        if "cost_shards" in crop:
+            cost = crop['cost_shards']
+            user_db = paid_collection.find_one_and_update(
+                {"uid": uid, "jackpot_shards": {"$gte": cost}},
+                {"$inc": {"jackpot_shards": -cost}}
+            )
+            if not user_db: return jsonify({"error": f"Нужно {cost} 🧩 осколков!"}), 400
+        else:
+            cost = crop['cost_pts']
+            user_db = paid_collection.find_one_and_update(
+                {"uid": uid, "bounty_points": {"$gte": cost}},
+                {"$inc": {"bounty_points": -cost}}
+            )
+            if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
+        
+        grow_time = crop['grow_time']
         if "patriarch" in (paid_collection.find_one({"uid": uid}) or {}).get("achievements", []):
             now -= int(grow_time * 0.1)
             
         db['farm_plots'].update_one({"_id": plot["_id"]}, {
             "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now, "fertilized": False}
         })
-        return jsonify({"success": True, "msg": f"🌱 Вы посадили {CROPS[seed_type]['name']}!"})
+        return jsonify({"success": True, "msg": f"🌱 Вы посадили {crop['name']}!"})
         
     # === ПРОГНАТЬ ВРЕДИТЕЛЯ ===
     elif action == 'chase_pest':
@@ -2375,6 +2472,34 @@ def api_farm_action():
                 update_query["$inc"]["bounty_points"] = 0 
                 msg = "🍄 Отравленная земля...\nМухомор сгнил, вы потеряли вложения."
                 
+        elif plot['seed_type'] == 'champignon':
+            if random.randint(1, 100) <= 70:
+                update_query["$inc"]["bounty_points"] = 150
+                msg = "🍄 Отлично!\nШампиньон принёс 150 💎!"
+            else:
+                msg = "🍄 Гнилой гриб...\nВам ничего не досталось."
+                
+        elif plot['seed_type'] == 'chanterelle':
+            if random.randint(1, 100) <= 55:
+                update_query["$inc"]["bounty_points"] = 300
+                msg = "🍄 Успех!\nЛисичка принесла 300 💎!"
+            else:
+                update_query["$inc"]["bounty_points"] = 50
+                msg = "🍄 Слабый урожай...\nЛисичка дала лишь 50 💎."
+            if random.randint(1, 100) <= 45:
+                update_query["$inc"]["immunity"] = 1
+                msg += "\n🛡 В грибнице найден Щит Иммунитета!"
+                
+        elif plot['seed_type'] == 'truffle':
+            if random.randint(1, 100) <= 35:
+                update_query["$inc"]["bounty_points"] = 1500
+                msg = "🍄 ДЖЕКПОТ!\nКоролевский трюфель принёс 1500 💎!"
+            else:
+                msg = "🍄 Провал...\nТрюфель сгнил."
+            if random.randint(1, 100) <= 15:
+                update_query["$inc"]["immunity"] = 1
+                msg += "\n🛡 Вы раскопали Щит Иммунитета!"
+                
         elif plot['seed_type'] == 'money_tree':
             reward_rub = random.randint(crop['reward_rub'][0], crop['reward_rub'][1])
             paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": reward_rub}})
@@ -2394,13 +2519,17 @@ def api_farm_action():
         else:
             reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
             
-            if karma <= -50 and random.randint(1, 100) <= 10:
-                penalty = int(reward_pts * 0.5)
-                reward_pts -= penalty
-                msg += f"\n📉 <b>ЭКО-ШТРАФ!</b> Участок признан свалкой из-за кармы. Удержано {penalty} 💎."
+            if plot['seed_type'] == 'cabbage' and random.randint(1, 100) <= 10:
+                reward_pts *= 2
+                msg += f"\n🥬 КОЧАН С КУПЮРАМИ! Награда удвоена: {reward_pts} 💎!"
+            else:
+                if karma <= -50 and random.randint(1, 100) <= 10:
+                    penalty = int(reward_pts * 0.5)
+                    reward_pts -= penalty
+                    msg += f"\n📉 <b>ЭКО-ШТРАФ!</b> Участок признан свалкой из-за кармы. Удержано {penalty} 💎."
+                msg += f"\nВы получили {reward_pts} 💎."
                 
             update_query["$inc"]["bounty_points"] = reward_pts
-            msg += f"\nВы получили {reward_pts} 💎."
             
             if plot['seed_type'] == 'parsley':
                 chance = random.randint(1, 100)
@@ -2411,6 +2540,11 @@ def api_farm_action():
                     code = f"ARREST-{random.randint(100, 999)}"
                     code = create_unique_promo(code.split("-")[0], {"type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
                     msg += f"\n🚓 В кустах найден Ордер на Арест!\nКод: {code}"
+                    
+            shield_chance = crop.get('shield_chance', 0)
+            if shield_chance > 0 and random.randint(1, 100) <= shield_chance:
+                update_query["$inc"]["immunity"] = 1
+                msg += "\n🛡 В корнях найден Щит Иммунитета!"
 
         if crop.get('shards_chance') and random.randint(1, 100) <= crop['shards_chance']:
             update_query["$inc"]["jackpot_shards"] = 1
