@@ -26,6 +26,131 @@
         .roulette-ribbon { display: flex; height: 100%; width: max-content; transition: transform 5s cubic-bezier(0.15, 0.85, 0.15, 1); }
         .roulette-item { width: 90px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid rgba(255, 255, 255, 0.1); flex-shrink: 0; background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 100%); }
         .roulette-selector { position: absolute; top: 0; bottom: 0; left: 50%; width: 4px; background: #ef4444; transform: translateX(-50%); z-index: 10; box-shadow: 0 0 15px #ef4444, 0 0 5px #ef4444; }
+
+        /* ================= 🌿 ЖИВАЯ ФЕРМА (lf-*) =================
+           Плавные «дыхательные» анимации вместо подпрыгиваний; всё на transform/opacity — не греет телефон. */
+        @keyframes lfSway   { 0%,100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
+        @keyframes lfFloat  { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+        @keyframes lfDome   { 0%,100% { opacity:.55; transform: scale(.97); } 50% { opacity:1; transform: scale(1.03); } }
+        @keyframes lfDrift  { 0% { transform: translate(0,0) scale(.6); opacity:0; } 20% { opacity:.95; } 100% { transform: translate(var(--dx,10px),-64px) scale(1); opacity:0; } }
+        @keyframes lfCrawl  { 0% { transform: translateX(-30px) scaleX(1); } 47% { transform: translateX(30px) scaleX(1); } 50% { transform: translateX(30px) scaleX(-1); } 97% { transform: translateX(-30px) scaleX(-1); } 100% { transform: translateX(-30px) scaleX(1); } }
+        @keyframes lfBob    { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-2px) rotate(3deg); } }
+        @keyframes lfGlow   { 0%,100% { filter: drop-shadow(0 0 3px var(--glow)); } 50% { filter: drop-shadow(0 0 10px var(--glow)); } }
+        @keyframes lfTwinkle{ 0%,100% { opacity:0; transform: scale(.4) rotate(0deg); } 50% { opacity:1; transform: scale(1) rotate(45deg); } }
+        @keyframes lfShine  { 0%,55% { left:-50%; } 100% { left:130%; } }
+        @keyframes lfStripes{ 0% { background-position: 0 0, 0 0; } 100% { background-position: 24px 0, 0 0; } }
+        @keyframes lfAlarm  { 0%,100% { box-shadow: 0 4px 14px rgba(0,0,0,.3); } 50% { box-shadow: 0 0 16px 2px rgba(239,68,68,.42), 0 4px 14px rgba(0,0,0,.3); } }
+
+        /* --- грядки и пещерные ячейки --- */
+        .lf-plot { position:relative; display:flex; flex-direction:column; align-items:center; text-align:center; min-height:8.6rem; padding:.65rem .6rem .6rem; border-radius:1rem; overflow:hidden; border:1px solid var(--pc); background: var(--pbg); box-shadow: 0 4px 14px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.05); transition: transform .12s; }
+        .lf-plot:active { transform: scale(.97); }
+        .lf-field { --pc: rgba(74,222,128,.28); --pbg: linear-gradient(165deg,#2a2f37 0%,#1c2026 100%); --mound: rgba(92,58,30,.95); }
+        .lf-cave  { --pc: rgba(125,150,190,.22); --pbg: linear-gradient(165deg,#1b2230 0%,#0d1118 100%); --mound: rgba(34,58,70,.95); box-shadow: inset 0 0 22px rgba(0,0,0,.65), 0 4px 14px rgba(0,0,0,.4); }
+        .lf-plot.lf-ready { --pc: rgba(250,204,21,.55); box-shadow: 0 0 18px rgba(250,204,21,.18), 0 4px 14px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.06); }
+        .lf-plot.lf-empty { border-style: dashed; justify-content:center; background: rgba(255,255,255,.025); box-shadow:none; }
+        .lf-plot.lf-dead  { --pc: rgba(185,28,28,.4); justify-content:space-between; opacity:.88; }
+        .lf-plot.lf-pest  { --pc: rgba(239,68,68,.75); --pbg: linear-gradient(165deg,#3a1e22 0%,#1f1214 100%); animation: lfAlarm 2.4s ease-in-out infinite; }
+        .lf-head { display:flex; justify-content:space-between; align-items:center; width:100%; gap:.25rem; margin-bottom:.3rem; }
+        .lf-name { font-size:.68rem; font-weight:800; color:#d1d5db; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .lf-time { font-size:.58rem; color:#9ca3af; white-space:nowrap; }
+        .lf-stage { position:relative; width:100%; height:3.6rem; display:flex; align-items:flex-end; justify-content:center; margin-bottom:.45rem; }
+        .lf-stage::after { content:""; position:absolute; bottom:-3px; left:50%; width:54px; height:9px; margin-left:-27px; border-radius:50%; background: radial-gradient(closest-side, var(--mound), transparent); }
+        .lf-glow { display:inline-block; position:relative; z-index:1; --glow:#facc15; }
+        .lf-glow.on { animation: lfGlow 3.2s ease-in-out infinite; }
+        .lf-sway { display:inline-block; transform-origin: 50% 100%; animation: lfSway 6s ease-in-out infinite; }
+        .lf-float { display:inline-block; animation: lfFloat 3.4s ease-in-out infinite; }
+        .lf-ic { display:inline-block; font-size:2.3rem; line-height:1; transform: scale(var(--s,1)); transform-origin: 50% 100%; transition: transform .6s; }
+        .lf-mush-champ { filter: grayscale(1) brightness(1.55) contrast(.9); }
+        .lf-mush-chant { filter: hue-rotate(32deg) saturate(1.35) brightness(1.1); }
+        .lf-mush-truf  { filter: hue-rotate(18deg) saturate(.55) brightness(.62); }
+        .lf-bar { width:100%; height:6px; border-radius:99px; background: rgba(0,0,0,.45); overflow:hidden; margin-bottom:.5rem; border:1px solid rgba(255,255,255,.04); }
+        .lf-bar > i { display:block; height:100%; border-radius:99px; transition: width 1s;
+            background-image: repeating-linear-gradient(115deg, rgba(255,255,255,.2) 0 6px, transparent 6px 12px), linear-gradient(90deg,#16a34a,#4ade80);
+            background-size: 24px 100%, 100% 100%; animation: lfStripes 1.4s linear infinite; }
+        .lf-cave .lf-bar > i { background-image: repeating-linear-gradient(115deg, rgba(255,255,255,.2) 0 6px, transparent 6px 12px), linear-gradient(90deg,#0891b2,#5eead4); }
+        .lf-tools { display:flex; flex-wrap:wrap; gap:.25rem; justify-content:center; margin-top:auto; width:100%; }
+        .lf-tools button { padding:.28rem .45rem; white-space:nowrap; line-height:1.2; }
+        /* пещера: ячейки узкие (3 в ряд) — при трёх кнопках: ⛏ и 💧 в первом ряду, 🧪 на всю ширину во втором */
+        .lf-cave.lf-plot { padding:.6rem .45rem .5rem; }
+        .lf-cave .lf-tools button:nth-child(2):nth-last-child(2) { order:3; flex:1 0 100%; }
+        .lf-cave .lf-tools button:first-child:nth-last-child(3), .lf-cave .lf-tools button:last-child:nth-child(3) { flex:1 1 0; }
+        #farmCaveSlotsContainer { gap:.5rem; }
+        .lf-empty-ic { font-size:1.6rem; opacity:.75; margin-bottom:.15rem; }
+        .lf-hole { width:46px; height:16px; margin-bottom:.45rem; border-radius:50%; background: radial-gradient(closest-side, #000 58%, #1b2230 100%); box-shadow: inset 0 3px 6px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.08); }
+        .lf-empty-t { font-size:.72rem; font-weight:800; color:#9ca3af; }
+        .lf-empty-s { font-size:.58rem; color:#6b7280; margin-top:.15rem; }
+        .lf-badge { font-size:.6rem; font-weight:900; letter-spacing:.14em; text-transform:uppercase; color:#facc15; margin-bottom:.2rem; }
+        .lf-badge.decor { color:#c4b5fd; letter-spacing:.06em; }
+        .lf-spark { position:absolute; color:#fde68a; font-style:normal; font-size:.8rem; pointer-events:none; animation: lfTwinkle 2.6s ease-in-out infinite; }
+        .lf-spark.s1 { left:22%; top:6%; } .lf-spark.s2 { right:20%; top:22%; font-size:.65rem; animation-delay:.9s; } .lf-spark.s3 { left:40%; top:-4%; font-size:.55rem; animation-delay:1.7s; }
+        .lf-cta { width:100%; margin-top:auto; padding:.42rem 0; border-radius:.7rem; font-size:.72rem; font-weight:800; color:#fff; background: linear-gradient(180deg,#eab308,#a16207); border:1px solid rgba(253,224,71,.5); box-shadow: 0 2px 10px rgba(234,179,8,.3); }
+        .lf-cta.decor { background: linear-gradient(180deg,#7f1d1d,#450a0a); border-color:#b91c1c; color:#fecaca; box-shadow:none; }
+        .lf-clear { width:100%; padding:.4rem 0; border-radius:.7rem; font-size:.7rem; font-weight:800; color:#fca5a5; background: rgba(127,29,29,.55); border:1px solid #b91c1c; }
+
+        /* --- вредители: ползают плавно, не дёргаются --- */
+        .lf-pest-head { display:flex; justify-content:space-between; align-items:center; width:100%; gap:.2rem; }
+        .lf-pest-alert { font-size:.55rem; font-weight:900; color:#fca5a5; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+        .lf-pest-field { position:relative; width:100%; height:3.4rem; margin:.3rem 0 .2rem; display:flex; align-items:flex-end; justify-content:center; overflow:hidden; }
+        .lf-pest-victim { opacity:.75; position:relative; }
+        .lf-pest-victim .lf-ic { font-size:2rem; }
+        .lf-pest-crawler { position:absolute; left:50%; bottom:1px; margin-left:-.85rem; font-size:1.6rem; line-height:1; animation: lfCrawl 6.5s ease-in-out infinite; filter: drop-shadow(0 3px 4px rgba(0,0,0,.6)); }
+        .lf-pest-bob { display:inline-block; animation: lfBob 1.4s ease-in-out infinite; }
+        .lf-pest-name { font-size:.6rem; font-weight:700; color:#fecaca; line-height:1.15; margin-bottom:.3rem; }
+        .lf-pest-timer { width:100%; height:5px; border-radius:9px; background: rgba(0,0,0,.5); overflow:hidden; }
+        .lf-pest-timer > i { display:block; height:100%; border-radius:9px; background: linear-gradient(90deg,#dc2626,#f97316); }
+        .lf-pest-left { font-size:.55rem; color:#fca5a5; margin:.2rem 0 .4rem; }
+        .lf-pest-btn { width:100%; margin-top:auto; padding:.4rem 0; border-radius:.7rem; font-size:.72rem; font-weight:900; color:#fff; background: linear-gradient(180deg,#ef4444,#b91c1c); border:1px solid #f87171; box-shadow: 0 2px 10px rgba(239,68,68,.45); }
+        .lf-cave .lf-pest-name { display:none; }
+        .lf-cave .lf-head { flex-direction:column; align-items:center; gap:0; }   /* в узкой пещере название — на всю ширину, время под ним */
+        .lf-cave .lf-name { max-width:100%; }
+        .lf-cave .lf-pest-btn { font-size:.66rem; }
+
+        /* --- пугало: покачивается на ветру под куполом защиты --- */
+        .lf-scare { position:relative; width:220px; height:132px; margin:0 auto; display:flex; align-items:flex-end; justify-content:center; }
+        .lf-scare-dome { position:absolute; left:14px; right:14px; top:2px; bottom:4px; border-radius:50% 50% 44% 44% / 70% 70% 30% 30%; border:1px solid rgba(250,204,21,.16); background: radial-gradient(70% 80% at 50% 90%, rgba(250,204,21,.24), rgba(250,204,21,.07) 60%, transparent 78%); animation: lfDome 4.5s ease-in-out infinite; }
+        .lf-scare-ring { position:absolute; bottom:0; left:50%; width:150px; height:26px; margin-left:-75px; border-radius:50%; border:1px solid rgba(250,204,21,.38); box-shadow: 0 0 14px rgba(250,204,21,.28), inset 0 0 10px rgba(250,204,21,.18); animation: lfDome 4.5s ease-in-out infinite; }
+        .lf-scare-man { position:relative; z-index:2; font-size:4.3rem; line-height:1; margin-bottom:6px; transform-origin: 50% 100%; animation: lfSway 5s ease-in-out infinite; filter: drop-shadow(0 6px 10px rgba(202,138,4,.45)); }
+        .lf-scare-ground { position:absolute; bottom:6px; left:50%; width:96px; height:14px; margin-left:-48px; background: radial-gradient(closest-side, rgba(0,0,0,.6), transparent); }
+        .lf-scare-leaf { position:absolute; bottom:34px; font-size:.8rem; opacity:0; animation: lfDrift 7s ease-in-out infinite; }
+        .lf-scare-pill { margin-top:.5rem; padding:.25rem .8rem; border-radius:999px; font-size:.6rem; font-weight:800; letter-spacing:.14em; text-transform:uppercase; color:#facc15; background: rgba(113,63,18,.45); border:1px solid rgba(161,98,7,.55); }
+
+        /* --- пещера --- */
+        .lf-cave-panel { position:relative; overflow:hidden; border-radius:1rem; padding:1.1rem .8rem .9rem; margin-bottom:1.5rem; background: radial-gradient(120% 80% at 50% 0%, #1d2433 0%, #12151d 55%, #090b10 100%); border:1px solid #1f2937; box-shadow: inset 0 0 50px rgba(0,0,0,.85), 0 8px 24px rgba(0,0,0,.35); }
+        .lf-cave-panel::before { content:""; position:absolute; inset:0; background: radial-gradient(60% 40% at 50% -10%, rgba(125,211,252,.13), transparent 70%); pointer-events:none; }
+        .lf-stal { position:absolute; top:0; background: linear-gradient(#323b4d,#151922); clip-path: polygon(0 0,100% 0,50% 100%); opacity:.95; }
+        .lf-stal.s1 { left:6%; width:20px; height:34px; } .lf-stal.s2 { left:31%; width:13px; height:21px; } .lf-stal.s3 { right:27%; width:24px; height:44px; } .lf-stal.s4 { right:5%; width:15px; height:27px; }
+        .lf-gem { position:absolute; bottom:5px; width:10px; height:16px; background: linear-gradient(#a5f3fc,#0891b2); clip-path: polygon(50% 0,100% 40%,75% 100%,25% 100%,0 40%); filter: drop-shadow(0 0 5px #22d3ee); animation: lfDome 4s ease-in-out infinite; }
+        .lf-gem.g1 { left:7%; } .lf-gem.g2 { right:9%; height:20px; width:12px; animation-delay:1.3s; } .lf-gem.g3 { left:47%; height:12px; width:8px; animation-delay:2.4s; }
+        .lf-spore { position:absolute; bottom:10px; width:4px; height:4px; border-radius:50%; background:#a7f3d0; box-shadow: 0 0 8px 2px rgba(110,231,183,.65); opacity:0; animation: lfDrift 8s linear infinite; }
+        .lf-cave-shop { background: linear-gradient(180deg,#141922,#0c0f15); border:1px solid #1f2937; border-radius:1rem; padding:.9rem; margin-bottom:1rem; box-shadow: 0 8px 22px rgba(0,0,0,.35); }
+        .lf-cave-shop-t { display:flex; justify-content:space-between; align-items:baseline; font-size:.85rem; font-weight:800; color:#cbd5e1; margin-bottom:.7rem; }
+        .lf-cave-shop-t span { font-size:.62rem; font-weight:700; color:#64748b; }
+        .lf-seed-list { display:flex; flex-direction:column; gap:.5rem; }
+
+        /* --- карточки семян --- */
+        .lf-seed { position:relative; overflow:hidden; display:flex; align-items:center; gap:.65rem; padding:.55rem .65rem .55rem .8rem; border-radius:.95rem; border:1px solid var(--rc); background: linear-gradient(135deg, rgba(255,255,255,.045), rgba(0,0,0,.4)); transition: transform .12s; }
+        .lf-seed::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--rc); box-shadow: 0 0 10px var(--rc); }
+        .lf-seed:active { transform: scale(.985); }
+        .lf-seed.rare::after { content:""; position:absolute; top:0; bottom:0; width:40%; left:-50%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.1), transparent); animation: lfShine 5.5s ease-in-out infinite; pointer-events:none; }
+        .lf-seed-ic { flex:none; width:2.7rem; height:2.7rem; display:flex; align-items:center; justify-content:center; font-size:1.65rem; border-radius:.85rem; background: radial-gradient(circle at 30% 25%, rgba(255,255,255,.13), rgba(0,0,0,.45)); border:1px solid rgba(255,255,255,.07); }
+        .lf-seed-main { flex:1; min-width:0; }
+        .lf-seed-name { font-size:.8rem; font-weight:800; color: var(--rt, #e5e7eb); line-height:1.1; }
+        .lf-seed-meta { display:flex; flex-wrap:wrap; gap:.25rem; margin-top:.3rem; }
+        .lf-pill { font-size:.6rem; font-weight:700; padding:.08rem .45rem; border-radius:999px; background: rgba(255,255,255,.07); color:#cbd5e1; border:1px solid rgba(255,255,255,.06); white-space:nowrap; }
+        .lf-pill.good { color:#86efac; background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.28); }
+        .lf-pill.risk { color:#fca5a5; background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.28); }
+        .lf-pill.shield { color:#93c5fd; background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.28); }
+        .lf-buy { flex:none; min-width:3.9rem; padding:.48rem .75rem; border-radius:999px; font-size:.8rem; font-weight:800; color:#fff; border:1px solid rgba(255,255,255,.18); background: linear-gradient(180deg, var(--rc), rgba(0,0,0,.4)); box-shadow: 0 2px 10px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.22); transition: transform .12s, filter .2s; }
+        .lf-buy small { font-size:.7rem; }
+        .lf-buy:active { transform: scale(.94); filter: brightness(1.15); }
+
+        /* --- общий лоск кнопок и карточек в основном каталоге (разметку не трогаем) --- */
+        #seedCatalog button[onclick^="buySeed"] { border-radius:999px; min-width:3.9rem; font-weight:800; border:1px solid rgba(255,255,255,.16); background-image: linear-gradient(180deg, rgba(255,255,255,.2), rgba(0,0,0,.22)); box-shadow: 0 2px 8px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.18); transition: transform .12s, filter .2s; }
+        #seedCatalog button[onclick^="buySeed"]:active { transform: scale(.94); filter: brightness(1.15); }
+        #seedCatalog .space-y-2 > div[class*="rounded-lg"] { border-radius:.9rem; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
+        #seedCatalog .space-y-2 .text-2xl { display:inline-flex; align-items:center; justify-content:center; width:2.4rem; height:2.4rem; border-radius:.75rem; font-size:1.4rem; background: radial-gradient(circle at 30% 25%, rgba(255,255,255,.12), rgba(0,0,0,.35)); border:1px solid rgba(255,255,255,.06); }
+
+        @media (prefers-reduced-motion: reduce) { [class*="lf-"], [class*="lf-"]::after { animation: none !important; } }
     </style>
 </head>
 <body class="p-4">
@@ -400,15 +525,18 @@
 
             <!-- 🔥 ВИЗУАЛИЗАЦИЯ ПУГАЛА 🔥 -->
             <div id="activeScarecrowVisual" class="hidden flex-col items-center justify-center mb-6 mt-4">
-                <div class="relative inline-block animate-[bounce_3s_ease-in-out_infinite]">
-                    <div class="text-6xl drop-shadow-[0_10px_15px_rgba(202,138,4,0.4)] relative z-10">🧑‍🌾</div>
-                    <div class="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-12 h-3 bg-black/60 rounded-[100%] blur-sm"></div>
+                <div class="lf-scare">
+                    <div class="lf-scare-dome"></div>
+                    <span class="lf-scare-leaf" style="left:22%;--dx:14px;animation-delay:0s">🍃</span>
+                    <span class="lf-scare-leaf" style="left:70%;--dx:-16px;animation-delay:2.3s">🍂</span>
+                    <span class="lf-scare-leaf" style="left:46%;--dx:8px;animation-delay:4.4s">✨</span>
+                    <div class="lf-scare-ring"></div>
+                    <div class="lf-scare-ground"></div>
+                    <div class="lf-scare-man">🧑‍🌾</div>
                 </div>
-                <div class="bg-yellow-900/40 border border-yellow-700/50 rounded-full px-3 py-1 mt-2 text-[9px] text-yellow-500 font-bold uppercase tracking-widest shadow-sm" id="scarecrowTimerText">
-                    Ферма под защитой
-                </div>
+                <div class="lf-scare-pill" id="scarecrowTimerText">Ферма под защитой</div>
             </div>
-            
+
             <div id="farmSlotsContainer" class="grid grid-cols-2 gap-3 mb-6 mt-4">
                 <p class="text-gray-500 text-sm col-span-2 text-center py-4">⏳ Загрузка участка...</p>
             </div>
@@ -490,35 +618,37 @@
                 </button>
             </div>
             
-            <div class="bg-zinc-900/80 p-4 rounded-2xl border border-gray-800 shadow-[inset_0_0_40px_rgba(0,0,0,0.8)] relative overflow-hidden mb-6">
-                <!-- Сталактиты для визуала -->
-                <div class="absolute top-0 left-4 text-gray-800 text-2xl opacity-50">🔽</div>
-                <div class="absolute top-0 right-8 text-gray-800 text-3xl opacity-30">🔽</div>
-                <div class="absolute bottom-0 left-1/2 text-gray-800 text-3xl opacity-20 transform -translate-x-1/2 rotate-180">🔽</div>
-                
+            <div class="lf-cave-panel">
+                <i class="lf-stal s1"></i><i class="lf-stal s2"></i><i class="lf-stal s3"></i><i class="lf-stal s4"></i>
+                <i class="lf-gem g1"></i><i class="lf-gem g2"></i><i class="lf-gem g3"></i>
+                <i class="lf-spore" style="left:10%;--dx:8px;animation-delay:0s"></i><i class="lf-spore" style="left:22%;--dx:-10px;animation-delay:1.6s"></i><i class="lf-spore" style="left:35%;--dx:12px;animation-delay:3.1s"></i><i class="lf-spore" style="left:48%;--dx:-6px;animation-delay:4.7s"></i><i class="lf-spore" style="left:60%;--dx:10px;animation-delay:0.8s"></i><i class="lf-spore" style="left:72%;--dx:-12px;animation-delay:2.4s"></i><i class="lf-spore" style="left:84%;--dx:8px;animation-delay:5.5s"></i><i class="lf-spore" style="left:92%;--dx:-8px;animation-delay:3.9s"></i>
                 <div id="farmCaveSlotsContainer" class="grid grid-cols-3 gap-3 relative z-10">
                     <p class="text-gray-600 text-sm col-span-3 text-center py-4">⏳ Спускаемся в пещеру...</p>
                 </div>
             </div>
             
-            <div id="caveSeedCatalog" class="bg-zinc-900/90 rounded-2xl p-4 mb-4 shadow-lg border border-gray-800">
-                <h3 class="font-bold text-sm mb-3 text-gray-400">🍄 Споры грибов</h3>
-                <div class="space-y-2">
-                    <div class="flex justify-between items-center bg-black/50 p-2 rounded-lg border border-gray-800 shadow-inner">
-                        <div class="flex items-center space-x-2"><span class="text-2xl grayscale drop-shadow-md">🍄</span><div><p class="text-xs font-bold text-gray-300">Шампиньон (3ч)</p><p class="text-[9px] text-gray-500">Шанс: 70% на 150 💎</p></div></div>
-                        <button onclick="buySeed('champignon', 5, '🍄 Шампиньон', 'shards', true)" class="bg-gray-800 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-gray-300 border border-gray-600 flex items-center gap-1">5 <span class="text-[10px]">🧩</span></button>
+            <div id="caveSeedCatalog" class="lf-cave-shop">
+                <div class="lf-cave-shop-t">🍄 Споры грибов <span>за осколки 🧩</span></div>
+                <div class="lf-seed-list">
+                    <div class="lf-seed" style="--rc:#94a3b8;--rt:#e2e8f0">
+                        <div class="lf-seed-ic"><span class="lf-mush-champ">🍄</span></div>
+                        <div class="lf-seed-main"><div class="lf-seed-name">Шампиньон</div><div class="lf-seed-meta"><span class="lf-pill">⏱ 3ч</span><span class="lf-pill good">70% → 150 💎</span></div></div>
+                        <button onclick="buySeed('champignon', 5, '🍄 Шампиньон', 'shards', true)" class="lf-buy">5 <small>🧩</small></button>
                     </div>
-                    <div class="flex justify-between items-center bg-orange-900/10 p-2 rounded-lg border border-orange-900/50 shadow-inner">
-                        <div class="flex items-center space-x-2"><span class="text-2xl drop-shadow-md brightness-110">🍄</span><div><p class="text-xs font-bold text-orange-300">Лисичка (6ч)</p><p class="text-[9px] text-orange-500/80">Жирный куш + Шанс на Щит!</p></div></div>
-                        <button onclick="buySeed('chanterelle', 12, '🍄 Лисичка', 'shards', true)" class="bg-orange-900/60 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-orange-200 border border-orange-700 flex items-center gap-1">12 <span class="text-[10px]">🧩</span></button>
+                    <div class="lf-seed" style="--rc:#f59e0b;--rt:#fcd34d">
+                        <div class="lf-seed-ic"><span class="lf-mush-chant">🍄</span></div>
+                        <div class="lf-seed-main"><div class="lf-seed-name">Лисичка</div><div class="lf-seed-meta"><span class="lf-pill">⏱ 6ч</span><span class="lf-pill good">жирный куш</span><span class="lf-pill shield">🛡 шанс щита</span></div></div>
+                        <button onclick="buySeed('chanterelle', 12, '🍄 Лисичка', 'shards', true)" class="lf-buy">12 <small>🧩</small></button>
                     </div>
-                    <div class="flex justify-between items-center bg-yellow-900/10 p-2 rounded-lg border border-yellow-900/50 shadow-inner">
-                        <div class="flex items-center space-x-2"><span class="text-2xl drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]">🍄</span><div><p class="text-xs font-bold text-yellow-400">Трюфель (12ч)</p><p class="text-[9px] text-yellow-600/80">РИСК: 35% на 1500 💎</p></div></div>
-                        <button onclick="buySeed('truffle', 30, '🍄 Трюфель', 'shards', true)" class="bg-yellow-900/60 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-yellow-200 border border-yellow-700 flex items-center gap-1">30 <span class="text-[10px]">🧩</span></button>
+                    <div class="lf-seed rare" style="--rc:#eab308;--rt:#fde047">
+                        <div class="lf-seed-ic"><span class="lf-mush-truf">🍄</span></div>
+                        <div class="lf-seed-main"><div class="lf-seed-name">Трюфель</div><div class="lf-seed-meta"><span class="lf-pill">⏱ 12ч</span><span class="lf-pill risk">35% → 1500 💎</span></div></div>
+                        <button onclick="buySeed('truffle', 30, '🍄 Трюфель', 'shards', true)" class="lf-buy">30 <small>🧩</small></button>
                     </div>
-                    <div class="flex justify-between items-center bg-red-900/10 p-2 rounded-lg border border-red-900/50 mt-2 shadow-inner">
-                        <div class="flex items-center space-x-2"><span class="text-2xl drop-shadow-[0_0_10px_rgba(239,68,68,0.5)]">🍄</span><div><p class="text-xs font-bold text-red-400">К-Мухомор (2ч)</p><p class="text-[9px] text-red-500/80">Казино: 1000 💎 или ничего</p></div></div>
-                        <button onclick="buySeed('amanita', 20, '🍄 К-Мухомор', 'shards', true)" class="bg-red-900/60 px-3 py-1.5 rounded text-xs font-bold active:scale-95 text-red-200 border border-red-700 flex items-center gap-1">20 <span class="text-[10px]">🧩</span></button>
+                    <div class="lf-seed" style="--rc:#ef4444;--rt:#fca5a5">
+                        <div class="lf-seed-ic">🍄</div>
+                        <div class="lf-seed-main"><div class="lf-seed-name">К-Мухомор</div><div class="lf-seed-meta"><span class="lf-pill">⏱ 2ч</span><span class="lf-pill risk">🎰 1000 💎 или ничего</span></div></div>
+                        <button onclick="buySeed('amanita', 20, '🍄 К-Мухомор', 'shards', true)" class="lf-buy">20 <small>🧩</small></button>
                     </div>
                 </div>
             </div>
@@ -1843,32 +1973,54 @@
         window.currentPlots = []; 
         window.currentCavePlots = [];
         
+        // ---- 🌿 Живая ферма: иконки, стадии роста, свечение грибов ----
+        const CROP_EMOJI = {potato:'🥔', watermelon:'🍉', sunflower:'🌻', radish:'🧅', mizuna:'🥬', chestnut:'🌳', rhododendron:'🌸',
+            parsley:'🌿', cactus:'🌵', amanita:'🍄', champignon:'🍄', chanterelle:'🍄', truffle:'🍄', carrot:'🥕', cabbage:'🥦',
+            beetroot:'🫜', beet:'🫜', garlic:'🧄', money_tree:'🌳', tomato:'🍅'};
+        // оттенок эмодзи 🍄 (CSS-фильтр) и цвет свечения у каждого гриба свой
+        const MUSH_FX = {
+            champignon:  {cls:'lf-mush-champ', glow:'#e2e8f0'},
+            chanterelle: {cls:'lf-mush-chant', glow:'#f59e0b'},
+            truffle:     {cls:'lf-mush-truf',  glow:'#eab308'},
+            amanita:     {cls:'',              glow:'#ef4444'}
+        };
+        function cropEmoji(seed) { return CROP_EMOJI[seed] || '🌱'; }
+        // scale — «возраст» растения (растёт вместе с прогрессом), glow — мягкое свечение, mode — sway (покачивание) | float (парение)
+        function plantMarkup(seed, scale, glow, mode) {
+            const fx = MUSH_FX[seed] || {cls:'', glow:'#facc15'};
+            return `<span class="lf-glow ${glow ? 'on' : ''}" style="--glow:${fx.glow}"><span class="${mode === 'float' ? 'lf-float' : 'lf-sway'}"><span class="lf-ic ${fx.cls}" style="--s:${scale}">${cropEmoji(seed)}</span></span></span>`;
+        }
+
         function renderPlots(plotsArray, isCave, now) {
             let html = '';
-            plotsArray.forEach(plot => {
+            const kind = isCave ? 'lf-cave' : 'lf-field';
+            (plotsArray || []).forEach(plot => {
                 let cleanName = plot.name.includes(' ') ? plot.name.split(' ').slice(1).join(' ') : plot.name;
-                let emptyStyle = isCave ? 'bg-zinc-800/50 border-gray-700 hover:bg-zinc-700/50' : 'bg-[#1a1b1f] border-gray-600 hover:bg-gray-800/50';
-                let emptyIcon = isCave ? '🕳' : '🪹';
 
                 if (plot.status === 'empty') {
                     html += `
-                    <div onclick="document.getElementById('${isCave ? 'caveSeedCatalog' : 'seedCatalog'}').scrollIntoView({behavior: 'smooth'})" class="${emptyStyle} border border-dashed rounded-xl p-4 text-center flex flex-col justify-center items-center h-28 opacity-70 cursor-pointer active:scale-95 transition-transform">
-                        <div class="text-2xl mb-1 drop-shadow-md">${emptyIcon}</div>
-                        <div class="text-xs font-bold ${isCave ? 'text-gray-400' : 'text-gray-500'}">Слот ${plot.slot_id}</div>
-                        <p class="text-[9px] text-gray-600 mt-1">Тапни, чтобы посадить</p>
+                    <div onclick="document.getElementById('${isCave ? 'caveSeedCatalog' : 'seedCatalog'}').scrollIntoView({behavior: 'smooth'})" class="lf-plot lf-empty ${kind}" style="cursor:pointer">
+                        ${isCave ? '<div class="lf-hole"></div>' : '<div class="lf-empty-ic">🪹</div>'}
+                        <div class="lf-empty-t">Слот ${plot.slot_id}</div>
+                        <div class="lf-empty-s">Тапни, чтобы посадить</div>
                     </div>`;
-                } 
+                }
                 else if (plot.pest) {
+                    let spawned = plot.pest.spawned_at || now;
+                    let leftP = Math.max(0, 10800 - (now - spawned));
+                    let pPct = Math.round(leftP / 10800 * 100);
+                    let ph = Math.floor(leftP / 3600), pm = Math.floor((leftP % 3600) / 60);
                     html += `
-                    <div onclick="farmAction('chase_pest', ${plot.slot_id})" class="surface border border-red-500 rounded-xl p-3 text-center flex flex-col shadow-[0_0_15px_rgba(239,68,68,0.4)] relative bg-red-900/20 overflow-hidden cursor-pointer active:scale-95 transition-transform">
-                        <div class="absolute inset-0 bg-red-500/10 animate-pulse rounded-xl"></div>
-                        <div class="flex justify-between items-center w-full mb-1 relative z-10">
-                            <span class="text-xs font-bold text-red-400">${cleanName}</span>
-                            <span class="text-[9px] text-red-500 font-black uppercase drop-shadow">ОПАСНОСТЬ!</span>
+                    <div onclick="farmAction('chase_pest', ${plot.slot_id})" class="lf-plot lf-pest ${kind}" style="cursor:pointer">
+                        <div class="lf-pest-head"><span class="lf-name">${cleanName}</span><span class="lf-pest-alert">⚠</span></div>
+                        <div class="lf-pest-field">
+                            <div class="lf-pest-victim">${plantMarkup(plot.seed_type, 0.8, false, 'sway')}</div>
+                            <div class="lf-pest-crawler"><span class="lf-pest-bob">${plot.pest.emoji}</span></div>
                         </div>
-                        <div class="text-4xl animate-bounce mb-1 mt-2 relative z-10 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]">${plot.pest.emoji}</div>
-                        <p class="text-[9px] text-red-300 font-bold mb-2 relative z-10 leading-tight">${plot.pest.name} жрет урожай!</p>
-                        <button class="bg-red-600 w-full py-1.5 rounded-lg text-xs font-black text-white shadow-[0_0_10px_rgba(239,68,68,0.6)] mt-auto relative z-10 border border-red-400">👞 ПРОГНАТЬ!</button>
+                        <div class="lf-pest-name">${plot.pest.name} жрёт урожай</div>
+                        <div class="lf-pest-timer"><i style="width:${pPct}%"></i></div>
+                        <div class="lf-pest-left">погибнет через ${ph}ч ${pm}м</div>
+                        <button class="lf-pest-btn">👞 Прогнать</button>
                     </div>`;
                 }
                 else if (plot.status === 'growing') {
@@ -1876,75 +2028,46 @@
                     let left = plot.grow_time - elapsed;
                     if (left < 0) left = 0;
                     let percent = Math.min(100, Math.floor((elapsed / plot.grow_time) * 100));
-                    
+
                     let hrs = Math.floor(left / 3600);
                     let mins = Math.floor((left % 3600) / 60);
                     let timeStr = left > 0 ? `${hrs}ч ${mins}м` : "Созревает...";
-                    
+
                     let waterBtn = plot.water_req ? `<button onclick="farmAction('water', ${plot.slot_id})" class="text-[10px] text-blue-400 font-bold bg-blue-900/30 px-2 py-1 rounded shadow-sm border border-blue-700/50 active:scale-90">💧</button>` : '';
                     let fertBtn = !plot.fertilized ? `<button onclick="farmAction('fertilize', ${plot.slot_id})" class="text-[10px] text-purple-400 font-bold bg-purple-900/30 px-2 py-1 rounded shadow-sm border border-purple-700/50 active:scale-90">🧪 50💎</button>` : `<button class="text-[10px] text-gray-500 bg-gray-800/80 px-2 py-1 rounded shadow-sm border border-gray-700 cursor-not-allowed" disabled>🧪 Макс</button>`;
                     let digBtn = `<button onclick="farmActionCheck('dig_up', ${plot.slot_id})" class="text-[10px] text-red-400 font-bold bg-red-900/30 px-2 py-1 rounded shadow-sm border border-red-700/50 active:scale-90">⛏</button>`;
 
-                    let plantIcon = isCave ? '🍄' : '🌿';
-                    let boxStyle = isCave ? 'bg-zinc-900 border-gray-600 shadow-[inset_0_0_10px_rgba(0,0,0,0.5)]' : 'surface border-green-700/50 shadow-[0_0_10px_rgba(34,197,94,0.1)]';
+                    // растение «взрослеет» вместе с прогрессом: росток → всё крупнее; грибы с самого начала светятся
+                    let stage = (percent < 25 && !isCave)
+                        ? `<span class="lf-sway"><span class="lf-ic" style="--s:.95">🌱</span></span>`
+                        : plantMarkup(plot.seed_type, isCave ? (0.45 + 0.5 * percent / 100) : (0.6 + 0.35 * percent / 100), isCave, 'sway');
 
                     html += `
-                    <div class="${boxStyle} rounded-xl p-3 text-center flex flex-col relative">
-                        <div class="flex justify-between items-center w-full mb-1">
-                            <span class="text-xs font-bold text-gray-300">${cleanName}</span>
-                            <span class="text-[9px] text-gray-400">${timeStr}</span>
-                        </div>
-                        <div class="text-3xl animate-pulse mb-1 opacity-80">${plantIcon}</div>
-                        <div class="w-full bg-black/50 rounded-full h-1.5 mb-2">
-                            <div class="${isCave ? 'bg-gray-500' : 'bg-green-500'} h-1.5 rounded-full transition-all duration-1000" style="width: ${percent}%"></div>
-                        </div>
-                        <div class="flex justify-center items-center gap-1 mt-auto w-full">
-                            ${digBtn} ${fertBtn} ${waterBtn}
-                        </div>
+                    <div class="lf-plot ${kind}">
+                        <div class="lf-head"><span class="lf-name">${cleanName}</span><span class="lf-time">${timeStr}</span></div>
+                        <div class="lf-stage">${stage}</div>
+                        <div class="lf-bar"><i style="width:${percent}%"></i></div>
+                        <div class="lf-tools">${digBtn} ${fertBtn} ${waterBtn}</div>
                     </div>`;
-                } 
+                }
                 else if (plot.status === 'ready') {
-                    let cropIcon = '🍅';
-                    if(plot.seed_type === 'potato') cropIcon = '🥔';
-                    if(plot.seed_type === 'watermelon') cropIcon = '🍉';
-                    if(plot.seed_type === 'sunflower') cropIcon = '🌻';
-                    if(plot.seed_type === 'radish') cropIcon = '🧅';
-                    if(plot.seed_type === 'mizuna') cropIcon = '🥬';
-                    if(plot.seed_type === 'chestnut') cropIcon = '🌳';
-                    if(plot.seed_type === 'rhododendron') cropIcon = '🌸';
-                    if(plot.seed_type === 'parsley') cropIcon = '🌿';
-                    if(plot.seed_type === 'cactus') cropIcon = '🌵';
-                    if(plot.seed_type === 'amanita') cropIcon = '🍄';
-                    if(plot.seed_type === 'champignon') cropIcon = '🍄';
-                    if(plot.seed_type === 'chanterelle') cropIcon = '🍄';
-                    if(plot.seed_type === 'truffle') cropIcon = '🍄';
-                    if(plot.seed_type === 'carrot') cropIcon = '🥕';
-                    if(plot.seed_type === 'cabbage') cropIcon = '🥦';
-                    if(plot.seed_type === 'beetroot') cropIcon = '🫜';
-                    if(plot.seed_type === 'money_tree') cropIcon = '🌳';
-
                     let isDecor = ['chestnut', 'rhododendron', 'cactus'].includes(plot.seed_type);
                     let actionCall = isDecor ? `farmActionCheck('dig_up', ${plot.slot_id})` : `farmAction('harvest', ${plot.slot_id})`;
-                    
-                    let statusBadge = isDecor ? `<div class="bg-purple-900/50 w-full py-1.5 rounded text-[10px] font-bold text-purple-300 border border-purple-700/50 mt-1 mb-1">Пассивный бонус</div>` : `<div class="text-[10px] font-black text-yellow-500 mb-1 uppercase tracking-widest">Готово!</div>`;
-                    let harvestBtn = isDecor ? `<button class="bg-red-900/80 w-full py-1.5 rounded text-[10px] font-bold text-gray-300 shadow-md active:scale-95 border border-red-700 mt-1">⛏ Выкопать</button>` : `<button class="bg-yellow-600 w-full py-1.5 rounded text-xs font-bold text-white shadow-md active:scale-95 mt-1">Собрать</button>`;
-
-                    let boxStyle = isCave ? 'bg-zinc-800 border-yellow-600/50 shadow-[0_0_15px_rgba(202,138,4,0.3)] hover:bg-zinc-700' : 'surface border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.2)] hover:bg-yellow-900/20';
-
+                    let badge = isDecor ? `<div class="lf-badge decor">Пассивный бонус</div>` : `<div class="lf-badge">Готово!</div>`;
+                    let btn = isDecor ? `<button class="lf-cta decor">⛏ Выкопать</button>` : `<button class="lf-cta">Собрать</button>`;
                     html += `
-                    <div onclick="${actionCall}" class="${boxStyle} rounded-xl p-3 text-center flex flex-col justify-between cursor-pointer active:scale-95 transition-transform relative">
-                        ${isDecor ? '' : statusBadge}
-                        <div class="text-4xl drop-shadow-[0_0_10px_rgba(234,179,8,0.8)] mb-1">${cropIcon}</div>
-                        ${isDecor ? statusBadge : ''}
-                        ${harvestBtn}
+                    <div onclick="${actionCall}" class="lf-plot lf-ready ${kind}" style="cursor:pointer">
+                        ${badge}
+                        <div class="lf-stage">${plantMarkup(plot.seed_type, 1, true, 'float')}<i class="lf-spark s1">✦</i><i class="lf-spark s2">✦</i><i class="lf-spark s3">✦</i></div>
+                        ${btn}
                     </div>`;
-                } 
+                }
                 else if (plot.status === 'withered') {
                     html += `
-                    <div onclick="farmAction('clear', ${plot.slot_id})" class="surface border border-red-900/50 rounded-xl p-3 text-center flex flex-col justify-between h-28 opacity-80 cursor-pointer active:scale-95 transition-transform hover:bg-red-900/20">
-                        <div class="text-xs font-bold text-gray-500 mb-1">${cleanName}</div>
-                        <div class="text-3xl grayscale opacity-50">🥀</div>
-                        <button class="bg-red-900/80 w-full py-1.5 rounded text-[10px] font-bold text-gray-300 shadow-md mt-1 border border-red-700">🗑 Очистить</button>
+                    <div onclick="farmAction('clear', ${plot.slot_id})" class="lf-plot lf-dead ${kind}" style="cursor:pointer">
+                        <div class="lf-name" style="color:#6b7280">${cleanName}</div>
+                        <div style="font-size:2rem;filter:grayscale(1);opacity:.55">🥀</div>
+                        <button class="lf-clear">🗑 Очистить</button>
                     </div>`;
                 }
             });
