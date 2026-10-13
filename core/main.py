@@ -1348,7 +1348,7 @@ def api_loan():
             return jsonify({"error": "Не удалось погасить долг. Проверьте баланс и попробуйте ещё раз."}), 400
         
         # Снимаем мут (добавляем задачу Скайнетам)
-        db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": now})
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "global_unmute", "timestamp": now})
         
         # Проценты (чистая прибыль) уходят в Синий Сейф!
         principal = user_db.get("debt_principal")
@@ -5324,7 +5324,7 @@ def pay_debt_chat(message):
     )
     if not paid:
         return bot.reply_to(message, "❌ Не удалось погасить кредит. Проверьте баланс и попробуйте ещё раз.")
-    db['skynet_tasks'].insert_one({"uid": uid, "action": "full_unban", "timestamp": time.time()})
+    db['skynet_tasks'].insert_one({"uid": uid, "action": "global_unmute", "timestamp": time.time()})
     
     bot.reply_to(message, f"✅ **КРЕДИТ ПОГАШЕН!**\n\nВы выплатили МФО **{debt} 💎**.\nДолгов нет, арест со счетов снят, коллекторы отозваны.", parse_mode="Markdown")
 
@@ -5437,20 +5437,11 @@ def prison_break(message):
         if target_id == uid:
             return bot.reply_to(message, "🤡 Вытащить самого себя за волосы из тюрьмы мог только барон Мюнхгаузен. Ждите помощи от друзей!")
 
-        # ⬇ новое: спасать можно только того, кто реально в муте/тюрьме (иначе фарм рейтинга и мут спасателя зря)
-        import time as _t
-        from utils.validators import has_active_group_restriction, _ts
-        _td = paid_collection.find_one({"uid": target_id}) or {}
-        try: in_prison = _ts(_td.get("guantanamo_until", 0)) > _t.time()
-        except Exception: in_prison = False
-        if not in_prison: in_prison = has_active_group_restriction(target_id)
-        if not in_prison:
-            try:
-                _cm = bot.get_chat_member(message.chat.id, target_id)
-                in_prison = (_cm.status == 'restricted' and not getattr(_cm, 'can_send_messages', True))
-            except Exception: pass
-        if not in_prison:
-            return bot.reply_to(message, "🤷 Этот гражданин и так на свободе, спасать некого.")
+        # спасать можно только игровую тюрьму/арест/карцер: админские муты и баны побегом не снимаются
+        from utils.validators import escape_check
+        _ok, _why = escape_check(target_id)
+        if not _ok:
+            return bot.reply_to(message, _why)
 
         import html
         safe_name = html.escape(message.from_user.first_name)
@@ -5463,7 +5454,7 @@ def prison_break(message):
 
         if random.randint(1, 100) <= 40:
             # УСПЕХ: Снимаем мут и гуантанамо
-            db['skynet_tasks'].insert_one({"uid": target_id, "action": "global_unmute", "timestamp": time.time()})
+            db['skynet_tasks'].insert_one({"uid": target_id, "action": "global_unmute", "source": "escape", "timestamp": time.time()})
             paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": "", "game_mute_until": "", "game_mute_reason": ""}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": 2}})
             _say(message.chat.id, f"✅ <b>ПОБЕГ УДАЛСЯ!</b>\nОхрана не успела среагировать. {safe_target} на свободе!\n\n<i>Спасатель получает +2 к Карме за преданность братве.</i>", parse_mode="HTML")

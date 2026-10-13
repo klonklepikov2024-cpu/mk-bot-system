@@ -85,14 +85,36 @@ def craft_release(uid, kind):
     db['craft_limits'].update_one({"_id": _craft_key(uid, kind)}, {"$inc": {"n": -1}})
 
 
-# ================= 👼 АНГЕЛ-ХРАНИТЕЛЬ: ПРОВЕРКА ДОПУСКА =================
-# Белый список. Ангел снимает ТОЛЬКО игровые муты:
+# ================= 👼 ИГРОВЫЕ НАКАЗАНИЯ: АНГЕЛ-ХРАНИТЕЛЬ И ПОБЕГ =================
+# Белый список. Ангел и побег снимают ТОЛЬКО игровые ограничения:
 #   • «Ордер на Арест» (Скайнет пишет его причину в users.net_mute_reason; любой более поздний
 #     мут — админский, зоны, копипаст — перезаписывает её);
-#   • локальные игровые муты из mute_user() (бомба, рулетка, суд, побег, кальмар…): метка paid_users.game_mute_until.
-# Не снимает: Гуантанамо («Ангелы бессильны»), баны, страйки, долговой/админский/авто-мут.
+#   • локальные игровые муты из mute_user() (бомба, рулетка, суд, кальмар…): метка paid_users.game_mute_until;
+#   • Гуантанамо — только побегом («Ангелы бессильны»).
+# Баны, 3 страйка, долговой/админский/авто-мут не снимает ни то, ни другое.
 GAME_NET_PREFIXES = ("Ордер на Арест",)
 ANGEL_PROOF_PREFIXES = ("Ордер Гуантанамо",)
+
+def game_restriction(uid):
+    """Что реально держит человека: banned / guantanamo / net_game / local_game / foreign (чужой сетевой мут)."""
+    now = time.time()
+    t = paid_collection.find_one({"uid": uid}) or {}
+    g_active = _ts(t.get("game_mute_until", 0)) > now
+    g_proof = str(t.get("game_mute_reason") or "").startswith(ANGEL_PROOF_PREFIXES)
+    u = db['users'].find_one({"_id": uid}, {"net_mute_until": 1, "net_mute_reason": 1}) or {}
+    try:
+        nm = int(u["net_mute_until"]) if u.get("net_mute_until") is not None else None
+    except (TypeError, ValueError):
+        nm = None
+    net_active = nm is not None and (nm == 0 or nm > now)
+    net_game = net_active and str(u.get("net_mute_reason") or "").startswith(GAME_NET_PREFIXES)
+    return {
+        "banned": bool(db['banned'].find_one({"_id": uid})),
+        "guantanamo": _ts(t.get("guantanamo_until", 0)) > now or (g_active and g_proof),
+        "net_game": bool(net_game),
+        "local_game": bool(g_active and not g_proof),
+        "foreign": bool(net_active and not net_game),
+    }
 
 def angel_check(uid, target_uid):
     """(можно?, причина отказа). Вызывать ДО списания щита."""
@@ -105,27 +127,24 @@ def angel_check(uid, target_uid):
             or _ts(me.get("game_mute_until", 0)) > now):
         return False, "🚫 Пока вы сами под ограничением, Ангела призвать нельзя."
 
-    # 2) Жёсткие случаи цели
+    # 2) Цель
     t = paid_collection.find_one({"uid": target_uid}) or {}
-    g_reason = str(t.get("game_mute_reason") or "")
-    if _ts(t.get("guantanamo_until", 0)) > now or g_reason.startswith(ANGEL_PROOF_PREFIXES):
+    st = game_restriction(target_uid)
+    if st["guantanamo"]:
         return False, "🚷 Ордер Гуантанамо: Ангелы бессильны."
-    if is_user_locked(target_uid) or t.get("strikes", 0) >= 3 or t.get("hard_punish"):
+    if st["banned"] or is_user_locked(target_uid) or t.get("strikes", 0) >= 3 or t.get("hard_punish"):
         return False, "⛔ Это наказание наложено администрацией или системой — Ангел бессилен."
-
-    # 3) Сетевой мут Скайнета: если он есть, он обязан быть игровым арестом
-    u = db['users'].find_one({"_id": target_uid}, {"net_mute_until": 1, "net_mute_reason": 1}) or {}
-    try:
-        nm = int(u["net_mute_until"]) if u.get("net_mute_until") is not None else None
-    except (TypeError, ValueError):
-        nm = None
-    net_active = nm is not None and (nm == 0 or nm > now)
-    net_game = net_active and str(u.get("net_mute_reason") or "").startswith(GAME_NET_PREFIXES)
-    if net_active and not net_game:
+    if st["foreign"]:
         return False, "⛔ На цели мут от администрации или системы — Ангел бессилен."
-
-    # 4) Белый список: игровой арест или локальный игровой мут
-    local_game = _ts(t.get("game_mute_until", 0)) > now
-    if not (net_game or local_game):
+    if not (st["net_game"] or st["local_game"]):
         return False, "👼 Ангел снимает только игровые муты (арест, карцер и т.п.). Это ограничение другого происхождения."
+    return True, ""
+
+def escape_check(target_uid):
+    """(можно?, причина отказа) для !побег: спасать можно только из игровой тюрьмы/ареста/карцера."""
+    st = game_restriction(target_uid)
+    if st["banned"] or st["foreign"]:
+        return False, "🚫 Это не игровая тюрьма, а наказание администрации или системы. Побег невозможен."
+    if not (st["guantanamo"] or st["net_game"] or st["local_game"]):
+        return False, "🤷 Этот гражданин и так на свободе, спасать некого."
     return True, ""

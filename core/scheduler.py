@@ -184,6 +184,7 @@ def auto_spawn_auction_lot():
     
     # Защита: не выставляем новый лот, если старый еще не продан (чтобы не сбивать фокус)
     if db['auction_lots'].count_documents({"status": "active"}) > 0:
+        logger.info("🔨 Авто-аукцион: слот пропущен — прошлый лот ещё не завершён")
         return
 
     lots_pool = [
@@ -995,33 +996,62 @@ def _hm(text, default):
     return default
 
 
+_AUCTION_ID = "auto_auction_spawn"   # первый слот; остальные: auto_auction_spawn_2, _3 …
+
+
+def _auction_slots():
+    """«пн 12:00, ср 15:00, пт 18:00» (разделитель — запятая, пробел или перенос строки)
+    -> [("mon", 12, 0), ("wed", 15, 0), ("fri", 18, 0)].
+    Одиночное «пт 18:00» работает как раньше. Кривые куски пропускаются; если ничего не разобрано — пятница 18:00."""
+    import re
+    slots = []
+    for day, tm in re.findall(r"(пн|вт|ср|чт|пт|сб|вс)[а-я]*\.?\s+(\d{1,2}:\d{2})", str(cfg("job_auction_when") or "").lower()):
+        hm = _hm(tm, None)
+        slot = (_WEEKDAYS[day], hm[0], hm[1]) if hm else None
+        if slot and slot not in slots:
+            slots.append(slot)
+    return slots[:10] or [("fri", 18, 0)]
+
+
 def _wanted_triggers():
     out = {}
     h, m = _hm(cfg("job_bonus_push_time"), (20, 0)); out["bonus_reminder"] = ("cron", {"hour": h, "minute": m})
     h, m = _hm(cfg("job_scout_time"), (10, 0)); out["holiday_scout"] = ("cron", {"hour": h, "minute": m})
     h, m = _hm(cfg("job_cat_time"), (12, 0)); out["stray_cat_tax"] = ("cron", {"hour": h, "minute": m})
-    try:
-        day, tm = str(cfg("job_auction_when")).strip().lower().split()
-        dow = _WEEKDAYS.get(day[:2], "fri")
-    except Exception:
-        dow, tm = "fri", "18:00"
-    h, m = _hm(tm, (18, 0)); out["auto_auction_spawn"] = ("cron", {"day_of_week": dow, "hour": h, "minute": m})
+    for n, (dow, h, m) in enumerate(_auction_slots(), 1):
+        out[_AUCTION_ID if n == 1 else f"{_AUCTION_ID}_{n}"] = ("cron", {"day_of_week": dow, "hour": h, "minute": m})
     out["bomb_drop"] = ("interval", {"minutes": max(10, int(cfg("job_bomb_every_min")))})
     out["colorado_invasion"] = ("interval", {"minutes": max(5, int(cfg("job_beetle_every_min")))})
     return out
 
 
 def sync_job_schedule():
-    """Раз в минуту: если в панели поменяли время/интервал события — переставляем задачу без деплоя."""
+    """Раз в минуту: если в панели поменяли время/интервал события — переставляем задачу без деплоя.
+    Аукцион может иметь несколько слотов в неделю: лишние задачи создаются и удаляются здесь же."""
     try:
-        for job_id, (kind, args) in _wanted_triggers().items():
+        wanted = _wanted_triggers()
+        for job_id, (kind, args) in wanted.items():
             sig = (kind, tuple(sorted(args.items())))
-            if _APPLIED.get(job_id) == sig:
+            exists = scheduler.get_job(job_id)
+            if exists and _APPLIED.get(job_id) == sig:
                 continue
-            if scheduler.get_job(job_id):
+            if exists:
                 scheduler.reschedule_job(job_id, trigger=kind, **args)
-                _APPLIED[job_id] = sig
-                logger.info(f"⏰ Расписание «{job_id}» из панели: {kind} {args}")
+            elif job_id.startswith(_AUCTION_ID + "_"):
+                scheduler.add_job(auto_spawn_auction_lot, kind, id=job_id, replace_existing=True, **args)
+            else:
+                continue
+            _APPLIED[job_id] = sig
+            logger.info(f"⏰ Расписание «{job_id}» из панели: {kind} {args}")
+        # слоты аукциона, убранные из панели
+        for job in scheduler.get_jobs():
+            if job.id.startswith(_AUCTION_ID + "_") and job.id not in wanted:
+                try:
+                    scheduler.remove_job(job.id)
+                except Exception:
+                    pass   # другой воркер уже удалил
+                _APPLIED.pop(job.id, None)
+                logger.info(f"⏰ Слот аукциона «{job.id}» убран из панели — задача удалена")
     except Exception as e:
         logger.warning(f"sync_job_schedule: {e}")
 
