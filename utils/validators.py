@@ -148,3 +148,43 @@ def escape_check(target_uid):
     if not (st["guantanamo"] or st["net_game"] or st["local_game"]):
         return False, "🤷 Этот гражданин и так на свободе, спасать некого."
     return True, ""
+
+import re
+import unicodedata
+
+SHAME_TAGS = (
+    "Not verified", "Параметры FAKE", "РИСК/ВИРТ/ОБМЕН",
+    "автососка", "туалетная соска", "чернильница"
+)
+
+_RESERVED = (
+    "beyond", "премиум", "premium", "верифиц", "спонсор", "свободен",
+    "индульгенц", "notverified", "параметрыfake", "рисквиртобмен",
+    "автососка", "туалетнаясоска", "чернильниц", "админ", "admin",
+    "модер", "owner", "владелец", "поддержк", "support", "скайнет",
+    "секретар", "staff", "вип", "vip", "quee", "квир"
+)
+_HOMOGLYPHS = str.maketrans("aeopcxykmtbh", "аеорсхукмтвн")
+_CYR2LAT = str.maketrans("аеорсхукмтвнії", "aeopcxykmtbhii")
+_BOT_SAFE_RE = re.compile(r"(работ|суббот|забот|ботан|ботин)")
+
+
+def reserved_tag_reason(text):
+    """Возвращает причину, если текст тега зарезервирован/опасен, иначе None."""
+    raw = unicodedata.normalize("NFKC", str(text or "")).lower()
+    if re.search(r"(https?://|t\.me/|@\w)", raw):
+        return "ссылки и @упоминания запрещены"
+    norm = re.sub(r"[^0-9a-zа-яё]+", "", raw.translate(_HOMOGLYPHS))
+    if not norm:
+        return "пустой тег"
+    lat = re.sub(r"[^0-9a-z]+", "", raw)
+    lat2 = re.sub(r"[^0-9a-z]+", "", raw.translate(_CYR2LAT))
+
+    for w in _RESERVED:
+        if w in norm or w in lat or (w.isascii() and w in lat2):
+            return f"зарезервированное слово «{w}»"
+
+    if "бот" in _BOT_SAFE_RE.sub("", norm):
+        return "зарезервированное слово «бот»"
+
+    return None

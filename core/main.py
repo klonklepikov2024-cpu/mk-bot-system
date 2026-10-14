@@ -140,6 +140,13 @@ def mute_user(chat_id, user_id, seconds, reason=""):
             pass
         return False
 
+def safe_set_tag(chat_id, user_id, tag):
+    try:
+        bot.set_chat_member_tag(chat_id, user_id, tag)
+    except AttributeError:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setChatMemberTag"
+        requests.post(url, json={"chat_id": chat_id, "user_id": user_id, "tag": tag}, timeout=5)
+
 # ================= WEB APP API =================
 
 def validate_webapp_data(init_data, token):
@@ -1941,7 +1948,7 @@ def api_inventory_action():
             return jsonify({"error": "Тег не может быть пустым!"}), 400
             
         # 🔥 ФИЛЬТР ЗАРЕЗЕРВИРОВАННЫХ СЛОВ И ШРИФТОВ 🔥
-        from core.guards import reserved_tag_reason, SHAME_TAGS
+        from utils.validators import reserved_tag_reason, SHAME_TAGS
         why_bad = reserved_tag_reason(tag_text)
         if why_bad:
             return jsonify({"error": f"Этот текст запрещен: {why_bad}"}), 400
@@ -1965,7 +1972,13 @@ def api_inventory_action():
             t_info = db['users'].find_one({"_id": target_uid}) or {}
             
             def has_good_status(user_doc):
-                return user_doc.get("is_vip") or user_doc.get("is_queer") or user_doc.get("is_verified") or user_doc.get("is_sponsor") or user_doc.get("is_free") or user_doc.get("indulgence")
+                good_tags = ("Верифицирован МК", "Спонсор_Одобрен", "Свободен", "Индульгенция")
+                has_trusted_tag = not user_doc.get("tag_game") and user_doc.get("custom_tag") in good_tags
+                return (
+                    user_doc.get("is_vip") or user_doc.get("is_queer") or user_doc.get("is_verified")
+                    or user_doc.get("is_sponsor") or user_doc.get("is_free") or user_doc.get("indulgence")
+                    or has_trusted_tag
+                )
 
             if not has_good_status(u_info):
                 return jsonify({"error": "Дарить теги может только Элита (VIP, Спонсор, Верифицированные и т.д.)!"}), 400
@@ -2989,13 +3002,13 @@ def api_open_agent_case():
         amount = int(prize_id.split("_")[1])
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}})
     elif prize_id == "shield_1":
-        paid_collection.update_one({"uid": uid}, {"$inc": {"shields": 1}})
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
     elif prize_id == "shards_5":
-        paid_collection.update_one({"uid": uid}, {"$inc": {"shards": 5}})
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": 5}})
     elif prize_id == "cash_500":
         paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
     elif prize_id == "vip_status":
-        paid_collection.update_one({"uid": uid}, {"$set": {"vip_status": True}})
+        db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
         
     # Если выпал джекпот — трубим админам
     if prize_id in ["vip_status", "cash_500", "points_500"]:
@@ -4822,7 +4835,6 @@ def redeem_sins(message):
         u_info = db['users'].find_one({"_id": uid}) or {}
         original_tag = u_info.get("custom_tag", "")
         try:
-            from handlers.admin import safe_set_tag
             safe_set_tag(message.chat.id, uid, original_tag)
         except Exception as e: logger.debug(f"Игнор ошибки: {e}")
         
@@ -5370,7 +5382,6 @@ def handle_karma_vote(message):
             u_info = db['users'].find_one({"_id": target_id}) or {}
             original_tag = u_info.get("custom_tag", "")
             try:
-                from handlers.admin import safe_set_tag
                 safe_set_tag(message.chat.id, target_id, original_tag)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
@@ -5383,7 +5394,6 @@ def handle_karma_vote(message):
         if new_karma <= -50:
             bad_title = "Опущенный" if new_karma <= -100 else "Изгой"
             try:
-                from handlers.admin import safe_set_tag
                 safe_set_tag(message.chat.id, target_id, bad_title)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             
