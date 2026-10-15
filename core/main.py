@@ -19,6 +19,7 @@ from config import APP_URL, PORT
 from core.bot import bot
 from core.scheduler import start_scheduler
 from utils.logger import logger
+from utils.gameids import game_no, family_bank_id as _family_bank_id
 
 # Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
 from utils.validators import take_points_capped, can_withdraw, craft_slot, craft_release
@@ -2034,19 +2035,6 @@ def api_place_bid():
     
     return jsonify({"success": True, "msg": f"Ваша ставка {bid_amount} 💎 принята!"})
 
-def game_no(uid):
-    """Игровой номер игрока (№1575): выдаётся один раз, по порядку, не повторяется и не переиспользуется."""
-    from pymongo import ReturnDocument
-    d = paid_collection.find_one({"uid": uid}, {"game_no": 1}) or {}
-    if d.get("game_no"):
-        return d["game_no"]
-    n = db['counters'].find_one_and_update({"_id": "game_no"}, {"$inc": {"seq": 1}}, upsert=True,
-                                           return_document=ReturnDocument.AFTER)["seq"]
-    r = paid_collection.update_one({"uid": uid, "game_no": {"$exists": False}}, {"$set": {"game_no": n}})
-    if not r.matched_count and not paid_collection.find_one({"uid": uid}):
-        paid_collection.update_one({"uid": uid}, {"$setOnInsert": {"game_no": n}}, upsert=True)
-    return (paid_collection.find_one({"uid": uid}, {"game_no": 1}) or {}).get("game_no", n)
-
 @app.route('/api/inventory_action', methods=['POST'])
 def api_inventory_action():
     data = request.json
@@ -2272,148 +2260,12 @@ def api_inventory_action():
             return jsonify({"success": True, "msg": f"🏷 Статус «{tag_text}» успешно повешен на {duration_text}!"})
 
     elif action == 'hack':
-        target_uid = resolve_uid(data.get('target_info')) 
+        target_uid = resolve_uid(data.get('target_info'))
         if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
-        
-        if target_uid == uid: return jsonify({"error": "Нельзя взломать самого себя!"}), 400
-        
-        user_data = paid_collection.find_one({"uid": uid}) or {}
-        target_data = paid_collection.find_one({"uid": target_uid}) or {}
-        target_karma = target_data.get("social_rating", 0)
-        
-        import time
-        now = time.time()
-
-        # Проверка Анархии
-        anarchy = db['settings'].find_one({"_id": "anarchy_mode"}) or {}
-        is_anarchy = anarchy.get("active", False) and anarchy.get("end_time", 0) > time.time()
-        
-        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА
-        last_hack = user_data.get("last_hack_time", 0)
-        cooldown_time = 900 if is_anarchy else 3600 # 15 минут при Анархии
-        
-        if now - last_hack < cooldown_time:
-            left_mins = int((cooldown_time - (now - last_hack)) / 60)
-            return jsonify({"error": f"Ваш вирус еще компилируется! Ждите {left_mins} мин."}), 400
-            
-        if user_data.get("bounty_points", 0) < 200:
-            return jsonify({"error": "У вас нет 200 💎 для запуска вируса!"}), 400
-            
-        # Семейная копилка жертвы (грабится только в Судную ночь) — та же, что у команды «!копилка»
-        target_fam_id = _family_bank_id(target_uid, target_data) if is_anarchy else None
-        target_fam_bal = (db['family_banks'].find_one({"_id": target_fam_id}) or {}).get("balance", 0) if target_fam_id else 0
-        # Раньше пустой кошелёк отменял атаку целиком, и копилки копящих семей были неуязвимы
-        if target_data.get("bounty_points", 0) < 100 and target_fam_bal <= 0:
-            return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
-            
-        # 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ
-        if not is_anarchy:
-            if target_karma >= 50: 
-                imm_time = 21600 # 6 часов
-                imm_text = "6 часов"
-            elif target_karma <= -50: 
-                imm_time = 7200  # 2 часа
-                imm_text = "2 часа"
-            else: 
-                imm_time = 14400 # 4 часа
-                imm_text = "4 часа"
-
-            last_hacked = target_data.get("last_hacked_time", 0)
-            if now - last_hacked < imm_time:
-                return jsonify({"error": f"Сервер жертвы под защитой! ..."}), 400
-            
-        # Списываем 200 очков за попытку  ⬇ атомарно + защита от двойного тапа
-        from utils.validators import take_points_capped
-        paid = paid_collection.find_one_and_update(
-            {"uid": uid, "bounty_points": {"$gte": 200},
-             "$or": [{"last_hack_time": {"$exists": False}}, {"last_hack_time": {"$lte": now - cooldown_time}}]},
-            {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}}
-        )
-        if not paid:
-            return jsonify({"error": "Вирус ещё компилируется или нет 200 💎!"}), 400
-        from core.bot import bot
-        
-        # 3. ПРОБИТИЕ ЩИТА (Анархия дает 50% шанс пробить щит насквозь)
-        shield_broken_by_anarchy = False
-        if target_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
-                {"uid": target_uid, "immunity": {"$gte": 1}},
-                {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}}):
-            
-            import random
-            if is_anarchy and random.randint(1, 100) <= 50:
-                shield_broken_by_anarchy = True # Щит уничтожен, но атака проходит!
-            else:
-                try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `№{game_no(uid)}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
-                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-                return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
-            
-        # 4. БРОСАЕМ КУБИК НА ВЗЛОМ
-        import random
-        target_achievements = target_data.get("achievements", [])
-        hack_chance = 40 if "rat" in target_achievements else 30
-        
-        extra_msg = ""
-        if is_anarchy:
-            hack_chance = 80 # При Анархии шанс взлома 80% для всех!
-            extra_msg = "\n🏴‍☠️ <b>СУДНАЯ НОЧЬ!</b> Брандмауэры отключены, грабеж прошел как по маслу!"
-            if shield_broken_by_anarchy:
-                extra_msg += "\n⚠️ <b>ЩИТ ПРОБИТ!</b> Перегрузка сети разорвала щит жертвы, вирус прошел насквозь!"
-        
-        if random.randint(1, 100) <= hack_chance:
-            if target_karma <= -50:
-                steal_pct = random.uniform(0.15, 0.30)
-                if not is_anarchy:
-                    extra_msg = "\n📉 *Цель неблагонадежна!* Защита сервера была ослаблена из-за плохой кармы, вы украли в 2 раза больше очков!"
-            else:
-                steal_pct = random.uniform(0.05, 0.15)
-                
-            # Крадем с личного счета (пустой кошелёк — просто 0, копилку это не отменяет)
-            wallet = max(0, int(target_data.get("bounty_points", 0)))
-            stolen = min(wallet, max(10, int(wallet * steal_pct)))
-            # ⬇ было: update_one(-stolen) жертве и +stolen хакеру
-            stolen = take_points_capped(target_uid, stolen)   # жертва не уйдёт в минус
-            paid_collection.update_one({"uid": target_uid}, {"$set": {"last_hacked_time": now}})
-            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": stolen}})
-            
-            victim_msg = f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `№{game_no(uid)}` пробил вашу защиту и украл **{stolen} 💎** с личного счета!"
-            
-            # 🔥 5. ВЗЛОМ СЕМЕЙНОЙ КОПИЛКИ ВО ВРЕМЯ АНАРХИИ 🔥
-            family_stolen = 0
-            partner_id = target_data.get("partner_id")
-            family_id = target_fam_id
-            
-            if is_anarchy and family_id:
-                fam_db = db['family_banks'].find_one({"_id": family_id}) or {}
-                fam_balance = fam_db.get("balance", 0)
-                
-                if fam_balance > 0:
-                    # Крадем от 10% до 25% из семейного общака
-                    fam_steal_pct = random.uniform(0.10, 0.25)
-                    family_stolen = max(1, int(fam_balance * fam_steal_pct))
-                    
-                    # атомарно: только если в копилке ещё есть столько (параллельные взломы не уводят её в минус)
-                    if db['family_banks'].find_one_and_update({"_id": family_id, "balance": {"$gte": family_stolen}},
-                                                              {"$inc": {"balance": -family_stolen}}):
-                        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": family_stolen}})
-                    else:
-                        family_stolen = 0
-                    
-                    if family_stolen > 0:
-                        extra_msg += f"\n🏦 <b>ВЗЛОМ КОПИЛКИ!</b> Вирус добрался до семейного счета жертвы и выкачал оттуда еще {family_stolen} 💎!"
-                        victim_msg += f"\n\n🏦 <b>ВНИМАНИЕ!</b> Вирус проник в ваш Семейный Фонд и вывел оттуда **{family_stolen} 💎**!"
-                    
-                        # Инфарктное уведомление партнеру
-                        try: bot.send_message(partner_id, f"🚨 **СЕМЕЙНЫЙ СЧЕТ ВЗЛОМАН!**\nВ рамках Судной Ночи хакер атаковал вашу семью и украл **{family_stolen} 💎** из вашей общей копилки!", parse_mode="Markdown")
-                        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-
-            victim_msg += "\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._"
-            try: bot.send_message(target_uid, victim_msg, parse_mode="Markdown")
-            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
-            
-            total_loot = stolen + family_stolen
-            return jsonify({"success": True, "msg": f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {total_loot} 💎 у жертвы!{extra_msg}"})
-        else:
-            return jsonify({"success": True, "msg": "📉 Атака провалилась. Брандмауэр жертвы выстоял, вирус стерт. Вы потеряли 200 💎."})
+        from utils.hack import run_hack
+        is_error, text = run_hack(uid, target_uid)
+        if is_error: return jsonify({"error": text}), 400
+        return jsonify({"success": True, "msg": text})
 
 # ================= 🚜 КИБЕР-ФЕРМА: БЭКЕНД =================
 
@@ -5203,18 +5055,6 @@ def build_family_webapp_nodes(uid, max_nodes=35):
     if uid not in shown:
         walk(uid, 0)
     return nodes
-
-def _family_bank_id(uid, user_data):
-    """ID общей копилки: у супругов общий, у детей - копилка родителей (если родитель в браке)."""
-    partner_id = user_data.get("partner_id")
-    if partner_id:
-        return f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
-    parent_id = user_data.get("parent_id")
-    if parent_id:
-        pp = (paid_collection.find_one({"uid": parent_id}) or {}).get("partner_id")
-        if pp:
-            return f"family_{min(parent_id, pp)}_{max(parent_id, pp)}"
-    return None
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!семья', 'моя семья', '/family'])
 def my_family_tree(message):
