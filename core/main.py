@@ -922,11 +922,10 @@ def api_get_inventory():
     user_data = paid_collection.find_one({"uid": uid}) or {}
     shields = user_data.get("immunity", 0)
     shards = user_data.get("jackpot_shards", 0)
+    points = user_data.get("bounty_points", 0)
     
     promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
     orders_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "mute")
-    
-    # 👇 ПОДСЧЕТ ТЕГОВ 👇
     tags_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "tag")
     
     regular_promos = []
@@ -935,14 +934,113 @@ def api_get_inventory():
             t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Услугу"
             val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
             regular_promos.append({"id": p["_id"], "desc": f"Скидка {val} на {t_name}"})
-            
+
+    import datetime
+    d_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    used_shards = (db['craft_limits'].find_one({"_id": f"{uid}_ex_shard_{d_str}"}) or {}).get("n", 0)
+    used_shields = (db['craft_limits'].find_one({"_id": f"{uid}_ex_shield_{d_str}"}) or {}).get("n", 0)
+
+    def _c(k, d):
+        try: return int(cfg(k))
+        except Exception: return d
+
     return jsonify({
         "shields": shields,
         "shards": shards,
+        "points": points,
         "orders": orders_count,
-        "tags": tags_count, # <--- ПЕРЕДАЕМ НА ФРОНТЕНД
-        "promos": regular_promos
+        "tags": tags_count,
+        "promos": regular_promos,
+        "ex": {
+            "shard_buy": _c("ex_shard_buy", 150),
+            "shard_sell": _c("ex_shard_sell", 100),
+            "shard_limit": _c("ex_shard_limit", 30),
+            "shard_used": used_shards,
+            "shield_buy": _c("ex_shield_buy", 1500),
+            "shield_sell": _c("ex_shield_sell", 1000),
+            "shield_limit": _c("ex_shield_limit", 3),
+            "shield_used": used_shields,
+            "forge_cost": _c("forge_shield_cost", 10),
+            "forge_limit": _c("forge_shield_limit", 8)
+        }
     })
+
+@app.route('/api/item_exchange', methods=['POST'])
+def api_item_exchange():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+
+    mode = data.get('mode')
+    item = data.get('item')
+    try:
+        qty = int(data.get('qty', 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректное количество!"}), 400
+
+    if qty < 1 or qty > 100:
+        return jsonify({"error": "Укажите количество от 1 до 100!"}), 400
+
+    import datetime
+    from pymongo import ReturnDocument
+    d_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+
+    def _c(k, d):
+        try: return int(cfg(k))
+        except Exception: return d
+
+    if item == 'shard':
+        db_field = "jackpot_shards"
+        limit_key = f"{uid}_ex_shard_{d_str}"
+        daily_max = _c("ex_shard_limit", 30)
+        unit_price = _c("ex_shard_buy", 150) if mode == 'buy' else _c("ex_shard_sell", 100)
+        item_label = "🧩"
+    elif item == 'shield':
+        db_field = "immunity"
+        limit_key = f"{uid}_ex_shield_{d_str}"
+        daily_max = _c("ex_shield_limit", 3)
+        unit_price = _c("ex_shield_buy", 1500) if mode == 'buy' else _c("ex_shield_sell", 1000)
+        item_label = "🛡"
+    else:
+        return jsonify({"error": "Неизвестный предмет!"}), 400
+
+    lim_doc = db['craft_limits'].find_one_and_update(
+        {"_id": limit_key},
+        {"$inc": {"n": qty}, "$setOnInsert": {"uid": uid, "kind": f"ex_{item}"}},
+        upsert=True, return_document=ReturnDocument.AFTER
+    )
+    if lim_doc.get("n", 0) > daily_max:
+        db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+        left = max(0, daily_max - (lim_doc.get("n", 0) - qty))
+        return jsonify({"error": f"Дневной лимит исчерпан! Доступно сегодня: {left} шт."}), 400
+
+    total_pts = qty * unit_price
+
+    if mode == 'buy':
+        res = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": total_pts}},
+            {"$inc": {"bounty_points": -total_pts, db_field: qty}}
+        )
+        if not res:
+            db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+            return jsonify({"error": f"Недостаточно очков! Нужно {total_pts} 💎."}), 400
+        return jsonify({"success": True, "msg": f"Куплено: +{qty} {item_label} за {total_pts} 💎!"})
+
+    elif mode == 'sell':
+        res = paid_collection.find_one_and_update(
+            {"uid": uid, db_field: {"$gte": qty}},
+            {"$inc": {db_field: -qty, "bounty_points": total_pts}}
+        )
+        if not res:
+            db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+            return jsonify({"error": f"Недостаточно предметов ({item_label}) в рюкзаке!"}), 400
+        return jsonify({"success": True, "msg": f"Продано: {qty} {item_label} за +{total_pts} 💎!"})
+
+    db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+    return jsonify({"error": "Неверный режим обмена!"}), 400
 
 @app.route('/api/craft', methods=['POST'])
 def api_craft():
@@ -1043,16 +1141,21 @@ def api_craft():
             return jsonify({"success": True, "msg": "🛡 Макс. уровень! Ресурсы переплавлены в 5 Щитов Иммунитета!"})
 
     elif action == 'shield_shop':
-        # Кузница Щитов: 15 осколков -> 1 щит, не больше 5 в сутки
-        if not craft_slot(uid, 'shield_shop', 5):
-            return jsonify({"error": "Лимит: 5 щитов в сутки."}), 400
+        # Кузница Щитов: 10 осколков -> 1 щит, до 8 в сутки (или из ЦУП)
+        try:
+            limit = int(cfg("forge_shield_limit"))
+            cost = int(cfg("forge_shield_cost"))
+        except Exception:
+            limit, cost = 8, 10
+        if not craft_slot(uid, 'shield_shop', limit):
+            return jsonify({"error": f"Лимит: {limit} щитов в сутки."}), 400
         paid = paid_collection.find_one_and_update(
-            {"uid": uid, "jackpot_shards": {"$gte": 15}},
-            {"$inc": {"jackpot_shards": -15, "immunity": 1}}
+            {"uid": uid, "jackpot_shards": {"$gte": cost}},
+            {"$inc": {"jackpot_shards": -cost, "immunity": 1}}
         )
         if not paid:
             craft_release(uid, 'shield_shop')
-            return jsonify({"error": "Нужно 15 осколков!"}), 400
+            return jsonify({"error": f"Нужно {cost} осколков!"}), 400
         return jsonify({"success": True, "msg": "🛡 Осколки переплавлены в Щит Иммунитета!"})
 
 @app.route('/api/open_chest', methods=['POST'])
@@ -4777,7 +4880,6 @@ def run_away_child(message):
     
     # 5. Кидаем инфарктное уведомление родителю в ЛС
     try:
-        from core.bot import bot
         bot.send_message(parent_id, f"🚨 **ВАШ РЕБЕНОК СБЕЖАЛ!**\n\n[{child_name}](tg://user?id={child_id}) покинул семью. Проверьте ваш Семейный Фонд, кажется, оттуда пропали сбережения...", parse_mode="Markdown")
     except Exception:
         pass

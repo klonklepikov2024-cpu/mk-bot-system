@@ -3,26 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#1a1b1f">
     <title>Скайнет Кабинет</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* 🌙 Приложение нарисовано под ТЁМНУЮ тему (белые/серые тексты Tailwind). Раньше фон и цвет текста брались из темы Telegram,
+           и у людей со СВЕТЛОЙ темой белый текст попадал на светлые плашки и пропадал. Теперь цвета фиксированы. */
+        html { background-color: #1a1b1f; color-scheme: dark; }
         body {
-            background-color: var(--tg-theme-bg-color, #1a1b1f);
-            color: var(--tg-theme-text-color, #ffffff);
+            background-color: #1a1b1f;
+            color: #ffffff;
             font-family: -apple-system, sans-serif;
             padding-bottom: calc(140px + env(safe-area-inset-bottom)) !important; 
         }
-        .surface { background-color: var(--tg-theme-secondary-bg-color, #27282d); }
-        .accent { background-color: var(--tg-theme-button-color, #2b6bf3); }
-        .nav-item.active { color: var(--tg-theme-button-color, #2b6bf3); }
+        .surface { background-color: #27282d; }
+        .accent { background-color: #2b6bf3; }
+        .nav-item.active { color: #2b6bf3; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         input, select { background-color: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); }
-        input:focus, select:focus { border-color: var(--tg-theme-button-color, #2b6bf3); }
+        input:focus, select:focus { border-color: #2b6bf3; }
 
         /* === CS:GO РУЛЕТКА === */
-        .roulette-container { position: relative; width: 100%; height: 110px; overflow: hidden; background: rgba(0, 0, 0, 0.6); border-radius: 12px; border: 2px solid var(--tg-theme-secondary-bg-color, #27282d); }
+        .roulette-container { position: relative; width: 100%; height: 110px; overflow: hidden; background: rgba(0, 0, 0, 0.6); border-radius: 12px; border: 2px solid #27282d; }
         .roulette-ribbon { display: flex; height: 100%; width: max-content; transition: transform 5s cubic-bezier(0.15, 0.85, 0.15, 1); }
         .roulette-item { width: 90px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid rgba(255, 255, 255, 0.1); flex-shrink: 0; background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 100%); }
         .roulette-selector { position: absolute; top: 0; bottom: 0; left: 50%; width: 4px; background: #ef4444; transform: translateX(-50%); z-index: 10; box-shadow: 0 0 15px #ef4444, 0 0 5px #ef4444; }
@@ -226,42 +231,240 @@
         .lf-pop.big { font-size:1.9rem; } .lf-pop.red { color:#fca5a5; text-shadow: 0 2px 6px rgba(0,0,0,.85), 0 0 10px rgba(239,68,68,.6); }
         @media (prefers-reduced-motion: reduce) { .lf-grass span { animation: none !important; } }
         .lf-conf { position:fixed; z-index:10000; pointer-events:none; font-size:1rem; line-height:1; animation: lfBurst var(--t,.95s) linear forwards; }
+    
+        /* ================= ✨ МИРЫ КАРМЫ (ЖИВЫЕ КАРТОЧКИ ПРОФИЛЯ) ================= */
+        @keyframes kwRaysSpin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+        @keyframes kwHaloBob  { 0%, 100% { transform: translateX(-50%) translateY(0) scale(1); } 50% { transform: translateX(-50%) translateY(-3px) scale(1.04); } }
+        @keyframes kwRipple   { 0% { transform: scale(0.92); opacity: 0.75; } 70% { transform: scale(1.28); opacity: 0; } 100% { transform: scale(1.28); opacity: 0; } }
+        @keyframes kwBrokenSpin { 0% { transform: rotate(0deg); } 50% { transform: rotate(180deg) scale(1.02); } 100% { transform: rotate(360deg); } }
+        @keyframes kwGlitch   {
+            0%, 88%, 100% { text-shadow: -1.8px 0 #ff2a54, 1.8px 0 #00e5ff; transform: translate(0); }
+            90% { text-shadow: -3px 0 #ff2a54, 3px 0 #00e5ff; transform: translate(-1.5px, 0.5px); }
+            92% { text-shadow: 2.5px 0 #ff2a54, -2.5px 0 #00e5ff; transform: translate(1.5px, -0.5px); }
+            94% { text-shadow: -1.8px 0 #ff2a54, 1.8px 0 #00e5ff; transform: translate(0); }
+        }
+        @keyframes kwSparkRise {
+            0%   { transform: translateY(0) translateX(0) scale(0.5); opacity: 0; }
+            25%  { opacity: 0.95; }
+            100% { transform: translateY(-55px) translateX(var(--dx, 12px)) scale(1.1); opacity: 0; }
+        }
+
+        .kw-card {
+            position: relative; overflow: hidden; border-radius: 1.35rem; padding: 1.15rem 1.1rem 1rem;
+            background: radial-gradient(120% 120% at 20% 20%, rgba(56, 189, 248, 0.14) 0%, #141821 60%, #0e1117 100%);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+            transition: border-color 0.4s, box-shadow 0.4s, background 0.4s;
+        }
+        .kw-card[data-world="saint"] {
+            background: radial-gradient(125% 120% at 22% 22%, rgba(250, 204, 21, 0.22) 0%, rgba(34, 31, 22, 0.95) 55%, #141413 100%);
+            border-color: rgba(253, 224, 71, 0.55);
+            box-shadow: 0 0 36px rgba(234, 179, 8, 0.22), inset 0 0 22px rgba(250, 204, 21, 0.08);
+        }
+        .kw-card[data-world="righteous"] {
+            background: radial-gradient(125% 120% at 22% 25%, rgba(14, 165, 233, 0.28) 0%, rgba(11, 27, 45, 0.95) 58%, #0c131d 100%);
+            border-color: rgba(56, 189, 248, 0.6);
+            box-shadow: 0 0 34px rgba(14, 165, 233, 0.24), inset 0 0 22px rgba(56, 189, 248, 0.08);
+        }
+        .kw-card[data-world="good"] {
+            background: radial-gradient(125% 120% at 22% 25%, rgba(16, 185, 129, 0.24) 0%, rgba(11, 35, 29, 0.95) 58%, #0c1714 100%);
+            border-color: rgba(52, 211, 153, 0.55);
+            box-shadow: 0 0 30px rgba(16, 185, 129, 0.2);
+        }
+        .kw-card[data-world="villain"] {
+            background: radial-gradient(125% 120% at 75% 75%, rgba(249, 115, 22, 0.22) 0%, rgba(38, 17, 14, 0.95) 58%, #160d0c 100%);
+            border-color: rgba(249, 115, 22, 0.55);
+            box-shadow: 0 0 32px rgba(249, 115, 22, 0.2);
+        }
+        .kw-card[data-world="outcast"] {
+            background:
+                repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.018) 0px 2px, transparent 2px 5px),
+                radial-gradient(125% 120% at 70% 75%, rgba(220, 38, 38, 0.26) 0%, rgba(42, 12, 16, 0.96) 55%, #150b0d 100%);
+            border-color: rgba(239, 68, 68, 0.65);
+            box-shadow: 0 0 36px rgba(220, 38, 38, 0.25), inset 0 0 24px rgba(239, 68, 68, 0.1);
+        }
+        .kw-rays {
+            position: absolute; left: 52px; top: 54px; width: 280px; height: 280px; border-radius: 50%;
+            background: repeating-conic-gradient(from 0deg, rgba(254, 240, 138, 0.14) 0deg 8deg, transparent 8deg 20deg);
+            mask-image: radial-gradient(circle, rgba(0,0,0,1) 10%, rgba(0,0,0,0) 68%);
+            -webkit-mask-image: radial-gradient(circle, rgba(0,0,0,1) 10%, rgba(0,0,0,0) 68%);
+            animation: kwRaysSpin 38s linear infinite; pointer-events: none; display: none; z-index: 0;
+        }
+        .kw-card[data-world="saint"] .kw-rays { display: block; }
+        .kw-particles { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+        .kw-pt { position: absolute; width: 4px; height: 4px; border-radius: 50%; opacity: 0; animation: kwSparkRise 4.8s ease-in-out infinite; }
+        .kw-pt.gold { background: #fef08a; box-shadow: 0 0 8px 2px rgba(250, 204, 21, 0.85); }
+        .kw-pt.ember { background: #fb923c; box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.9); }
+        .kw-avatar-wrap { position: relative; width: 74px; height: 74px; flex-shrink: 0; z-index: 2; }
+        .kw-avatar-core {
+            width: 100%; height: 100%; border-radius: 50%; overflow: hidden;
+            background: radial-gradient(circle at 50% 30%, #7c5c6b 0%, #2e2640 55%, #15131e 100%);
+            display: flex; align-items: center; justify-content: center; font-size: 2rem;
+            position: relative; z-index: 2; border: 2.5px solid rgba(255, 255, 255, 0.2);
+        }
+        .kw-card[data-world="saint"] .kw-avatar-core { border-color: #fef08a; box-shadow: 0 0 20px rgba(250, 204, 21, 0.65), inset 0 0 12px rgba(250, 204, 21, 0.35); }
+        .kw-card[data-world="righteous"] .kw-avatar-core { border-color: #38bdf8; box-shadow: 0 0 18px rgba(56, 189, 248, 0.65); }
+        .kw-card[data-world="good"] .kw-avatar-core { border-color: #34d399; box-shadow: 0 0 16px rgba(52, 211, 153, 0.55); }
+        .kw-card[data-world="outcast"] .kw-avatar-core, .kw-card[data-world="villain"] .kw-avatar-core { border-color: transparent; }
+        .kw-halo {
+            position: absolute; top: -11px; left: 50%; width: 54px; height: 15px;
+            border-radius: 50%; border: 3px solid #fde047;
+            box-shadow: 0 0 14px #facc15, inset 0 0 8px #facc15;
+            transform: translateX(-50%); z-index: 4; display: none;
+            animation: kwHaloBob 3.2s ease-in-out infinite; pointer-events: none;
+        }
+        .kw-card[data-world="saint"] .kw-halo { display: block; }
+        .kw-ripple {
+            position: absolute; inset: -2px; border-radius: 50%;
+            border: 1.5px solid rgba(56, 189, 248, 0.55);
+            pointer-events: none; display: none; z-index: 1;
+            animation: kwRipple 3.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+        }
+        .kw-ripple.r2 { animation-delay: 1.2s; }
+        .kw-ripple.r3 { animation-delay: 2.4s; }
+        .kw-card[data-world="righteous"] .kw-ripple { display: block; border-color: rgba(56, 189, 248, 0.55); }
+        .kw-card[data-world="good"] .kw-ripple { display: block; border-color: rgba(52, 211, 153, 0.5); }
+        .kw-broken-ring {
+            position: absolute; inset: -6px; width: 86px; height: 86px;
+            pointer-events: none; display: none; z-index: 3;
+            filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.75));
+            animation: kwBrokenSpin 18s linear infinite;
+        }
+        .kw-card[data-world="outcast"] .kw-broken-ring, .kw-card[data-world="villain"] .kw-broken-ring { display: block; }
+        .kw-corner-badge {
+            position: absolute; right: -2px; bottom: -2px; width: 26px; height: 26px;
+            border-radius: 50%; background: #0f131a; border: 1.5px solid rgba(255,255,255,0.25);
+            display: flex; align-items: center; justify-content: center; font-size: 0.85rem;
+            z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+        }
+        .kw-card[data-world="saint"] .kw-corner-badge { border-color: #facc15; }
+        .kw-card[data-world="righteous"] .kw-corner-badge { border-color: #38bdf8; color: #7dd3fc; }
+        .kw-card[data-world="outcast"] .kw-corner-badge { border-color: #ef4444; color: #fca5a5; }
+        .kw-kicker { font-size: 0.65rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 2px; }
+        .kw-name { font-size: 1.35rem; font-weight: 900; line-height: 1.15; color: #ffffff; transition: all 0.3s; }
+        .kw-card[data-world="saint"] .kw-name { color: #ffffff; text-shadow: 0 0 14px rgba(254, 240, 138, 0.55); }
+        .kw-card[data-world="righteous"] .kw-name { color: #e0f2fe; text-shadow: 0 0 14px rgba(56, 189, 248, 0.85), 0 0 26px rgba(14, 165, 233, 0.45); }
+        .kw-card[data-world="good"] .kw-name { color: #d1fae5; text-shadow: 0 0 12px rgba(52, 211, 153, 0.65); }
+        .kw-card[data-world="outcast"] .kw-name { color: #fecaca; animation: kwGlitch 3.5s infinite; }
+        .kw-scale-track {
+            position: relative; width: 100%; height: 9px; border-radius: 999px;
+            background: linear-gradient(90deg, #991b1b 0%, #ef4444 16%, #f59e0b 32%, #475569 50%, #10b981 68%, #38bdf8 85%, #fef9c3 100%);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
+        }
+        .kw-pointer {
+            position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+            width: 0; height: 0;
+            border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid #ffffff;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.85));
+            transition: left 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .kw-medal-slot {
+            width: 31px; height: 31px; border-radius: 8px;
+            background: rgba(10, 12, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex; align-items: center; justify-content: center; font-size: 1.05rem;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
+        }
+        .ex-card-blue {
+            background: radial-gradient(120% 100% at 0% 0%, rgba(37, 99, 235, 0.2) 0%, rgba(15, 23, 42, 0.55) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.6);
+            box-shadow: 0 0 22px rgba(37, 99, 235, 0.14);
+        }
+        .ex-card-gold {
+            background: radial-gradient(120% 100% at 0% 0%, rgba(234, 179, 8, 0.18) 0%, rgba(15, 23, 42, 0.55) 100%);
+            border: 1px solid rgba(234, 179, 8, 0.6);
+            box-shadow: 0 0 22px rgba(234, 179, 8, 0.14);
+        }
+        .ex-btn-buy {
+            background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+            border: 1px solid rgba(147, 197, 253, 0.55);
+            box-shadow: 0 4px 16px rgba(37, 99, 235, 0.4);
+        }
+        .ex-btn-gold {
+            background: linear-gradient(180deg, #ca8a04 0%, #854d0e 100%);
+            border: 1px solid rgba(253, 224, 71, 0.55);
+            box-shadow: 0 4px 16px rgba(202, 138, 4, 0.4);
+        }
+        .nav-dock {
+            background: rgba(18, 22, 31, 0.94);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+        }
+        .nav-dock .nav-item {
+            position: relative; border-radius: 1rem; padding: 0.45rem 0.25rem;
+            color: #94a3b8; transition: all 0.25s;
+        }
+        .nav-dock .nav-item.active {
+            color: #7dd3fc;
+            background: radial-gradient(100% 100% at 50% 0%, rgba(56, 189, 248, 0.24) 0%, rgba(14, 165, 233, 0.06) 100%);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            box-shadow: 0 0 18px rgba(56, 189, 248, 0.2);
+        }
+
     </style>
 </head>
 <body class="p-4">
 
-    <!-- ================= ВКЛАДКА 1: ПРОФИЛЬ ================= -->
+        <!-- ================= ВКЛАДКА 1: ПРОФИЛЬ (МИРЫ КАРМЫ) ================= -->
     <div id="tab-profile" class="tab-content active">
-        <div class="flex items-center space-x-3 mb-6">
-            <div id="avatar" class="w-12 h-12 rounded-full bg-gray-600 flex items-center justify-center text-xl overflow-hidden shrink-0">👤</div>
-            <div class="flex-1">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <div class="flex items-center">
-                            <h1 class="font-bold text-lg leading-tight transition-colors duration-500" id="userName">Скайнет</h1>
-                            <span id="karmaBadge" class="ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm">Карма: 0</span>
-                        </div>
-                        <p class="text-xs text-gray-400" id="userId">ID: ...</p>
-                    </div>
-                    <!-- 🔥 СЕКРЕТНАЯ КНОПКА ЦУП (Появится только у Админов) 🔥 -->
-                    <button id="adminNavBtn" onclick="switchTab('admin', this)" class="hidden bg-red-900/30 text-red-500 border border-red-500/50 px-3 py-1.5 rounded-lg text-xs font-black shadow-md active:scale-95 transition-transform shrink-0 flex items-center gap-1">
-                        👁 ЦУП
-                    </button>
+        <div id="karmaWorldCard" class="kw-card mb-4" data-world="righteous">
+            <div class="kw-rays"></div>
+            <div id="kwParticles" class="kw-particles"></div>
+
+            <div class="flex items-center space-x-3.5 relative z-10 mb-4">
+                <div class="kw-avatar-wrap">
+                    <div class="kw-halo"></div>
+                    <div class="kw-ripple r1"></div>
+                    <div class="kw-ripple r2"></div>
+                    <div class="kw-ripple r3"></div>
+                    <svg class="kw-broken-ring" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="46" fill="none" stroke="#ef4444" stroke-width="3.5"
+                                stroke-dasharray="52 14 28 16 64 18" stroke-linecap="round"/>
+                    </svg>
+                    <div id="avatar" class="kw-avatar-core">👤</div>
+                    <div id="kwCornerBadge" class="kw-corner-badge">🕊</div>
                 </div>
-                <!-- Контейнер для медалей -->
-                <div id="medalsContainer" class="flex flex-wrap gap-1 mt-1.5 min-h-[28px]"></div>
+
+                <div class="flex-1 min-w-0">
+                    <div class="flex justify-between items-start gap-2">
+                        <div class="min-w-0">
+                            <div id="kwTierKicker" class="kw-kicker text-sky-400">ПРАВЕДНИК</div>
+                            <h1 id="userName" class="kw-name truncate">Скайнет</h1>
+                            <p id="userId" class="text-xs text-gray-400 mt-0.5">ID ...</p>
+                            <span id="karmaBadge" class="hidden">Карма: 0</span>
+                        </div>
+                        <button id="adminNavBtn" onclick="switchTab('admin', this)" class="hidden bg-red-900/30 text-red-400 border border-red-500/50 px-3 py-1.5 rounded-xl text-xs font-black shadow-md active:scale-95 transition-transform shrink-0 items-center gap-1">
+                            👁 ЦУП
+                        </button>
+                    </div>
+                </div>
             </div>
+
+            <div class="relative z-10 mt-2 mb-3">
+                <div class="kw-scale-track">
+                    <div id="karmaPointer" class="kw-pointer" style="left: 50%"></div>
+                </div>
+                <div class="flex justify-between items-center text-[11px] text-gray-400 mt-1.5">
+                    <span>−100</span>
+                    <span id="karmaStatusText" class="text-center font-medium">
+                        <b class="text-sky-400">Карма 0</b> · нейтралитет
+                    </span>
+                    <span>+100</span>
+                </div>
+            </div>
+
+            <div id="medalsContainer" class="flex flex-wrap gap-1.5 mt-2 relative z-10 min-h-[31px]"></div>
         </div>
 
-        <div class="surface rounded-2xl p-4 mb-6 shadow-lg">
-            <div class="flex justify-between divide-x divide-gray-600">
+        <div class="py-3 mb-5">
+            <div class="flex justify-between divide-x divide-gray-800">
                 <div class="flex-1 text-center">
                     <p class="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Рубли (Кэшбэк)</p>
-                    <p class="text-2xl font-black"><span id="rubBalance">0</span><span class="text-sm text-gray-400 ml-1">₽</span></p>
+                    <p class="text-3xl font-black tracking-tight"><span id="rubBalance">0</span> <span class="text-2xl">₽</span></p>
                 </div>
                 <div class="flex-1 text-center">
                     <p class="text-[10px] text-gray-400 uppercase tracking-widest mb-1">Очки</p>
-                    <p class="text-2xl font-black"><span id="ptsBalance">0</span><span class="text-sm text-gray-400 ml-1">💎</span></p>
+                    <p class="text-3xl font-black tracking-tight"><span id="ptsBalance">0</span> <span class="text-2xl">💎</span></p>
                 </div>
             </div>
         </div>
@@ -356,17 +559,108 @@
         </div>
     </div>
 
-    <!-- ================= ВКЛАДКА 4: ИНВЕНТАРЬ ================= -->
+        <!-- ================= ВКЛАДКА 4: ИНВЕНТАРЬ ================= -->
     <div id="tab-inventory" class="tab-content">
-        <h2 class="font-bold text-2xl mb-4">Рюкзак & Наковальня</h2>
+        <h2 class="font-extrabold text-2xl mb-4">Рюкзак & Обменник</h2>
         
-        <div class="flex space-x-2 mb-4">
-            <!-- Чуть уменьшили p-3 до p-2 и текст, чтобы влезло 4 блока -->
-            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🛡</div><div class="text-[9px] text-gray-400 uppercase">Щиты</div><div class="font-bold text-lg" id="invShields">0</div></div>
-            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🧩</div><div class="text-[9px] text-gray-400 uppercase">Осколки</div><div class="font-bold text-lg" id="invShards">0/50</div></div>
-            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🚓</div><div class="text-[9px] text-gray-400 uppercase">Ордера</div><div class="font-bold text-lg" id="invOrders">0</div></div>
-            <!-- 👇 НОВЫЙ БЛОК ДЛЯ ТЕГОВ 👇 -->
-            <div class="surface rounded-xl p-2 flex-1 text-center shadow-lg border border-gray-700/50"><div class="text-2xl mb-1">🏷</div><div class="text-[9px] text-gray-400 uppercase">Теги</div><div class="font-bold text-lg" id="invTags">0</div></div>
+        <div class="grid grid-cols-4 gap-2 mb-4">
+            <div class="surface rounded-2xl p-2.5 text-center shadow-lg border border-white/10">
+                <div class="text-xl mb-1">🛡</div>
+                <div class="text-[9px] text-gray-400 uppercase tracking-wider">Щиты</div>
+                <div class="font-black text-lg" id="invShields">0</div>
+            </div>
+            <div class="surface rounded-2xl p-2.5 text-center shadow-lg border border-white/10">
+                <div class="text-xl mb-1">🧩</div>
+                <div class="text-[9px] text-gray-400 uppercase tracking-wider">Осколки</div>
+                <div class="font-black text-lg" id="invShards">0</div>
+            </div>
+            <div class="surface rounded-2xl p-2.5 text-center shadow-lg border border-white/10">
+                <div class="text-xl mb-1">💎</div>
+                <div class="text-[9px] text-gray-400 uppercase tracking-wider">Очки</div>
+                <div class="font-black text-lg" id="invPoints">0</div>
+            </div>
+            <div class="surface rounded-2xl p-2.5 text-center shadow-lg border border-white/10">
+                <div class="text-xl mb-1">🚓</div>
+                <div class="text-[9px] text-gray-400 uppercase tracking-wider">Ордера</div>
+                <div class="font-black text-lg" id="invOrders">0</div>
+            </div>
+        </div>
+
+        <div class="surface rounded-3xl p-4 mb-6 shadow-xl border border-white/10">
+            <div class="flex justify-between items-center mb-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-lg">💱</span>
+                    <h3 class="font-extrabold text-base">Обменник</h3>
+                </div>
+                <span class="text-[11px] text-gray-400">курс задаёт ЦУП</span>
+            </div>
+
+            <div class="grid grid-cols-2 bg-black/40 p-1 rounded-2xl border border-white/10 mb-3.5">
+                <button id="exTabBuy" onclick="setExMode('buy')" class="py-2 rounded-xl font-bold text-xs text-white bg-gradient-to-b from-blue-500 to-blue-600 shadow-md transition-all">Купить</button>
+                <button id="exTabSell" onclick="setExMode('sell')" class="py-2 rounded-xl font-bold text-xs text-gray-400 transition-all">Продать</button>
+            </div>
+
+            <div class="ex-card-blue rounded-2xl p-3.5 mb-3">
+                <div class="flex justify-between items-start mb-2.5">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 rounded-xl bg-black/40 border border-white/10 flex items-center justify-center text-2xl shrink-0">🧩</div>
+                        <div>
+                            <div class="font-extrabold text-sm text-sky-400">Осколки</div>
+                            <div id="exShardRatePill" class="inline-block mt-0.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-black/45 text-gray-200 border border-white/10">150 💎 = 1 🧩</div>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-[10px] text-gray-400">сегодня</div>
+                        <div id="exShardLimitTxt" class="font-extrabold text-xs">0 / 30</div>
+                    </div>
+                </div>
+                <div class="w-full h-1.5 bg-black/50 rounded-full overflow-hidden mb-3">
+                    <div id="exShardBar" class="h-full bg-blue-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2.5">
+                        <button onclick="changeExQty('shard', -1)" class="w-9 h-9 rounded-xl bg-black/45 border border-white/10 font-bold text-lg flex items-center justify-center active:scale-90">−</button>
+                        <span id="exShardQty" class="w-7 text-center font-black text-base">5</span>
+                        <button onclick="changeExQty('shard', 1)" class="w-9 h-9 rounded-xl bg-black/45 border border-white/10 font-bold text-lg flex items-center justify-center active:scale-90">+</button>
+                    </div>
+                    <button id="exShardSubmitBtn" onclick="submitItemExchange('shard')" class="ex-btn-buy px-4 py-2.5 rounded-full font-extrabold text-xs text-white active:scale-95 transition-transform">
+                        Купить · 750 💎
+                    </button>
+                </div>
+            </div>
+
+            <div class="ex-card-gold rounded-2xl p-3.5 mb-2.5">
+                <div class="flex justify-between items-start mb-2.5">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 rounded-xl bg-black/40 border border-white/10 flex items-center justify-center text-2xl shrink-0">🛡</div>
+                        <div>
+                            <div class="font-extrabold text-sm text-yellow-400">Щит иммунитета</div>
+                            <div id="exShieldRatePill" class="inline-block mt-0.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-black/45 text-gray-200 border border-white/10">1 500 💎 = 1 🛡</div>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-[10px] text-gray-400">сегодня</div>
+                        <div id="exShieldLimitTxt" class="font-extrabold text-xs">0 / 3</div>
+                    </div>
+                </div>
+                <div class="w-full h-1.5 bg-black/50 rounded-full overflow-hidden mb-3">
+                    <div id="exShieldBar" class="h-full bg-yellow-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2.5">
+                        <button onclick="changeExQty('shield', -1)" class="w-9 h-9 rounded-xl bg-black/45 border border-white/10 font-bold text-lg flex items-center justify-center active:scale-90">−</button>
+                        <span id="exShieldQty" class="w-7 text-center font-black text-base">1</span>
+                        <button onclick="changeExQty('shield', 1)" class="w-9 h-9 rounded-xl bg-black/45 border border-white/10 font-bold text-lg flex items-center justify-center active:scale-90">+</button>
+                    </div>
+                    <button id="exShieldSubmitBtn" onclick="submitItemExchange('shield')" class="ex-btn-gold px-4 py-2.5 rounded-full font-extrabold text-xs text-white active:scale-95 transition-transform">
+                        Купить · 1 500 💎
+                    </button>
+                </div>
+            </div>
+
+            <div id="exAfterBalanceTxt" class="text-[10px] text-gray-400 text-center mt-2">
+                Баланс после обмена: 0 💎 · обмен необратим по тому же курсу
+            </div>
         </div>
 
         <div class="grid grid-cols-4 gap-2 mb-6">
@@ -382,26 +676,24 @@
                 <div class="text-2xl mb-1">💻</div>
                 <div class="font-bold text-xs text-blue-500">Взлом</div>
             </button>
-            <!-- 👇 НОВАЯ КНОПКА ТЕГА 👇 -->
             <button onclick="openModal('tag')" class="surface p-3 rounded-xl border border-pink-500/30 active:scale-95 transition-transform shadow-md bg-pink-900/10">
                 <div class="text-2xl mb-1">🏷</div>
-                <div class="font-bold text-xs text-pink-500">Тег</div>
+                <div class="font-bold text-xs text-pink-500">Тег (<span id="invTags">0</span>)</div>
             </button>
         </div>
 
         <div class="space-y-3 mb-6">
-            <button onclick="craft('shards', this)" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-blue-500/30 active:scale-95 transition-transform">
-                <div class="text-left"><div class="font-bold">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: {{ econ.craft_shards }} 🧩</div></div><div class="text-2xl">✨</div>
+            <button onclick="craft('shards', this)" class="surface w-full p-3.5 rounded-2xl flex items-center justify-between border border-blue-500/30 active:scale-95 transition-transform">
+                <div class="text-left"><div class="font-bold text-sm">Собрать Джекпот</div><div class="text-xs text-gray-400">Требуется: {{ econ.craft_shards }} 🧩</div></div><div class="text-2xl">✨</div>
             </button>
-            <button onclick="craft('beyond', this)" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-purple-500/30 active:scale-95 transition-transform">
-                <div class="text-left"><div class="font-bold">Элитный Крафт (VIP/Beyond)</div><div class="text-xs text-gray-400">Требуется: 3000 💎 + 2 🛡 (до 3 в сутки)</div></div><div class="text-2xl">🔮</div>
+            <button onclick="craft('beyond', this)" class="surface w-full p-3.5 rounded-2xl flex items-center justify-between border border-purple-500/30 active:scale-95 transition-transform">
+                <div class="text-left"><div class="font-bold text-sm">Элитный Крафт (VIP/Beyond)</div><div class="text-xs text-gray-400">Требуется: 3 000 💎 + 2 🛡 (до 3 в сутки)</div></div><div class="text-2xl">🔮</div>
             </button>
-            <button onclick="craft('shield_shop', this)" class="surface w-full p-3 rounded-xl flex items-center justify-between border border-emerald-500/30 active:scale-95 transition-transform">
-                <div class="text-left"><div class="font-bold">Кузница Щитов</div><div class="text-xs text-gray-400">15 🧩 → 1 🛡 (до 5 в сутки)</div></div><div class="text-2xl">🛡</div>
+            <button onclick="craft('shield_shop', this)" class="surface w-full p-3.5 rounded-2xl flex items-center justify-between border border-emerald-500/30 active:scale-95 transition-transform">
+                <div class="text-left"><div class="font-bold text-sm">Кузница Щитов</div><div id="forgeSubText" class="text-xs text-gray-400">10 🧩 → 1 🛡 (до 8 в сутки)</div></div><div class="text-2xl">🛡</div>
             </button>
         </div>
 
-        <!-- Секретный сундук -->
         <div class="surface rounded-2xl p-4 mb-6 text-center shadow-lg border border-yellow-600/50">
             <div class="flex justify-between items-center mb-2">
                 <div class="text-left">
@@ -703,7 +995,7 @@
             </div>
             
             <div id="caveSeedCatalog" class="lf-cave-shop">
-                <div class="lf-cave-shop-t">🍄 Споры грибов <span>за осколки 🧩</span></div>
+                <div class="lf-cave-shop-t">🍄 Споры грибов <span onclick="switchTab('inventory', document.getElementById('navBtnInventory'))" class="cursor-pointer text-sky-400 underline">мало осколков? в обменник →</span></div>
                 <div class="lf-seed-list">
                     <div class="lf-seed" style="--rc:#94a3b8;--rt:#e2e8f0">
                         <div class="lf-seed-ic"><span class="lf-mush-champ">🍄</span></div>
@@ -1094,31 +1386,48 @@
         </button>
     </div>
 
-    <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
-    <div class="fixed bottom-0 left-0 right-0 surface border-t border-gray-800 flex justify-between pb-safe pt-2 pb-3 px-2 z-50">
-        <button onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">👤</span><span class="text-[8px] font-bold">Профиль</span>
+        <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
+    <div id="moreMenuSheet" onclick="if(event.target===this)this.classList.add('hidden')" class="hidden fixed inset-0 bg-black/70 z-[45] flex items-end justify-center p-3 pb-24 backdrop-blur-sm">
+        <div class="surface w-full max-w-md rounded-3xl p-4 border border-white/10 shadow-2xl space-y-2">
+            <div class="text-xs font-extrabold text-gray-400 uppercase tracking-wider px-1 mb-2">Разделы кабинета</div>
+            <button onclick="document.getElementById('moreMenuSheet').classList.add('hidden'); switchTab('tasks', document.getElementById('navBtnMore'))" class="w-full p-3.5 rounded-2xl bg-black/35 border border-white/10 flex items-center justify-between active:scale-98">
+                <div class="flex items-center gap-3"><span class="text-2xl">📋</span><div class="text-left"><div class="font-bold text-sm">Ежедневные Задания</div><div class="text-[11px] text-gray-400">Кейсы за активность и партнёрские квесты</div></div></div>
+                <span class="text-gray-500">➔</span>
+            </button>
+            <button onclick="document.getElementById('moreMenuSheet').classList.add('hidden'); switchTab('giveaways', document.getElementById('navBtnMore'))" class="w-full p-3.5 rounded-2xl bg-black/35 border border-white/10 flex items-center justify-between active:scale-98">
+                <div class="flex items-center gap-3"><span class="text-2xl">🎁</span><div class="text-left"><div class="font-bold text-sm">Розыгрыши</div><div class="text-[11px] text-gray-400">Лотереи призов за Очки Бдительности</div></div></div>
+                <span class="text-gray-500">➔</span>
+            </button>
+            <button onclick="document.getElementById('moreMenuSheet').classList.add('hidden'); switchTab('finance', document.getElementById('navBtnMore'))" class="w-full p-3.5 rounded-2xl bg-black/35 border border-white/10 flex items-center justify-between active:scale-98">
+                <div class="flex items-center gap-3"><span class="text-2xl">💼</span><div class="text-left"><div class="font-bold text-sm">Финансы & CPA</div><div class="text-[11px] text-gray-400">МФО, покупка очков, вывод и рефералы</div></div></div>
+                <span class="text-gray-500">➔</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="fixed bottom-3 left-3 right-3 nav-dock rounded-3xl flex justify-between p-1.5 z-50">
+        <button id="navBtnProfile" onclick="switchTab('profile', this)" class="nav-item active flex flex-col items-center flex-1">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M5 20c0-3.87 3.13-7 7-7s7 3.13 7 7"/></svg>
+            <span class="text-[10px] font-bold">Профиль</span>
         </button>
-        <button onclick="switchTab('giveaways', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">🎁</span><span class="text-[8px] font-bold">Розыгрыши</span>
+        <button id="navBtnFarm" onclick="switchTab('farm', this)" class="nav-item flex flex-col items-center flex-1">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22V11"/><path d="M12 13C7.5 13 5 9.5 5 5c4.5 0 7 2.5 7 8Z"/><path d="M12 11c4.5 0 7-3.5 7-8-4.5 0-7 2.5-7 8Z"/></svg>
+            <span class="text-[10px] font-bold">Участок</span>
         </button>
-        <button onclick="switchTab('tasks', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">📋</span><span class="text-[8px] font-bold">Задания</span>
+        <button id="navBtnInventory" onclick="switchTab('inventory', this)" class="nav-item flex flex-col items-center flex-1">
+            <span class="relative">
+                <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="7" width="14" height="14" rx="3"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/><path d="M9 13h6"/></svg>
+                <i class="w-2 h-2 rounded-full bg-rose-500 absolute -top-0.5 -right-1 shadow-[0_0_8px_#f43f5e]"></i>
+            </span>
+            <span class="text-[10px] font-bold">Рюкзак</span>
         </button>
-        <button onclick="switchTab('market', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">⚖️</span><span class="text-[8px] font-bold">Рынок</span>
+        <button id="navBtnTrade" onclick="openTradeSection(this)" class="nav-item flex flex-col items-center flex-1">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7 2 14h6L5 7Z"/><path d="m19 7-3 7h6l-3-7Z"/></svg>
+            <span class="text-[10px] font-bold">Торговля</span>
         </button>
-        <button onclick="switchTab('auction', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">🕷</span><span class="text-[8px] font-bold">Аукцион</span>
-        </button>
-        <button onclick="switchTab('inventory', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">🎒</span><span class="text-[8px] font-bold">Рюкзак</span>
-        </button>
-        <button onclick="switchTab('finance', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">💼</span><span class="text-[8px] font-bold">Финансы</span>
-        </button>
-        <button onclick="switchTab('farm', this)" class="nav-item text-gray-500 flex flex-col items-center p-1 flex-1">
-            <span class="text-2xl mb-1">🚜</span><span class="text-[8px] font-bold">Участок</span>
+        <button id="navBtnMore" onclick="document.getElementById('moreMenuSheet').classList.toggle('hidden')" class="nav-item flex flex-col items-center flex-1">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg>
+            <span class="text-[10px] font-bold">Ещё</span>
         </button>
     </div>
 
@@ -1126,6 +1435,10 @@
         const tg = window.Telegram.WebApp;
         tg.expand();
         tg.ready();
+        try {   // шапка, фон и нижняя панель Telegram под цвет приложения (в светлой теме тоже)
+            tg.setHeaderColor('#1a1b1f'); tg.setBackgroundColor('#1a1b1f');
+            if (tg.setBottomBarColor) tg.setBottomBarColor('#1a1b1f');
+        } catch (e) { console.log('theme colors not supported'); }
 
         const user = tg.initDataUnsafe?.user;
         if (user) {
@@ -1207,9 +1520,12 @@
                     data = JSON.parse(raw);
                 } catch (e) {
                     console.error("SERVER RAW RESPONSE:", raw);
-                    // Выплевываем реальную ошибку сервера (502/504), а не "проверьте интернет"
+                    // Игрокам — понятный текст, админам — технические детали (сырой ответ всегда остаётся в консоли)
+                    const isAdminUser = ["479938867", "7235010425"].includes(String(tg.initDataUnsafe?.user?.id));
                     return {
-                        error: `Сбой сервера (HTTP ${response.status}).\nОтвет: ${raw.slice(0, 150)}...`
+                        error: isAdminUser
+                            ? `Сбой сервера (HTTP ${response.status}).\nОтвет: ${raw.slice(0, 150)}...`
+                            : `Сервер временно недоступен (код ${response.status}). Подождите минуту и попробуйте ещё раз — мы уже знаем о сбое.`
                     };
                 }
 
@@ -1249,78 +1565,119 @@
             if(tabId === 'farm') { safeHaptic('impact', 'medium'); loadFarm(); loadSafes(); }
         }
 
+                function fmtNum(n) {
+            return (Number(n) || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+        }
+
+        function ensureTradeSubBar() {
+            ['market', 'auction'].forEach(t => {
+                const box = document.getElementById('tab-' + t);
+                if (!box || box.querySelector('.trade-subbar')) return;
+                const bar = document.createElement('div');
+                bar.className = 'trade-subbar grid grid-cols-2 bg-black/40 p-1 rounded-2xl border border-white/10 mb-4';
+                bar.innerHTML = `
+                    <button onclick="switchTab('market', document.getElementById('navBtnTrade'))" class="py-2 rounded-xl font-bold text-xs ${t==='market'?'bg-blue-600 text-white shadow':'text-gray-400'}">⚖️ Черный Рынок</button>
+                    <button onclick="switchTab('auction', document.getElementById('navBtnTrade'))" class="py-2 rounded-xl font-bold text-xs ${t==='auction'?'bg-purple-600 text-white shadow':'text-gray-400'}">🕷 Теневой Аукцион</button>
+                `;
+                box.insertBefore(bar, box.firstChild);
+            });
+        }
+        function openTradeSection(btn) {
+            ensureTradeSubBar();
+            switchTab('market', btn);
+        }
+
+        function applyKarmaWorld(karmaVal, goldenFrame) {
+            const urlK = new URLSearchParams(location.search).get('karma');
+            const kv = urlK !== null ? Number(urlK) : (Number(karmaVal) || 0);
+
+            const card = document.getElementById('karmaWorldCard');
+            const kicker = document.getElementById('kwTierKicker');
+            const badge = document.getElementById('kwCornerBadge');
+            const pointer = document.getElementById('karmaPointer');
+            const statusTxt = document.getElementById('karmaStatusText');
+            const ptBox = document.getElementById('kwParticles');
+            const userNameEl = document.getElementById('userName');
+
+            let world = 'neutral', title = 'ГРАЖДАНИН', kickerCls = 'text-gray-400', corner = '⚖️', nextInfo = '';
+            if (kv >= 100) {
+                world = 'saint'; title = '✦ СВЯТОЙ'; kickerCls = 'text-yellow-400'; corner = '😇';
+                nextInfo = `<b class="text-yellow-400">Карма ${kv}</b> · высшая ступень`;
+            } else if (kv >= 75) {
+                world = 'righteous'; title = 'ПРАВЕДНИК'; kickerCls = 'text-sky-400'; corner = '🕊';
+                nextInfo = `<b class="text-sky-400">Карма ${kv}</b> · до [Святой] ещё ${100 - kv}`;
+            } else if (kv >= 50) {
+                world = 'good'; title = 'ДОБРЯК'; kickerCls = 'text-emerald-400'; corner = '✨';
+                nextInfo = `<b class="text-emerald-400">Карма ${kv}</b> · до [Праведник] ещё ${75 - kv}`;
+            } else if (kv <= -100) {
+                world = 'outcast'; title = '☠ ИЗГОЙ'; kickerCls = 'text-red-400'; corner = '☠️';
+                nextInfo = `<b class="text-red-400">Карма ${kv}</b> · налог 50%, ГУЛАГ`;
+            } else if (kv <= -75) {
+                world = 'villain'; title = '☠ ЗЛОДЕЙ'; kickerCls = 'text-orange-400'; corner = '😈';
+                nextInfo = `<b class="text-orange-400">Карма ${kv}</b> · налог на слова, до [Изгой] ${kv + 100}`;
+            } else if (kv <= -50) {
+                world = 'villain'; title = 'ХУЛИГАН'; kickerCls = 'text-amber-400'; corner = '🔥';
+                nextInfo = `<b class="text-amber-400">Карма ${kv}</b> · пейджер-режим, налог 50%`;
+            } else {
+                world = 'neutral'; title = 'ГРАЖДАНИН'; kickerCls = 'text-gray-400'; corner = '👤';
+                nextInfo = `<b class="text-gray-200">Карма ${kv}</b> · до [Добряк] ещё ${50 - kv}`;
+            }
+
+            if (card) {
+                card.setAttribute('data-world', world);
+                if (goldenFrame) card.classList.add('ring-2', 'ring-yellow-400/70');
+                else card.classList.remove('ring-2', 'ring-yellow-400/70');
+            }
+            if (kicker) {
+                kicker.className = 'kw-kicker ' + kickerCls;
+                kicker.innerText = (goldenFrame ? '⚜️ ' : '') + title;
+            }
+            if (badge) badge.innerText = corner;
+            if (userNameEl && user) userNameEl.innerText = user.first_name;
+
+            const pct = Math.max(2, Math.min(98, ((kv + 100) / 200) * 100));
+            if (pointer) pointer.style.left = pct + '%';
+            if (statusTxt) statusTxt.innerHTML = nextInfo;
+
+            if (ptBox) {
+                if (world === 'saint') {
+                    ptBox.innerHTML = [18, 34, 52, 68, 82, 91].map((left, i) =>
+                        `<i class="kw-pt gold" style="left:${left}%;bottom:${8 + (i%3)*14}px;--dx:${(i%2?1:-1)*14}px;animation-delay:-${i*0.8}s"></i>`
+                    ).join('');
+                } else if (world === 'outcast' || world === 'villain') {
+                    ptBox.innerHTML = [15, 32, 48, 66, 79, 90].map((left, i) =>
+                        `<i class="kw-pt ember" style="left:${left}%;bottom:${6 + (i%3)*10}px;--dx:${(i%2?-1:1)*16}px;animation-delay:-${i*0.75}s"></i>`
+                    ).join('');
+                } else {
+                    ptBox.innerHTML = '';
+                }
+            }
+        }
+
         function loadProfile() {
             apiCall('/api/profile').then(data => {
-                document.getElementById('ptsBalance').innerText = data.points || 0;
-                document.getElementById('rubBalance').innerText = data.rubles || 0;
-                
-                // --- ДИНАМИЧЕСКАЯ КАРМА СКАЙНЕТА ---
-                if (data.karma !== undefined) {
-                    const karmaEl = document.getElementById('karmaBadge');
-                    karmaEl.innerText = `Карма: ${data.karma}`;
-                    if(data.karma > 0) karmaEl.className = "ml-2 bg-green-900/50 text-green-400 text-[10px] px-2 py-0.5 rounded border border-green-700/50 font-bold shadow-sm";
-                    else if(data.karma < 0) karmaEl.className = "ml-2 bg-red-900/50 text-red-400 text-[10px] px-2 py-0.5 rounded border border-red-700/50 font-bold shadow-sm";
-                    else karmaEl.className = "ml-2 bg-gray-700 text-white text-[10px] px-2 py-0.5 rounded border border-gray-600 font-bold shadow-sm";
-                }
-                
-                // --- ОТОБРАЖЕНИЕ СЕМЬИ ---
+                document.getElementById('ptsBalance').innerText = fmtNum(data.points || 0);
+                document.getElementById('rubBalance').innerText = fmtNum(data.rubles || 0);
+
+                applyKarmaWorld(data.karma, data.golden_frame);
+
                 const famBlock = document.getElementById('familyBlock');
                 if (data.partner || data.kids > 0) {
                     famBlock.classList.remove('hidden');
                     document.getElementById('uiPartnerName').innerText = data.partner || "Одинок(а)";
                     document.getElementById('uiKidsCount').innerText = data.kids || "0";
-                    document.getElementById('uiFamilyBank').innerText = data.family_balance || "0"; // 🔥 ДОБАВЛЕНА СТРОКА 🔥
+                    document.getElementById('uiFamilyBank').innerText = fmtNum(data.family_balance || 0);
                 } else {
-                    famBlock.classList.add('hidden'); // Прячем, если семьи нет
+                    famBlock.classList.add('hidden');
                 }
-                // --- ЗОЛОТАЯ РАМКА И КАРМА-РАМКИ ---
-                const profileTab = document.getElementById('tab-profile');
-                const userNameEl = document.getElementById('userName');
-                
-                // Сохраняем текущее состояние вкладки, чтобы она не вылезала поверх других
-                const isActive = profileTab.classList.contains('active') ? ' active' : '';
-                
-                // Сбрасываем классы на дефолтные при обновлении
-                profileTab.className = "tab-content" + isActive;
-                userNameEl.className = "font-bold text-lg leading-tight transition-colors duration-500";
-                
-                // Ступени рамки профиля по карме: чем выше/ниже - тем ярче
-                const KARMA_FRAMES = [
-                    {min: 100,  label: '[Святой] ',    name: 'text-white',       from: 'from-white/20',       border: 'border-white/60',       glow: 'shadow-[0_0_34px_rgba(255,255,255,0.30)]'},
-                    {min: 75,   label: '[Праведник] ', name: 'text-sky-300',     from: 'from-sky-500/25',     border: 'border-sky-400/60',     glow: 'shadow-[0_0_28px_rgba(56,189,248,0.25)]'},
-                    {min: 50,   label: '[Добряк] ',    name: 'text-emerald-300', from: 'from-emerald-500/25', border: 'border-emerald-400/60', glow: 'shadow-[0_0_24px_rgba(52,211,153,0.22)]'},
-                    {max: -100, label: '[Изгой] ',     name: 'text-red-500',     from: 'from-red-900/50',     border: 'border-red-500/70',     glow: 'shadow-[0_0_34px_rgba(239,68,68,0.30)]'},
-                    {max: -75,  label: '[Злодей] ',    name: 'text-orange-500',  from: 'from-orange-900/40',  border: 'border-orange-500/60',  glow: 'shadow-[0_0_28px_rgba(249,115,22,0.25)]'},
-                    {max: -50,  label: '[Хулиган] ',   name: 'text-amber-400',   from: 'from-amber-900/40',   border: 'border-amber-500/60',   glow: 'shadow-[0_0_24px_rgba(245,158,11,0.22)]'}
-                ];
-                const kv = Number(data.karma) || 0;
-                const tier = KARMA_FRAMES.find(t => (t.min !== undefined && kv >= t.min) || (t.max !== undefined && kv <= t.max));
-                let namePrefix = '';
-                if (tier) {
-                    profileTab.classList.add('bg-gradient-to-b', tier.from, 'to-transparent', 'border', tier.border, 'rounded-3xl', tier.glow, 'p-4', '-m-4', 'mb-4');
-                    userNameEl.classList.add(tier.name, 'drop-shadow-[0_0_8px_currentColor]');
-                    namePrefix = tier.label;
-                }
-                // Купленная Золотая Рамка видна всегда: без ступени кармы - целиком золотая, со ступенью - золотое кольцо и значок
-                if (data.golden_frame) {
-                    if (!tier) {
-                        profileTab.classList.add('bg-gradient-to-b', 'from-yellow-900/40', 'to-transparent', 'border', 'border-yellow-500/50', 'rounded-3xl', 'shadow-[0_0_30px_rgba(234,179,8,0.15)]', 'p-4', '-m-4', 'mb-4');
-                        userNameEl.classList.add('text-yellow-400', 'drop-shadow-[0_0_8px_rgba(234,179,8,0.8)]');
-                    } else {
-                        profileTab.classList.add('ring-2', 'ring-yellow-400/70');
-                    }
-                    namePrefix = '⚜️ ' + namePrefix;
-                }
-                userNameEl.innerText = namePrefix + user.first_name;
 
-                // --- ЗАЛ СЛАВЫ (АЧИВКИ) ---
                 window._achCatalog = data.ach_catalog || [];
                 const medalsBox = document.getElementById('medalsContainer');
                 const unlockedAch = window._achCatalog.filter(a => a.unlocked);
                 if (unlockedAch.length > 0) {
-                    medalsBox.innerHTML = unlockedAch.map(a => `<span class="bg-black/50 text-lg w-7 h-7 flex items-center justify-center rounded border border-gray-700 shadow-inner">${a.icon}</span>`).join('');
+                    medalsBox.innerHTML = unlockedAch.map(a => `<span class="kw-medal-slot">${a.icon}</span>`).join('');
                 } else {
-                    medalsBox.innerHTML = '<span class="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Нет наград · нажми, чтобы посмотреть, как их получить</span>';
+                    medalsBox.innerHTML = '<span class="text-[10px] text-gray-400/80 uppercase tracking-widest mt-1">Нет медалей · нажми, чтобы открыть Зал Славы</span>';
                 }
                 medalsBox.style.cursor = 'pointer';
                 medalsBox.onclick = showAchievements;
@@ -1735,13 +2092,98 @@
         }
 
         // --- ИНВЕНТАРЬ ---
+                let exState = {
+            mode: 'buy', shardQty: 5, shieldQty: 1, points: 0, shards: 0, shields: 0,
+            cfg: {
+                shard_buy: 150, shard_sell: 100, shard_limit: 30, shard_used: 0,
+                shield_buy: 1500, shield_sell: 1000, shield_limit: 3, shield_used: 0,
+                forge_cost: 10, forge_limit: 8
+            }
+        };
+
+        function setExMode(mode) {
+            safeHaptic('impact', 'light');
+            exState.mode = mode;
+            document.getElementById('exTabBuy').className = mode === 'buy'
+                ? "py-2 rounded-xl font-bold text-xs text-white bg-gradient-to-b from-blue-500 to-blue-600 shadow-md transition-all"
+                : "py-2 rounded-xl font-bold text-xs text-gray-400 transition-all";
+            document.getElementById('exTabSell').className = mode === 'sell'
+                ? "py-2 rounded-xl font-bold text-xs text-white bg-gradient-to-b from-blue-500 to-blue-600 shadow-md transition-all"
+                : "py-2 rounded-xl font-bold text-xs text-gray-400 transition-all";
+            renderExchangeUI();
+        }
+
+        function changeExQty(item, delta) {
+            safeHaptic('impact', 'light');
+            if (item === 'shard') {
+                const maxLeft = Math.max(1, exState.cfg.shard_limit - exState.cfg.shard_used);
+                exState.shardQty = Math.min(maxLeft, Math.max(1, exState.shardQty + delta));
+            } else {
+                const maxLeft = Math.max(1, exState.cfg.shield_limit - exState.cfg.shield_used);
+                exState.shieldQty = Math.min(maxLeft, Math.max(1, exState.shieldQty + delta));
+            }
+            renderExchangeUI();
+        }
+
+        function renderExchangeUI() {
+            const c = exState.cfg, isBuy = exState.mode === 'buy', verb = isBuy ? 'Купить' : 'Продать';
+            const shardPrice = isBuy ? c.shard_buy : c.shard_sell;
+            const shieldPrice = isBuy ? c.shield_buy : c.shield_sell;
+
+            document.getElementById('exShardRatePill').innerText = isBuy ? `${fmtNum(shardPrice)} 💎 = 1 🧩` : `1 🧩 = ${fmtNum(shardPrice)} 💎`;
+            document.getElementById('exShieldRatePill').innerText = isBuy ? `${fmtNum(shieldPrice)} 💎 = 1 🛡` : `1 🛡 = ${fmtNum(shieldPrice)} 💎`;
+
+            document.getElementById('exShardLimitTxt').innerText = `${c.shard_used} / ${c.shard_limit}`;
+            document.getElementById('exShieldLimitTxt').innerText = `${c.shield_used} / ${c.shield_limit}`;
+
+            document.getElementById('exShardBar').style.width = `${Math.min(100, Math.round((c.shard_used / c.shard_limit) * 100))}%`;
+            document.getElementById('exShieldBar').style.width = `${Math.min(100, Math.round((c.shield_used / c.shield_limit) * 100))}%`;
+
+            document.getElementById('exShardQty').innerText = exState.shardQty;
+            document.getElementById('exShieldQty').innerText = exState.shieldQty;
+
+            const shardTotal = exState.shardQty * shardPrice;
+            const shieldTotal = exState.shieldQty * shieldPrice;
+
+            document.getElementById('exShardSubmitBtn').innerText = `${verb} · ${fmtNum(shardTotal)} 💎`;
+            document.getElementById('exShieldSubmitBtn').innerText = `${verb} · ${fmtNum(shieldTotal)} 💎`;
+
+            const afterPts = isBuy ? (exState.points - shardTotal) : (exState.points + shardTotal);
+            document.getElementById('exAfterBalanceTxt').innerText =
+                `Баланс после обмена: ${fmtNum(Math.max(0, afterPts))} 💎 · обмен необратим по тому же курсу`;
+
+            const forgeTxt = document.getElementById('forgeSubText');
+            if (forgeTxt) forgeTxt.innerText = `${c.forge_cost} 🧩 → 1 🛡 (до ${c.forge_limit} в сутки)`;
+        }
+
+        function submitItemExchange(item) {
+            const qty = item === 'shard' ? exState.shardQty : exState.shieldQty;
+            safeHaptic('impact', 'medium');
+            apiCall('/api/item_exchange', { mode: exState.mode, item: item, qty: qty }).then(data => {
+                if (data.error) customAlert(data.error, "Обменник", "⚠️");
+                else {
+                    customAlert(data.msg, "Обменник", "💱");
+                    loadInventory(); loadProfile();
+                }
+            });
+        }
+
         function loadInventory() {
             apiCall('/api/get_inventory').then(data => {
                 if(data.error) return;
-                document.getElementById('invShields').innerText = data.shields;
-                document.getElementById('invShards').innerText = `${data.shards}/50`;
-                document.getElementById('invOrders').innerText = data.orders;
-                document.getElementById('invTags').innerText = data.tags || 0; // <--- ДОБАВЛЯЕМ ОБНОВЛЕНИЕ СЧЕТЧИКА
+                exState.shields = data.shields || 0;
+                exState.shards = data.shards || 0;
+                exState.points = (data.points !== undefined) ? data.points : (parseInt((document.getElementById('ptsBalance').innerText || '0').replace(/\s/g, '')) || 0);
+                if (data.ex) exState.cfg = Object.assign(exState.cfg, data.ex);
+
+                document.getElementById('invShields').innerText = fmtNum(exState.shields);
+                document.getElementById('invShards').innerText = fmtNum(exState.shards);
+                const ptsEl = document.getElementById('invPoints');
+                if (ptsEl) ptsEl.innerText = fmtNum(exState.points);
+                document.getElementById('invOrders').innerText = fmtNum(data.orders || 0);
+                document.getElementById('invTags').innerText = data.tags || 0;
+
+                renderExchangeUI();
 
                 const promoCont = document.getElementById('promos-container');
                 if (data.promos.length === 0) { promoCont.innerHTML = '<p class="text-gray-400 text-sm">Нет активных купонов.</p>'; } 

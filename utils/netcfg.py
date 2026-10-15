@@ -11,15 +11,15 @@ import time
 from database.mongo import db
 
 DEFAULTS = {
-    "rub_per_star": 2.0,       # рублей за 1 ⭐️ (кэшбэк, крипта, рынок)
-    "points_per_star": 5,      # очков за 1 ⭐️
-    "support_price": 50,       # платный доступ к поддержке, ⭐️
-    "spam_fine": 111,          # штраф за спам кнопками, ⭐️
-    "indulgence_price": 2000,  # индульгенция, ⭐️
-    "shop_price_50": 50,       # магазин: 50 очков, ⭐️
-    "shop_price_300": 200,     # магазин: 300 очков, ⭐️
-    "shop_price_1000": 500,    # магазин: 1000 очков + щит, ⭐️
-    "cpa_hold_days": 14,       # холд лида CPA (для текстов статистики)
+    "rub_per_star": 2.0,          # рублей за 1 ⭐️ (кэшбэк, крипта, рынок)
+    "points_per_star": 5,         # очков за 1 ⭐️
+    "support_price": 50,          # платный доступ к поддержке, ⭐️
+    "spam_fine": 111,             # штраф за спам кнопками, ⭐️
+    "indulgence_price": 2000,     # индульгенция, ⭐️
+    "shop_price_50": 50,          # магазин: 50 очков, ⭐️
+    "shop_price_300": 200,         # магазин: 300 очков, ⭐️
+    "shop_price_1000": 500,        # магазин: 1000 очков + щит, ⭐️
+    "cpa_hold_days": 14,          # холд лида CPA (для текстов статистики)
     "support_group_price": "от 60 до 150 звёзд",  # текст: сколько стоит вопрос в платной группе поддержки
 
     # ⚖️ Прайс штрафов (ИИ поддержки и кнопки админов). fine_tag_free / fine_tag_sponsor — общие со Скайнетом:
@@ -33,11 +33,14 @@ DEFAULTS = {
     "cb_min_phone": 500, "cb_min_crypto": 1000, "cb_min_card": 3500,
     "cb_exchange_packs": "50:50, 150:175, 250:300, 500:650",   # рубли:очки
 
-    # 🎰 Казино и экономика
+    # 🎰 Казино, Кузница и Обменник
     "casino_spin_price": 50, "casino_premium_cost": 1500, "casino_cert_cost": 1250, "casino_cert_rub": 1000,
     "casino_mini_points": 1000, "casino_mini_shards": 5, "casino_jackpot_points": 300,
     "casino_tax_pct": 30, "casino_tax_outcast_pct": 50,
     "casino_points_wins": "100, 150, 250", "casino_cash_wins": "100:75, 250:20, 500:5",
+    "forge_shield_cost": 10, "forge_shield_limit": 8,
+    "ex_shard_buy": 150, "ex_shard_sell": 100, "ex_shard_limit": 30,
+    "ex_shield_buy": 1500, "ex_shield_sell": 1000, "ex_shield_limit": 3,
     "craft_shards": 50, "craft_odds": "60, 30, 10",
     "chest_price": 1000, "chest_odds": "45, 35, 15, 5", "chest_jackpot_rub": 500,
     "bonus_min": 15, "bonus_max": 50, "bonus_shard_pct": 5, "bonus_streak": "15, 25, 40, 50, 50, 50, 100",
@@ -77,7 +80,7 @@ def cfg(key):
     raw = _doc().get(key)
     if raw is None or raw == "":
         return default
-    if isinstance(default, bool):   # bool раньше шёл через float: «выключено» превращалось в значение по умолчанию
+    if isinstance(default, bool):  # bool раньше шёл через float: «выключено» превращалось в значение по умолчанию
         return raw if isinstance(raw, bool) else str(raw).strip().lower() in ("1", "true", "да", "on")
     if isinstance(default, str):
         return str(raw).strip() or default
