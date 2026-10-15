@@ -34,6 +34,8 @@ import handlers.start_menu
 from handlers.casino import create_unique_promo, msk_today, msk_day_of, msk_time_left
 from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, exchange_packs, withdraw_min, weighted, odds, _ints  # настройки из панели /glaz
 
+paid_collection.create_index("game_no", unique=True, sparse=True)
+
 app = Flask(__name__, template_folder='templates')
 
 is_setup_done = False
@@ -2032,6 +2034,19 @@ def api_place_bid():
     
     return jsonify({"success": True, "msg": f"Ваша ставка {bid_amount} 💎 принята!"})
 
+def game_no(uid):
+    """Игровой номер игрока (№1575): выдаётся один раз, по порядку, не повторяется и не переиспользуется."""
+    from pymongo import ReturnDocument
+    d = paid_collection.find_one({"uid": uid}, {"game_no": 1}) or {}
+    if d.get("game_no"):
+        return d["game_no"]
+    n = db['counters'].find_one_and_update({"_id": "game_no"}, {"$inc": {"seq": 1}}, upsert=True,
+                                           return_document=ReturnDocument.AFTER)["seq"]
+    r = paid_collection.update_one({"uid": uid, "game_no": {"$exists": False}}, {"$set": {"game_no": n}})
+    if not r.matched_count and not paid_collection.find_one({"uid": uid}):
+        paid_collection.update_one({"uid": uid}, {"$setOnInsert": {"game_no": n}}, upsert=True)
+    return (paid_collection.find_one({"uid": uid}, {"game_no": 1}) or {}).get("game_no", n)
+
 @app.route('/api/inventory_action', methods=['POST'])
 def api_inventory_action():
     data = request.json
@@ -2047,6 +2062,9 @@ def api_inventory_action():
     # Секретный переводчик @username -> ID
     def resolve_uid(target_info):
         t_info = str(target_info).strip()
+        if t_info[:1] in ('№', '#') and t_info[1:].strip().isdigit():
+            d = paid_collection.find_one({"game_no": int(t_info[1:].strip())}, {"uid": 1})
+            return d["uid"] if d else None
         if t_info.isdigit(): return int(t_info)
         if t_info.startswith('@'):
             # В базе ник бывает записан и с «@», и в другом регистре — ищем все варианты
@@ -2325,7 +2343,7 @@ def api_inventory_action():
             if is_anarchy and random.randint(1, 100) <= 50:
                 shield_broken_by_anarchy = True # Щит уничтожен, но атака проходит!
             else:
-                try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `ID {uid}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
+                try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `№{game_no(uid)}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
                 except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
             
@@ -2357,7 +2375,7 @@ def api_inventory_action():
             paid_collection.update_one({"uid": target_uid}, {"$set": {"last_hacked_time": now}})
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": stolen}})
             
-            victim_msg = f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `ID {uid}` пробил вашу защиту и украл **{stolen} 💎** с личного счета!"
+            victim_msg = f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `№{game_no(uid)}` пробил вашу защиту и украл **{stolen} 💎** с личного счета!"
             
             # 🔥 5. ВЗЛОМ СЕМЕЙНОЙ КОПИЛКИ ВО ВРЕМЯ АНАРХИИ 🔥
             family_stolen = 0
