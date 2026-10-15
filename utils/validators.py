@@ -37,6 +37,7 @@ def has_active_group_restriction(uid):
     return _ts(last.get("timestamp")) + last.get("duration", 0) > time.time()
 
 MIN_MSGS_TO_WITHDRAW = 50
+NEWBIE_MSG = f"🔒 Недоступно новым аккаунтам: нужно {MIN_MSGS_TO_WITHDRAW} сообщений в наших чатах или статус (VIP / BEYOND / верификация / индульгенция / спонсор / свободен / тег)."
 
 def has_good_status(user_doc):
     """Тот же набор статусов, что в main.py → has_good_status. Игровой тег (tag_game) статуса не даёт."""

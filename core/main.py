@@ -4311,6 +4311,11 @@ def challenge_duel(message):
         bot.reply_to(message, "🤖 Терминаторы не играют в кости.")
         return
         
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(challenger_id) or is_newbie_without_status(target_id):
+        bot.reply_to(message, NEWBIE_MSG + "\n(Дуэль недоступна, если у одного из участников нет статуса.)")
+        return
+
     # Проверяем баланс вызывающего
     ch_data = paid_collection.find_one({"uid": challenger_id}) or {}
     if ch_data.get("bounty_points", 0) < bet:
@@ -4496,6 +4501,11 @@ def handle_user_airdrop(message):
         
     uid = message.from_user.id
     user_name = message.from_user.first_name
+
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(uid):
+        bot.reply_to(message, NEWBIE_MSG)
+        return
     
     # 🔥 ИСПРАВЛЕННАЯ ПРОВЕРКА БАЛАНСА 🔥
     updated_user = paid_collection.find_one_and_update(
@@ -4611,6 +4621,10 @@ def p2p_transfer(message):
         return bot.reply_to(message, "🤡 Вы пытаетесь переложить деньги из одного кармана в другой.")
     if message.reply_to_message.from_user.is_bot:
         return bot.reply_to(message, "🤖 Скайнет не принимает чаевые. Мы принимаем только человеческие души.")
+
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(initiator_id):
+        return bot.reply_to(message, NEWBIE_MSG)
         
     parts = message.text.split()
     if len(parts) < 2 or not parts[1].isdigit():
@@ -4666,6 +4680,9 @@ def adopt_child(message):
     
     if parent_id == child_id: return bot.reply_to(message, "🤡 Вы не бактерия, чтобы размножаться делением.")
     if message.reply_to_message.from_user.is_bot: return bot.reply_to(message, "🤖 Терминаторы не подлежат усыновлению.")
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(parent_id):
+        return bot.reply_to(message, NEWBIE_MSG)
         
     child_data = paid_collection.find_one({"uid": child_id}) or {}
     if child_data.get("parent_id"):
@@ -5504,6 +5521,9 @@ def handle_karma_vote(message):
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!копилка', 'копилка')))
 def family_piggy_bank(message):
     uid = message.from_user.id
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(uid):
+        return bot.reply_to(message, NEWBIE_MSG)
     user_data = paid_collection.find_one({"uid": uid}) or {}
     # ⬇ копилкой пользуются супруги и дети семьи (ребёнок: через родителя, который в браке)
     family_id = _family_bank_id(uid, user_data)

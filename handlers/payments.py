@@ -43,6 +43,14 @@ def handle_checkout(call):
         if exp is not None:
             original_amount = exp  # дальше считаем только от серверной суммы
     
+    # 🔒 Новички без статуса платят только звёздами/криптой, не очками и не кэшбэком
+    if action in ("points", "balance", "partial"):
+        from utils.validators import is_newbie_without_status, NEWBIE_MSG
+        if is_newbie_without_status(call.from_user.id):
+            try: bot.send_message(call.message.chat.id, NEWBIE_MSG)
+            except Exception as e: logger.debug(f"Игнор ошибки (payments): {e}")
+            return
+
     # 1. Если юзер просто хочет оплатить
     if action == "pay":
         try: bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
