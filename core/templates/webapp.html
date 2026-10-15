@@ -484,6 +484,7 @@
                 <span class="font-bold text-white"><span id="uiKidsCount" class="text-pink-400">0</span>/3</span>
             </div>
             
+            <div id="uiKidsList" class="relative z-10 flex flex-wrap gap-2 mb-2"></div>
             <!-- 🔥 ТЕПЕРЬ ТУТ БАЛАНС КОПИЛКИ 🔥 -->
             <div class="flex justify-between items-center relative z-10 bg-black/20 p-2 rounded-lg border border-gray-700/50">
                 <span class="text-xs text-gray-400">Семейный фонд:</span>
@@ -1654,6 +1655,20 @@
             }
         }
 
+        function openPlayerCard(id) {
+            apiCall('/api/player_card', { target: id }).then(c => {
+                if (!c || c.error) return customAlert((c && c.error) || 'Не удалось открыть карточку', 'Ошибка', '❌');
+                const info = [c.title, 'Карма: ' + c.karma, c.married ? 'В браке' : 'Одинок(а)', 'Детей: ' + c.kids,
+                              c.medals.length ? 'Медали: ' + c.medals.join(' ') : 'Медалей нет'].join(' · ');
+                if (c.username) {
+                    customConfirm(c.name + '\n' + info + '\n\nОткрыть профиль в Telegram?',
+                                  () => tg.openTelegramLink('https://t.me/' + c.username));
+                } else {
+                    customAlert(info, c.name, '👤');
+                }
+            });
+        }
+
         function loadProfile() {
             apiCall('/api/profile').then(data => {
                 document.getElementById('ptsBalance').innerText = fmtNum(data.points || 0);
@@ -1664,8 +1679,17 @@
                 const famBlock = document.getElementById('familyBlock');
                 if (data.partner || data.kids > 0) {
                     famBlock.classList.remove('hidden');
-                    document.getElementById('uiPartnerName').innerText = data.partner || "Одинок(а)";
+                    const fam = data.family || {};
+                    const pn = document.getElementById('uiPartnerName');
+                    if (fam.partner) {
+                        pn.innerHTML = `<button class="text-pink-300 underline active:scale-95" onclick="openPlayerCard(${Number(fam.partner.id)})">${esc(fam.partner.name)}</button>`;
+                    } else {
+                        pn.innerText = data.partner || "Одинок(а)";
+                    }
                     document.getElementById('uiKidsCount').innerText = data.kids || "0";
+                    const chip = (p, icon) => `<button class="bg-black/30 border border-pink-500/30 rounded-lg px-3 py-1 text-xs font-bold text-white active:scale-95" onclick="openPlayerCard(${Number(p.id)})">${icon} ${esc(p.name)}</button>`;
+                    document.getElementById('uiKidsList').innerHTML =
+                        (fam.parent ? chip(fam.parent, '👪') : '') + (fam.kids || []).map(k => chip(k, '👶')).join('');
                     document.getElementById('uiFamilyBank').innerText = fmtNum(data.family_balance || 0);
                 } else {
                     famBlock.classList.add('hidden');

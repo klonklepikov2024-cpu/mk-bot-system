@@ -258,6 +258,14 @@ def _build_ach_catalog(user_db, pf):
         out.append(item)
     return out
 
+def _person_card(pid):
+    """Карточка человека для мини-аппа: имя и username (по ним строится ссылка на профиль)."""
+    u = db['users'].find_one({"_id": pid}, {"first_name": 1, "username": 1}) or {}
+    c = db['chat_stats'].find_one({"uid": pid}, {"name": 1, "username": 1}) or {}
+    return {"id": pid,
+            "name": u.get("first_name") or c.get("name") or f"ID {pid}",
+            "username": str(u.get("username") or c.get("username") or "").lstrip("@")}
+
 @app.route('/api/profile', methods=['POST'])
 def get_profile():
     data = request.json
@@ -302,12 +310,44 @@ def get_profile():
         "karma": user_db.get("social_rating", 0),
         "partner": partner_name,
         "kids": children_count,
+        "family": {
+            "partner": _person_card(partner_id) if partner_id else None,
+            "kids": [_person_card(c) for c in user_db.get("children", [])[:3]],
+            "parent": _person_card(user_db["parent_id"]) if user_db.get("parent_id") else None,
+        },
         "family_balance": family_balance, # 🔥 ДОБАВИЛИ ЭТУ СТРОЧКУ 🔥
         "golden_frame": user_db.get("golden_frame", False),
         "achievements": user_db.get("achievements", []),
         "ach_catalog": _build_ach_catalog(user_db, pf),
         "new_achievements": [a["name"] for a in ACHIEVEMENT_CATALOG if a["id"] in newly]
     })
+
+@app.route('/api/player_card', methods=['POST'])
+def api_player_card():
+    data = request.json or {}
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data['initData'], keep_blank_values=True))['user'])['id']
+    try:
+        target = int(data.get('target'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Нет цели"}), 400
+    me = paid_collection.find_one({"uid": uid}) or {}
+    relatives = set(me.get("children", [])) | {me.get("partner_id"), me.get("parent_id")}
+    if target not in relatives:
+        return jsonify({"error": "Открывать можно только карточки своей семьи"}), 403
+    t = paid_collection.find_one({"uid": target}) or {}
+    karma = t.get("social_rating", 0)
+    if karma >= 100: title = "😇 Святой"
+    elif karma <= -100: title = "💀 Враг Народа"
+    elif karma <= -50: title = "🗑 Изгой"
+    else: title = "👑 VIP-Персона" if t.get("is_vip") else "🔴 Гражданин Империи"
+    have = set(t.get("achievements", []))
+    card = _person_card(target)
+    card.update({"title": title, "karma": karma, "kids": len(t.get("children", [])),
+                 "married": bool(t.get("partner_id")),
+                 "medals": [a["icon"] for a in ACHIEVEMENT_CATALOG if a["id"] in have]})
+    return jsonify(card)
 
 @app.route('/api/buy_ticket', methods=['POST'])
 def buy_ticket():
