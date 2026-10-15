@@ -213,6 +213,10 @@ ACHIEVEMENT_CATALOG = [
      "auto": lambda u, pf: (pf.get("t_squash", 0), 50)},
     {"id": "married", "icon": "💍", "name": "Семьянин", "desc": "Вступить в брак.",
      "auto": lambda u, pf: (1 if u.get("partner_id") else 0, 1)},
+    {"id": "single_dad", "icon": "👨‍👦", "name": "Отец-одиночка", "desc": "Пережить развод, оставшись воспитывать сыновей в одиночку.", "reward": {"immunity": 1}, "reward_text": "🛡 1 щит",
+     "auto": lambda u, pf: (1 if (not u.get("partner_id") and u.get("divorced") and len(u.get("children", [])) > 0) else 0, 1)},
+    {"id": "many_kids", "icon": "👨‍👦‍👦", "name": "Многодетный отец", "desc": "Усыновить и воспитать 5 сыновей.", "reward": {"immunity": 2, "jackpot_shards": 5}, "reward_text": "🛡 2 щита и 🧩 5 осколков",
+     "auto": lambda u, pf: (len(u.get("children", [])), 5)},
     {"id": "rich10k", "icon": "💰", "name": "Богач", "desc": "Накопить 10 000 💎 на счету.",
      "auto": lambda u, pf: (u.get("bounty_points", 0), 10000)},
     {"id": "shield10", "icon": "🛡", "name": "Бронированный", "desc": "Накопить 10 щитов иммунитета одновременно.",
@@ -309,7 +313,8 @@ def get_profile():
             "spouse2": partner_name,
             "spouse2_id": partner_id,
             "date": dt_str,
-            "days": days_cnt
+            "days": days_cnt,
+            "registrar": user_db.get("married_by") or p_db.get("married_by") or "Регистраторша Зинаида Павловна v4.0"
         }
         
     _fam_id = _family_bank_id(uid, user_db)
@@ -333,7 +338,7 @@ def get_profile():
         "kids": children_count,
         "family": {
             "partner": _person_card(partner_id) if partner_id else None,
-            "kids": [_person_card(c) for c in user_db.get("children", [])[:3]],
+            "kids": [_person_card(c) for c in user_db.get("children", [])[:5]],
             "parent": _person_card(user_db["parent_id"]) if user_db.get("parent_id") else None,
         },
         "family_balance": family_balance,
@@ -4057,7 +4062,7 @@ RP_COMMANDS = {
 }
 
 # Ловим команды, но СТРОГО игнорируем системные
-@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники', '!амнистия', 'амнистия')))
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!свидетельство', 'свидетельство', '!загс', 'загс', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники', '!амнистия', 'амнистия')))
 def handle_rp_commands(message):
     # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
     if message.sender_chat:
@@ -4201,7 +4206,7 @@ def handle_marriage_response(call):
         return
         
     if action == 'no':
-        bot.edit_message_text(f"💔 **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={partner_id}) отверг предложение. Регистраторша Зинаида молча закрыла папку.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"💔 **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={partner_id}) отверг предложение. Регистраторша молча закрыла папку.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
         return
         
     if init_data.get("bounty_points", 0) < PRICE:
@@ -4210,15 +4215,6 @@ def handle_marriage_response(call):
         
     import time, random, html
     now_ts = time.time()
-    charged = paid_collection.find_one_and_update(
-        {"uid": initiator_id, "partner_id": {"$exists": False}, "bounty_points": {"$gte": PRICE}},
-        {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id, "married_at": now_ts}}
-    )
-    if not charged:
-        bot.edit_message_text("❌ Свадьба отменяется: у инициатора нет средств или он уже в браке!", call.message.chat.id, call.message.message_id)
-        return
-    paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id, "married_at": now_ts}})
-
     init_card = _person_card(initiator_id)
     part_card = _person_card(partner_id)
     n1 = html.escape(init_card["name"])
@@ -4226,8 +4222,9 @@ def handle_marriage_response(call):
     u1, u2 = min(initiator_id, partner_id), max(initiator_id, partner_id)
     cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
 
-    speeches = [
+    registrars = [
         (
+            "Регистраторша Зинаида Павловна v4.0",
             f"👩‍⚖️ <b>КИБЕР-ЗАГС СКАЙНЕТА (Регистраторша Зинаида Павловна v4.0):</b>\n"
             f"<i>Поправляет фиолетовый начёс, сдувает пыль с терминала и включает синтвейв-марш Мендельсона...</i>\n\n"
             f"«Дорогие брачующиеся! Сегодня в чертогах Матрицы соединяются два одиноких сервера — "
@@ -4235,6 +4232,7 @@ def handle_marriage_response(call):
             f"Штамп в цифровой паспорт поставлен, общак открыт. Горько, пацаны!»"
         ),
         (
+            "Галина Кибернетовна (Главный регистратор)",
             f"👩‍⚖️ <b>ГЛАВНЫЙ РЕГИСТРАТОР СИНДИКАТОВ (Галина Кибернетовна):</b>\n"
             f"<i>Протирает очки на цепочке и с размаху бьёт голографической печатью по столу...</i>\n\n"
             f"«Именем Центрального Процессора и властью, данной мне Админом, объявляю граждан "
@@ -4242,20 +4240,84 @@ def handle_marriage_response(call):
             f"законными Кибер-Мужьями! Теперь ваши грядки поливаются вместе, а копилка — общая!»"
         ),
         (
-            f"👩‍⚖️ <b>ДВОРЕЦ БРАКОСОЧЕТАНИЯ СКАЙНЕТА (Регистраторша Зинаида):</b>\n"
+            "Тамара Автоматовна (Дворец Бракосочетания)",
+            f"👩‍⚖️ <b>ДВОРЕЦ БРАКОСОЧЕТАНИЯ СКАЙНЕТА (Тамара Автоматовна):</b>\n"
             f"<i>Смахивает скупую пиксельную слезу умиления...</i>\n\n"
             f"«Товарищи! Союз между <a href='tg://user?id={initiator_id}'>{n1}</a> и <a href='tg://user?id={partner_id}'>{n2}</a> "
             f"официально прошит в блокчейн Империи! Можете обменяться кольцами и паролями от сейфов!»"
         )
     ]
+    reg_name, reg_speech = random.choice(registrars)
+
+    charged = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "partner_id": {"$exists": False}, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id, "married_at": now_ts, "married_by": reg_name}}
+    )
+    if not charged:
+        bot.edit_message_text("❌ Свадьба отменяется: у инициатора нет средств или он уже в браке!", call.message.chat.id, call.message.message_id)
+        return
+    paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id, "married_at": now_ts, "married_by": reg_name}})
 
     ceremony_text = (
         f"🎊 <b>НОВЫЙ БРАЧНЫЙ СИНДИКАТ ЗАРЕГИСТРИРОВАН!</b> 🎊\n\n"
-        f"{random.choice(speeches)}\n\n"
+        f"{reg_speech}\n\n"
         f"📜 <b>Свидетельство о браке:</b> <code>{cert_num}</code>\n"
-        f"💸 <i>Госпошлина {PRICE} 💎 уплачена. Посмотреть бланк свидетельства с печатью можно в Мини-Аппе (Профиль → Ваш Синдикат)!</i>"
+        f"💸 <i>Госпошлина {PRICE} 💎 уплачена. Показать документ в чате: <code>!свидетельство</code> (или в Мини-Аппе → Ваш Синдикат)!</i>"
     )
     bot.edit_message_text(ceremony_text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!свидетельство', 'свидетельство', '!загс', 'загс'])
+def show_marriage_certificate_chat(message):
+    import time, datetime, html
+    uid = message.from_user.id
+    u_db = paid_collection.find_one({"uid": uid}) or {}
+    partner_id = u_db.get("partner_id")
+
+    if not partner_id:
+        kids_cnt = len(u_db.get("children", []))
+        if u_db.get("divorced") and kids_cnt > 0:
+            return bot.reply_to(
+                message,
+                f"🧥 Вы похлопали себя по нагрудному карману — свидетельство о браке давно порвано, зато там лежит удостоверение <b>«👨‍👦 Отец-одиночка»</b> (сыновей на воспитании: <b>{kids_cnt}</b>)!",
+                parse_mode="HTML"
+            )
+        return bot.reply_to(message, "🧥 Вы похлопали себя по нагрудному карману пиджака, но там пусто. Вы пока холосты! Напишите <code>!свадьба</code> в ответ избраннику.", parse_mode="HTML")
+
+    p_db = paid_collection.find_one({"uid": partner_id}) or {}
+    my_card = _person_card(uid)
+    p_card = _person_card(partner_id)
+    n1 = html.escape(my_card["name"])
+    n2 = html.escape(p_card["name"])
+
+    u1, u2 = min(uid, partner_id), max(uid, partner_id)
+    cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
+    m_ts = u_db.get("married_at") or p_db.get("married_at")
+    if m_ts:
+        dt_str = datetime.datetime.fromtimestamp(m_ts).strftime("%d.%m.%Y")
+        days_str = f"{max(1, int((time.time() - m_ts) // 86400) + 1)} дн. вместе"
+    else:
+        dt_str = "Старая гвардия"
+        days_str = "Почётный союз"
+
+    reg_name = html.escape(u_db.get("married_by") or p_db.get("married_by") or "Регистраторша Зинаида Павловна v4.0")
+    all_kids = list(set(list(u_db.get("children", [])) + list(p_db.get("children", []))))
+    fam_id = _family_bank_id(uid, u_db)
+    fam_bal = (db['family_banks'].find_one({"_id": fam_id}) or {}).get("balance", 0) if fam_id else 0
+
+    text = (
+        f"🧥 <b>{n1}</b> расстёгивает пиджак и достаёт из нагрудного кармана ламинированный бланк Госзнака:\n\n"
+        f"📜 <b>СВИДЕТЕЛЬСТВО О БРАКЕ</b>\n"
+        f"<code>СЕРИЯ {cert_num}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💍 <b>Супруг I:</b> <a href='tg://user?id={uid}'>{n1}</a>\n"
+        f"💍 <b>Супруг II:</b> <a href='tg://user?id={partner_id}'>{n2}</a>\n"
+        f"📅 <b>Регистрация:</b> {dt_str} ({days_str})\n"
+        f"👦 <b>Сыновей в семье:</b> {len(all_kids)} / 5\n"
+        f"🏦 <b>Семейный общак:</b> {fam_bal} 💎\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👩‍⚖️ <i>Штамп ЗАГСа: {reg_name}</i>"
+    )
+    bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == '!развод')
 def divorce(message):
@@ -4268,18 +4330,28 @@ def divorce(message):
         return
         
     PENALTY = 1000
-    
-    # ⬇ было: precheck + два update_one
     charged = paid_collection.find_one_and_update(
         {"uid": uid, "partner_id": partner_id, "bounty_points": {"$gte": PENALTY}},
-        {"$unset": {"partner_id": "", "married_at": ""}, "$inc": {"bounty_points": -PENALTY}}
+        {"$unset": {"partner_id": "", "married_at": "", "married_by": ""}, "$set": {"divorced": True}, "$inc": {"bounty_points": -PENALTY}}
     )
     if not charged:
         bot.reply_to(message, f"💸 Госпошлина за развод — {PENALTY} 💎. У вас недостаточно средств.")
         return
-    paid_collection.update_one({"uid": partner_id, "partner_id": uid}, {"$unset": {"partner_id": "", "married_at": ""}})
+    paid_collection.update_one(
+        {"uid": partner_id, "partner_id": uid},
+        {"$unset": {"partner_id": "", "married_at": "", "married_by": ""}, "$set": {"divorced": True}}
+    )
     
     bot.reply_to(message, f"💔 **СИНДИКАТ РАСПАЛСЯ!**\n\nВы расторгли Кибер-Брак с [{partner_id}](tg://user?id={partner_id}).\n_За развод в одностороннем порядке с вас удержан штраф в размере {PENALTY} 💎._", parse_mode="Markdown")
+
+    # Проверяем достижение «Отец-одиночка» у обоих бывших супругов
+    if len(user_data.get("children", [])) > 0:
+        if grant_achievement(uid, "single_dad", "Отец-одиночка", "👨‍👦", message.chat.id):
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+    p_doc = paid_collection.find_one({"uid": partner_id}) or {}
+    if len(p_doc.get("children", [])) > 0:
+        if grant_achievement(partner_id, "single_dad", "Отец-одиночка", "👨‍👦", message.chat.id):
+            paid_collection.update_one({"uid": partner_id}, {"$inc": {"immunity": 1}})
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!брак', '!свадьба'])
 def empty_marriage(message):
@@ -4387,11 +4459,7 @@ def text_profile(message):
         elif karma <= -50: title = "🗑 Изгой (Под надзором)"
         
         # Сборка ачивок
-        ach_map = {
-            "schizo": "🤡", "black_streak": "🎰", "gladiator": "⚔️", 
-            "santa": "🎅", "safecracker": "🏦", "patriarch": "👨‍👩‍👧‍👦",
-            "drought": "💩", "rat": "🔪", "cuckold": "🦌", "bankrupt": "📉"
-        }
+        ach_map = {a["id"]: a["icon"] for a in ACHIEVEMENT_CATALOG}
         achievements = user_data.get("achievements", [])
         ach_text = " ".join([ach_map.get(a, "") for a in achievements if a in ach_map])
         if not ach_text: ach_text = "Нет наград"
@@ -4821,8 +4889,8 @@ def adopt_child(message):
         
     parent_data = paid_collection.find_one({"uid": parent_id}) or {}
     children = parent_data.get("children", [])
-    if len(children) >= 3:
-        return bot.reply_to(message, "🚫 Лимит: максимум 3 ребенка на одного опекуна! Частный детдом закрыт.")
+    if len(children) >= 5:
+        return bot.reply_to(message, "🚫 Лимит: максимум 5 сыновей на одного опекуна! Частный детдом закрыт.")
         
     PRICE = 1000
     if parent_data.get("bounty_points", 0) < PRICE:
@@ -4864,11 +4932,17 @@ def handle_adopt_response(call):
         return bot.edit_message_text("❌ У опекуна кончились деньги! Усыновление отменено.", call.message.chat.id, call.message.message_id)
     paid_collection.update_one({"uid": child_id}, {"$set": {"parent_id": parent_id}})
     
-    # ТРЕКЕР: Патриарх
+    # ТРЕКЕР: Патриарх (3 ребёнка в браке) и Многодетный отец (5 сыновей)
     p_data = paid_collection.find_one({"uid": parent_id}) or {}
-    if p_data.get("partner_id") and len(p_data.get("children", [])) >= 3:
+    kids_now = len(p_data.get("children", []))
+    if p_data.get("partner_id") and kids_now >= 3:
         grant_achievement(parent_id, "patriarch", "Патриарх семьи", "👨‍👩‍👧‍👦", call.message.chat.id)
-        grant_achievement(p_data["partner_id"], "patriarch", "Патриарх семьи", "👨‍👩‍‍👧‍👦", call.message.chat.id)
+        grant_achievement(p_data["partner_id"], "patriarch", "Патриарх семьи", "👨‍👩‍👧‍👦", call.message.chat.id)
+    if kids_now >= 5:
+        if grant_achievement(parent_id, "many_kids", "Многодетный отец", "👨‍👦‍👦", call.message.chat.id):
+            paid_collection.update_one({"uid": parent_id}, {"$inc": {"immunity": 2, "jackpot_shards": 5}})
+        if p_data.get("partner_id") and grant_achievement(p_data["partner_id"], "many_kids", "Многодетный отец", "👨‍👦‍👦", call.message.chat.id):
+            paid_collection.update_one({"uid": p_data["partner_id"]}, {"$inc": {"immunity": 2, "jackpot_shards": 5}})
 
     bot.edit_message_text(f"🎊 **НОВАЯ КИБЕР-СЕМЬЯ!** 🎊\n\nСкайнет официально поздравляет!\n[{call.from_user.first_name}](tg://user?id={child_id}) теперь является наследником.\n\n_Напишите `!семья`, чтобы посмотреть ваше древо._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
@@ -5584,8 +5658,10 @@ def homewrecker_action(message):
     paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "homewrecker"}})
     
     # Принудительный развод
-    paid_collection.update_one({"uid": target_id}, {"$unset": {"partner_id": ""}})
-    paid_collection.update_one({"uid": partner_id}, {"$unset": {"partner_id": ""}})
+    paid_collection.update_one({"uid": target_id}, {"$unset": {"partner_id": "", "married_at": "", "married_by": ""}, "$set": {"divorced": True}})
+    paid_collection.update_one({"uid": partner_id}, {"$unset": {"partner_id": "", "married_at": "", "married_by": ""}, "$set": {"divorced": True}})
+    if len(target_data.get("children", [])) > 0 and grant_achievement(target_id, "single_dad", "Отец-одиночка", "👨‍👦", message.chat.id):
+        paid_collection.update_one({"uid": target_id}, {"$inc": {"immunity": 1}})
     
     # Вешаем клеймо Рогоносца на 7 дней
     import time

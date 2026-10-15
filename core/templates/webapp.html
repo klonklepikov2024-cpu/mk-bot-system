@@ -471,17 +471,17 @@
 
                 <!-- 🔥 БЛОК СИНДИКАТА И РОДОСЛОВНОЙ В НОВОМ СТИЛЕ 🔥 -->
         <div id="familyBlock" class="hidden surface rounded-3xl p-4 mb-6 shadow-xl border border-pink-500/30 relative overflow-hidden">
-            <div class="flex justify-between items-center mb-3 relative z-10">
-                <div class="flex items-center gap-2">
-                    <span class="text-xl">💍</span>
-                    <div>
-                        <h3 class="font-extrabold text-base text-white leading-tight">Ваш Синдикат</h3>
-                        <p class="text-[10px] text-gray-400">Мужская родословная & общак</p>
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-3 relative z-10">
+                <div class="flex items-center gap-2 min-w-0">
+                    <span class="text-xl shrink-0">💍</span>
+                    <div class="min-w-0">
+                        <h3 class="font-extrabold text-base text-white leading-tight truncate">Ваш Синдикат</h3>
+                        <p class="text-[10px] text-gray-400 truncate">Родословная & общак</p>
                     </div>
                 </div>
-                <div class="flex items-center gap-1.5">
-                    <button id="marriageCertBtn" onclick="openMarriageCertModal()" class="hidden bg-gradient-to-r from-yellow-500/20 to-amber-500/20 border border-yellow-400/50 px-2.5 py-1 rounded-full text-[10px] font-black text-yellow-300 active:scale-95 transition-transform">📜 Свидетельство</button>
-                    <div class="bg-yellow-500/10 border border-yellow-500/30 px-3 py-1 rounded-full text-xs font-black text-yellow-400">🏦 <span id="uiFamilyBank">0</span> 💎</div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button id="marriageCertBtn" onclick="openMarriageCertModal()" class="hidden whitespace-nowrap bg-gradient-to-r from-yellow-500/20 to-amber-500/20 border border-yellow-400/50 px-2.5 py-1 rounded-full text-[10px] font-black text-yellow-300 active:scale-95 transition-transform">📜 Свидетельство</button>
+                    <div class="whitespace-nowrap bg-yellow-500/10 border border-yellow-500/30 px-2.5 py-1 rounded-full text-xs font-black text-yellow-400">🏦 <span id="uiFamilyBank">0</span> 💎</div>
                 </div>
             </div>
 
@@ -492,7 +492,7 @@
                 </div>
                 <div class="bg-black/35 p-2.5 rounded-2xl border border-white/10 text-center">
                     <div class="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Сыновья</div>
-                    <div class="font-extrabold text-xs text-white"><span id="uiKidsCount" class="text-pink-400">0</span> / 3</div>
+                    <div class="font-extrabold text-xs text-white"><span id="uiKidsCount" class="text-pink-400">0</span> / 5</div>
                 </div>
                 <div class="bg-black/35 p-2.5 rounded-2xl border border-white/10 text-center">
                     <div class="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">В клане</div>
@@ -1434,7 +1434,7 @@
                 </div>
                 <div class="bg-black/40 p-2.5 rounded-2xl border border-white/10 text-center">
                     <div class="text-[9px] text-gray-400 uppercase">Сыновья</div>
-                    <div id="rdKids" class="font-black text-sm text-pink-400">0 / 3</div>
+                    <div id="rdKids" class="font-black text-sm text-pink-400">0 / 5</div>
                 </div>
             </div>
 
@@ -1504,7 +1504,7 @@
                     <div class="w-10 h-10 rounded-full border-2 border-sky-400/70 bg-sky-950/60 flex items-center justify-center text-lg shadow-[0_0_12px_rgba(56,189,248,0.4)] -rotate-12">👩‍⚖️</div>
                     <div class="text-left">
                         <div class="text-[10px] font-black text-sky-300 uppercase tracking-wider">Штамп ЗАГСа Скайнета</div>
-                        <div class="text-[9px] text-gray-400">Регистраторша Зинаида Павловна v4.0</div>
+                        <div id="mcRegistrar" class="text-[9px] text-gray-400">Регистраторша Зинаида Павловна v4.0</div>
                     </div>
                 </div>
                 <span class="text-[10px] font-mono text-yellow-400 font-bold border border-yellow-400/50 px-1.5 py-0.5 rounded rotate-[-6deg]">ГОСЗНАК</span>
@@ -1809,6 +1809,8 @@
             document.getElementById('mcSpouse2').innerText = c.spouse2;
             document.getElementById('mcDate').innerText = c.date;
             document.getElementById('mcDays').innerText = c.days ? (c.days + " дн. вместе") : "Почётный союз";
+            const regEl = document.getElementById('mcRegistrar');
+            if (regEl) regEl.innerText = c.registrar || 'Регистраторша Зинаида Павловна v4.0';
             document.getElementById('marriageCertModal').classList.remove('hidden');
         }
 
@@ -1829,7 +1831,7 @@
                 document.getElementById('rdTitle').innerText = c.title || 'Гражданин';
                 document.getElementById('rdKarma').innerText = (c.karma > 0 ? '+' : '') + (c.karma || 0);
                 document.getElementById('rdPoints').innerText = fmtNum(c.points || 0) + ' 💎';
-                document.getElementById('rdKids').innerText = (c.kids || 0) + ' / 3';
+                document.getElementById('rdKids').innerText = (c.kids || 0) + ' / 5';
                 document.getElementById('rdSpouse').innerText = c.partner_name ? ('💍 ' + c.partner_name) : (c.married ? 'В браке' : 'Холост');
 
                 const medBox = document.getElementById('rdMedals');
