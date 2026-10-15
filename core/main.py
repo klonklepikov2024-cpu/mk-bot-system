@@ -278,27 +278,46 @@ def get_profile():
     user_info = json.loads(parsed_data['user'])
     uid = user_info['id']
     
-    import time
+    import time, datetime
     db['users'].update_one({"_id": uid}, {"$set": {"last_webapp_visit": time.time()}}, upsert=True)
     
     user_db = paid_collection.find_one({"uid": uid}) or {}
     
-    # --- СОБИРАЕМ ИНФУ О СЕМЬЕ ДЛЯ WEB APP ---
+    # --- СОБИРАЕМ ИНФУ О СЕМЬЕ И СВИДЕТЕЛЬСТВЕ О БРАКЕ ---
     partner_id = user_db.get("partner_id")
     partner_name = None
-    family_balance = 0 # По умолчанию копилка пуста
+    family_balance = 0
+    marriage_cert = None
     if partner_id:
-        p_stat = db['chat_stats'].find_one({"uid": partner_id}) or {}
-        partner_name = p_stat.get("name", f"ID {partner_id}")
+        p_card = _person_card(partner_id)
+        partner_name = p_card["name"]
+        my_card = _person_card(uid)
+        p_db = paid_collection.find_one({"uid": partner_id}) or {}
+        m_ts = user_db.get("married_at") or p_db.get("married_at")
+        if m_ts:
+            dt_str = datetime.datetime.fromtimestamp(m_ts).strftime("%d.%m.%Y")
+            days_cnt = max(1, int((time.time() - m_ts) // 86400) + 1)
+        else:
+            dt_str = "Старая гвардия"
+            days_cnt = None
+        u1, u2 = min(uid, partner_id), max(uid, partner_id)
+        cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
+        marriage_cert = {
+            "number": cert_num,
+            "spouse1": my_card["name"],
+            "spouse1_id": uid,
+            "spouse2": partner_name,
+            "spouse2_id": partner_id,
+            "date": dt_str,
+            "days": days_cnt
+        }
         
-    # Баланс копилки: у супругов общий, у детей - копилка родителей
     _fam_id = _family_bank_id(uid, user_db)
     if _fam_id:
         family_balance = (db['family_banks'].find_one({"_id": _fam_id}) or {}).get("balance", 0)
         
     children_count = len(user_db.get("children", []))
     
-    # 🏆 Зал Славы: авто-выдача достижений по счётчикам + каталог для мини-аппа
     pf = db['potato_fields'].find_one({"uid": uid}) or {}
     newly = _auto_grant_achievements(uid, user_db, pf)
     if newly:
@@ -309,13 +328,16 @@ def get_profile():
         "rubles": user_db.get("cashback_balance", 0),
         "karma": user_db.get("social_rating", 0),
         "partner": partner_name,
+        "partner_id": partner_id,
+        "marriage_cert": marriage_cert,
         "kids": children_count,
         "family": {
             "partner": _person_card(partner_id) if partner_id else None,
             "kids": [_person_card(c) for c in user_db.get("children", [])[:3]],
             "parent": _person_card(user_db["parent_id"]) if user_db.get("parent_id") else None,
         },
-        "family_balance": family_balance, # 🔥 ДОБАВИЛИ ЭТУ СТРОЧКУ 🔥
+        "family_balance": family_balance,
+        "family_tree": build_family_webapp_nodes(uid),
         "golden_frame": user_db.get("golden_frame", False),
         "achievements": user_db.get("achievements", []),
         "ach_catalog": _build_ach_catalog(user_db, pf),
@@ -332,21 +354,53 @@ def api_player_card():
         target = int(data.get('target'))
     except (TypeError, ValueError):
         return jsonify({"error": "Нет цели"}), 400
+
+    # Разрешаем смотреть любого родственника из генеалогического древа
+    tree_nodes = build_family_webapp_nodes(uid, max_nodes=60)
+    allowed_roles = {uid: "вы"}
+    for n in tree_nodes:
+        allowed_roles[n["uid"]] = n["role"]
+        if n.get("partner"):
+            allowed_roles[n["partner"]["uid"]] = n["partner"]["role"]
+
     me = paid_collection.find_one({"uid": uid}) or {}
-    relatives = set(me.get("children", [])) | {me.get("partner_id"), me.get("parent_id")}
-    if target not in relatives:
-        return jsonify({"error": "Открывать можно только карточки своей семьи"}), 403
+    if me.get("partner_id"):
+        allowed_roles.setdefault(me["partner_id"], "муж")
+    if me.get("parent_id"):
+        allowed_roles.setdefault(me["parent_id"], "отец")
+    for c_id in me.get("children", []):
+        allowed_roles.setdefault(c_id, "сын")
+
+    if target not in allowed_roles:
+        return jsonify({"error": "Открывать можно только карточки членов своего Синдиката"}), 403
+
     t = paid_collection.find_one({"uid": target}) or {}
+    u_doc = db['users'].find_one({"_id": target}) or {}
     karma = t.get("social_rating", 0)
     if karma >= 100: title = "😇 Святой"
-    elif karma <= -100: title = "💀 Враг Народа"
-    elif karma <= -50: title = "🗑 Изгой"
-    else: title = "👑 VIP-Персона" if t.get("is_vip") else "🔴 Гражданин Империи"
+    elif karma >= 75: title = "🕊 Праведник"
+    elif karma >= 50: title = "✨ Добряк"
+    elif karma <= -100: title = "💀 Изгой"
+    elif karma <= -75: title = "😈 Злодей"
+    elif karma <= -50: title = "🔥 Хулиган"
+    else: title = "👑 VIP-Персона" if (t.get("is_vip") or u_doc.get("is_vip")) else "👤 Гражданин"
+
     have = set(t.get("achievements", []))
     card = _person_card(target)
-    card.update({"title": title, "karma": karma, "kids": len(t.get("children", [])),
-                 "married": bool(t.get("partner_id")),
-                 "medals": [a["icon"] for a in ACHIEVEMENT_CATALOG if a["id"] in have]})
+    t_part_id = t.get("partner_id")
+    t_part_name = _person_card(t_part_id)["name"] if t_part_id else None
+
+    card.update({
+        "title": title,
+        "role": allowed_roles.get(target, "родня"),
+        "karma": karma,
+        "points": t.get("bounty_points", 0),
+        "kids": len(t.get("children", [])),
+        "married": bool(t_part_id),
+        "partner_name": t_part_name,
+        "custom_tag": u_doc.get("custom_tag") or "",
+        "medals": [{"icon": a["icon"], "name": a["name"]} for a in ACHIEVEMENT_CATALOG if a["id"] in have]
+    })
     return jsonify(card)
 
 @app.route('/api/buy_ticket', methods=['POST'])
@@ -4147,24 +4201,61 @@ def handle_marriage_response(call):
         return
         
     if action == 'no':
-        bot.edit_message_text(f"💔 **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={partner_id}) отверг(ла) предложение. Капиталы остаются раздельными.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"💔 **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={partner_id}) отверг предложение. Регистраторша Зинаида молча закрыла папку.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
         return
         
     if init_data.get("bounty_points", 0) < PRICE:
-        bot.edit_message_text("❌ Свадьба отменяется: у инициатора закончились деньги на оплату пошлины!", call.message.chat.id, call.message.message_id)
+        bot.edit_message_text("❌ Свадьба отменяется: у жениха закончились алмазы на оплату госпошлины!", call.message.chat.id, call.message.message_id)
         return
         
-    # Списываем деньги и женим!  ⬇ атомарно: баланс + оба свободны
+    import time, random, html
+    now_ts = time.time()
     charged = paid_collection.find_one_and_update(
         {"uid": initiator_id, "partner_id": {"$exists": False}, "bounty_points": {"$gte": PRICE}},
-        {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id}}
+        {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id, "married_at": now_ts}}
     )
     if not charged:
         bot.edit_message_text("❌ Свадьба отменяется: у инициатора нет средств или он уже в браке!", call.message.chat.id, call.message.message_id)
         return
-    paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id}})
-    
-    bot.edit_message_text(f"🎊 **НОВЫЙ СИНДИКАТ ЗАРЕГИСТРИРОВАН!** 🎊\n\nСкайнет официально объявляет вас Кибер-Партнерами!\n\n_Пошлина {PRICE} 💎 уплачена. Теперь вы одна семья!_", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id, "married_at": now_ts}})
+
+    init_card = _person_card(initiator_id)
+    part_card = _person_card(partner_id)
+    n1 = html.escape(init_card["name"])
+    n2 = html.escape(part_card["name"])
+    u1, u2 = min(initiator_id, partner_id), max(initiator_id, partner_id)
+    cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
+
+    speeches = [
+        (
+            f"👩‍⚖️ <b>КИБЕР-ЗАГС СКАЙНЕТА (Регистраторша Зинаида Павловна v4.0):</b>\n"
+            f"<i>Поправляет фиолетовый начёс, сдувает пыль с терминала и включает синтвейв-марш Мендельсона...</i>\n\n"
+            f"«Дорогие брачующиеся! Сегодня в чертогах Матрицы соединяются два одиноких сервера — "
+            f"<a href='tg://user?id={initiator_id}'>{n1}</a> и <a href='tg://user?id={partner_id}'>{n2}</a>! "
+            f"Штамп в цифровой паспорт поставлен, общак открыт. Горько, пацаны!»"
+        ),
+        (
+            f"👩‍⚖️ <b>ГЛАВНЫЙ РЕГИСТРАТОР СИНДИКАТОВ (Галина Кибернетовна):</b>\n"
+            f"<i>Протирает очки на цепочке и с размаху бьёт голографической печатью по столу...</i>\n\n"
+            f"«Именем Центрального Процессора и властью, данной мне Админом, объявляю граждан "
+            f"<a href='tg://user?id={initiator_id}'>{n1}</a> и <a href='tg://user?id={partner_id}'>{n2}</a> "
+            f"законными Кибер-Мужьями! Теперь ваши грядки поливаются вместе, а копилка — общая!»"
+        ),
+        (
+            f"👩‍⚖️ <b>ДВОРЕЦ БРАКОСОЧЕТАНИЯ СКАЙНЕТА (Регистраторша Зинаида):</b>\n"
+            f"<i>Смахивает скупую пиксельную слезу умиления...</i>\n\n"
+            f"«Товарищи! Союз между <a href='tg://user?id={initiator_id}'>{n1}</a> и <a href='tg://user?id={partner_id}'>{n2}</a> "
+            f"официально прошит в блокчейн Империи! Можете обменяться кольцами и паролями от сейфов!»"
+        )
+    ]
+
+    ceremony_text = (
+        f"🎊 <b>НОВЫЙ БРАЧНЫЙ СИНДИКАТ ЗАРЕГИСТРИРОВАН!</b> 🎊\n\n"
+        f"{random.choice(speeches)}\n\n"
+        f"📜 <b>Свидетельство о браке:</b> <code>{cert_num}</code>\n"
+        f"💸 <i>Госпошлина {PRICE} 💎 уплачена. Посмотреть бланк свидетельства с печатью можно в Мини-Аппе (Профиль → Ваш Синдикат)!</i>"
+    )
+    bot.edit_message_text(ceremony_text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == '!развод')
 def divorce(message):
@@ -4181,12 +4272,12 @@ def divorce(message):
     # ⬇ было: precheck + два update_one
     charged = paid_collection.find_one_and_update(
         {"uid": uid, "partner_id": partner_id, "bounty_points": {"$gte": PENALTY}},
-        {"$unset": {"partner_id": ""}, "$inc": {"bounty_points": -PENALTY}}
+        {"$unset": {"partner_id": "", "married_at": ""}, "$inc": {"bounty_points": -PENALTY}}
     )
     if not charged:
         bot.reply_to(message, f"💸 Госпошлина за развод — {PENALTY} 💎. У вас недостаточно средств.")
         return
-    paid_collection.update_one({"uid": partner_id, "partner_id": uid}, {"$unset": {"partner_id": ""}})
+    paid_collection.update_one({"uid": partner_id, "partner_id": uid}, {"$unset": {"partner_id": "", "married_at": ""}})
     
     bot.reply_to(message, f"💔 **СИНДИКАТ РАСПАЛСЯ!**\n\nВы расторгли Кибер-Брак с [{partner_id}](tg://user?id={partner_id}).\n_За развод в одностороннем порядке с вас удержан штраф в размере {PENALTY} 💎._", parse_mode="Markdown")
 
@@ -4781,8 +4872,101 @@ def handle_adopt_response(call):
 
     bot.edit_message_text(f"🎊 **НОВАЯ КИБЕР-СЕМЬЯ!** 🎊\n\nСкайнет официально поздравляет!\n[{call.from_user.first_name}](tg://user?id={child_id}) теперь является наследником.\n\n_Напишите `!семья`, чтобы посмотреть ваше древо._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
+def compute_male_kinship_roles(uid, gd, partner_of, kids_of):
+    """Вычисляет строго мужские роли всех родственников относительно uid."""
+    roles = {uid: "вы"}
+    my_part = partner_of(uid)
+    if my_part:
+        roles[my_part] = "муж"
+
+    # 1. Предки вверх (отец / батя -> дед -> прадед -> пращур)
+    gen_up = {0: [uid] + ([my_part] if my_part else [])}
+    p1 = gd(uid).get("parent_id")
+    if p1:
+        p2 = partner_of(p1)
+        gen_up[1] = [p1] + ([p2] if p2 else [])
+        roles[p1] = "отец"
+        if p2 and p2 not in roles:
+            roles[p2] = "батя"
+    else:
+        gen_up[1] = []
+
+    # Если у мужа есть родители — подпишем их
+    if my_part:
+        mp1 = gd(my_part).get("parent_id")
+        if mp1 and mp1 not in roles:
+            roles[mp1] = "отец мужа"
+            mp2 = partner_of(mp1)
+            if mp2 and mp2 not in roles:
+                roles[mp2] = "батя мужа"
+            for bil in kids_of(mp1):
+                if bil not in roles:
+                    roles[bil] = "брат мужа"
+
+    for lvl in range(2, 7):
+        cur_anc = []
+        lbl = "дед" if lvl == 2 else ("прадед" if lvl == 3 else "пращур")
+        for node in gen_up.get(lvl - 1, []):
+            up = gd(node).get("parent_id")
+            if up and up not in roles:
+                roles[up] = lbl
+                cur_anc.append(up)
+                up_p = partner_of(up)
+                if up_p and up_p not in roles:
+                    roles[up_p] = lbl
+                    cur_anc.append(up_p)
+        gen_up[lvl] = cur_anc
+
+    # 2. Потомки вниз от uid (сын -> внук -> правнук)
+    gen_down = {0: [uid]}
+    for lvl in range(1, 6):
+        cur_desc = []
+        lbl = "сын" if lvl == 1 else ("внук" if lvl == 2 else ("правнук" if lvl == 3 else "потомок"))
+        sp_lbl = "зять" if lvl == 1 else f"муж {lbl}а"
+        for node in gen_down.get(lvl - 1, []):
+            for ch in kids_of(node):
+                if ch not in roles:
+                    roles[ch] = lbl
+                cur_desc.append(ch)
+                ch_p = partner_of(ch)
+                if ch_p and ch_p not in roles:
+                    roles[ch_p] = sp_lbl
+        gen_down[lvl] = cur_desc
+
+    # 3. Братья и племянники (дети отцов)
+    for par in gen_up.get(1, []):
+        for sib in kids_of(par):
+            if sib not in roles:
+                roles[sib] = "брат"
+                sib_p = partner_of(sib)
+                if sib_p and sib_p not in roles:
+                    roles[sib_p] = "муж брата"
+                for neph in kids_of(sib):
+                    if neph not in roles:
+                        roles[neph] = "племянник"
+                        neph_p = partner_of(neph)
+                        if neph_p and neph_p not in roles:
+                            roles[neph_p] = "муж племянника"
+                        for gneph in kids_of(neph):
+                            if gneph not in roles:
+                                roles[gneph] = "внуч. племянник"
+
+    # 4. Дяди и двоюродные братья (дети дедов)
+    for gp in gen_up.get(2, []):
+        for unc in kids_of(gp):
+            if unc not in roles:
+                roles[unc] = "дядя"
+                unc_p = partner_of(unc)
+                if unc_p and unc_p not in roles:
+                    roles[unc_p] = "муж дяди"
+                for cous in kids_of(unc):
+                    if cous not in roles:
+                        roles[cous] = "двоюр. брат"
+
+    return roles
+
 def build_family_tree_text(uid, get_data, get_name, max_nodes=45):
-    """Полное древо: предки (до 6 поколений), супруги (в т.ч. из других семей), дети, внуки и дальше вниз."""
+    """Полное древо в чате со строго мужскими подписями родства (отец, батя, дед, брат, сын, внук, племянник)."""
     import html
     cache = {}
     def gd(u):
@@ -4798,26 +4982,45 @@ def build_family_tree_text(uid, get_data, get_name, max_nodes=45):
                 if c not in ids: ids.append(c)
         return ids
 
-    # 1. поднимаемся к самому старшему известному предку
+    roles = compute_male_kinship_roles(uid, gd, partner_of, kids_of)
+    def role_tag(u):
+        r = roles.get(u, "родня")
+        return f" <i>[{r}]</i>"
+
     seen, cur = {uid}, uid
     for _ in range(6):
         p = gd(cur).get("parent_id")
+        if not p:
+            pt = partner_of(cur)
+            if pt: p = gd(pt).get("parent_id")
         if not p or p in seen: break
         seen.add(p); cur = p
     root = cur
 
     shown, lines, state = set(), [], {"n": 0, "cut": False}
+    def icon_for(u):
+        r = roles.get(u, "")
+        if u == uid: return "👉"
+        if u == root or r in ("дед", "прадед", "пращур"): return "👑"
+        if r in ("отец", "батя", "отец мужа", "батя мужа"): return "🧔‍♂️"
+        if r in ("сын", "внук", "правнук", "племянник"): return "👦"
+        return "🧑"
+
     def label(u):
-        if u == uid: s = f"👉 <b>{html.escape(str(get_name(u)))}</b> (вы)"
-        elif u == root: s = f"👑 {link(u)}"
-        else: s = f"👤 {link(u)}"
+        ic = icon_for(u)
+        if u == uid:
+            s = f"{ic} <b>{html.escape(str(get_name(u)))}</b> <i>[вы]</i>"
+        else:
+            s = f"{ic} {link(u)}{role_tag(u)}"
         p = partner_of(u)
         if p:
-            s += f" 💍 {link(p)}"
+            p_name = f"<b>{html.escape(str(get_name(p)))}</b> <i>[вы]</i>" if p == uid else f"{link(p)}{role_tag(p)}"
+            s += f" 💍 {p_name}"
             pp = gd(p).get("parent_id")
             if pp and pp not in shown and pp != u:
-                s += f" <i>(род. из семьи {link(pp)})</i>"
+                s += f" <i>(род. из семьи {link(pp)}{role_tag(pp)})</i>"
         return s
+
     def walk(u, prefix, is_last, depth):
         if state["n"] >= max_nodes:
             state["cut"] = True; return
@@ -4833,7 +5036,6 @@ def build_family_tree_text(uid, get_data, get_name, max_nodes=45):
             walk(c, cp, i == len(kids) - 1, depth + 1)
     walk(root, "", True, 0)
 
-    # если вы вошли в семью через брак и ваша ветка не попала в дерево выше - покажем и её
     if uid not in shown:
         lines.append("")
         walk(uid, "", True, 0)
@@ -4841,6 +5043,74 @@ def build_family_tree_text(uid, get_data, get_name, max_nodes=45):
     if state["cut"] or len(text) > 3900:
         text = text[:3850].rsplit("\n", 1)[0] + "\n… <i>(показаны не все родственники)</i>"
     return text
+
+def build_family_webapp_nodes(uid, max_nodes=35):
+    """Формирует список узлов родословной с мужскими ролями для карточки Синдиката в Мини-Аппе."""
+    cache, name_cache = {}, {}
+    def gd(u):
+        if u not in cache:
+            cache[u] = paid_collection.find_one({"uid": u}) or {}
+        return cache[u]
+    def gname(u):
+        if u not in name_cache:
+            st = db['chat_stats'].find_one({"uid": u}) or {}
+            us = db['users'].find_one({"_id": u}) or {}
+            name_cache[u] = st.get("name") or us.get("first_name") or f"ID {u}"
+        return name_cache[u]
+    def partner_of(u): return gd(u).get("partner_id")
+    def kids_of(u):
+        ids = list(gd(u).get("children", []))
+        p = partner_of(u)
+        if p:
+            for c in gd(p).get("children", []):
+                if c not in ids: ids.append(c)
+        return ids
+
+    u_doc = gd(uid)
+    if not u_doc.get("partner_id") and not u_doc.get("parent_id") and not u_doc.get("children"):
+        return []
+
+    roles = compute_male_kinship_roles(uid, gd, partner_of, kids_of)
+    seen, cur = {uid}, uid
+    for _ in range(6):
+        p = gd(cur).get("parent_id")
+        if not p:
+            pt = partner_of(cur)
+            if pt: p = gd(pt).get("parent_id")
+        if not p or p in seen: break
+        seen.add(p); cur = p
+    root = cur
+
+    shown, nodes = set(), []
+    def walk(u, depth):
+        if len(nodes) >= max_nodes: return
+        shown.add(u)
+        p = partner_of(u)
+        if p: shown.add(p)
+        r_u = roles.get(u, "родня")
+        node_item = {
+            "uid": u,
+            "name": gname(u),
+            "role": r_u,
+            "is_me": (u == uid),
+            "depth": depth,
+            "partner": None
+        }
+        if p:
+            node_item["partner"] = {
+                "uid": p,
+                "name": gname(p),
+                "role": roles.get(p, "муж"),
+                "is_me": (p == uid)
+            }
+        nodes.append(node_item)
+        for c in [k for k in kids_of(u) if k not in shown]:
+            walk(c, depth + 1)
+
+    walk(root, 0)
+    if uid not in shown:
+        walk(uid, 0)
+    return nodes
 
 def _family_bank_id(uid, user_data):
     """ID общей копилки: у супругов общий, у детей - копилка родителей (если родитель в браке)."""
