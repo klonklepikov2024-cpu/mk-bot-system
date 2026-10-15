@@ -8,8 +8,11 @@ class TelegramExceptionHandler(telebot.ExceptionHandler):
     _last = {"key": None, "t": 0.0}
 
     def handle(self, exception):
-        import time
-        error_trace = traceback.format_exc()
+        import time, re
+        import requests
+        if isinstance(exception, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+            return True  # сеть моргнула, не баг кода
+        error_trace = re.sub(r"bot\d+:[\w-]+", "bot***", traceback.format_exc())
         
         # Анти-спам: одинаковую ошибку чаще раза в минуту не повторяем
         key = error_trace[-300:]

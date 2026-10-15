@@ -36,6 +36,28 @@ def has_active_group_restriction(uid):
         return False  # бессрочные муты Скайнет отмечает флагом net_mute_until (п.1); приказ мог быть отменён ИИ-проверкой
     return _ts(last.get("timestamp")) + last.get("duration", 0) > time.time()
 
+MIN_MSGS_TO_WITHDRAW = 50
+
+def has_good_status(user_doc):
+    """Тот же набор статусов, что в main.py → has_good_status. Игровой тег (tag_game) статуса не даёт."""
+    good_tags = ("Верифицирован МК", "Спонсор_Одобрен", "Свободен", "Индульгенция")
+    trusted_tag = not user_doc.get("tag_game") and user_doc.get("custom_tag") in good_tags
+    return bool(user_doc.get("is_vip") or user_doc.get("is_queer") or user_doc.get("is_verified")
+                or user_doc.get("is_sponsor") or user_doc.get("is_free") or user_doc.get("indulgence")
+                or trusted_tag)
+
+def is_newbie_without_status(uid):
+    """True, если в наших чатах меньше MIN_MSGS_TO_WITHDRAW сообщений И нет ни одного статуса. Админов не трогаем."""
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    if uid == OWNER_ID or uid in ADMIN_CHAT_IDS:
+        return False
+    u = db['users'].find_one({"_id": uid}) or {}
+    if has_good_status(u):
+        return False
+    r = list(db['chat_stats'].aggregate([{"$match": {"uid": uid}}, {"$group": {"_id": None, "n": {"$sum": "$msgs"}}}]))
+    msgs = int(r[0]["n"]) if r else 0
+    return msgs < MIN_MSGS_TO_WITHDRAW
+
 def can_withdraw(uid):
     """Единая проверка для ВСЕХ путей вывода: (можно?, причина)"""
     u = paid_collection.find_one({"uid": uid}) or {}
@@ -47,6 +69,8 @@ def can_withdraw(uid):
         return False, "есть непогашенный кредит МФО."
     if has_active_group_restriction(uid):
         return False, "в чатах сети действует мут или блокировка."
+    if is_newbie_without_status(uid):
+        return False, f"вывод откроется после {MIN_MSGS_TO_WITHDRAW} сообщений в наших чатах или получения статуса (VIP / BEYOND / верификация / индульгенция / тег)."
     return True, ""
 
 def take_points_capped(uid, amount):

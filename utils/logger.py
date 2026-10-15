@@ -18,7 +18,14 @@ def log_error(e, context="Неизвестная ошибка"):
 def notify_admin_on_error(bot, e, context="Критический сбой"):
     """Пишет ошибку в консоль И отправляет в админский чат Telegram"""
     log_error(e, context)
+    # Сетевой сбой хостинга (нет сети, таймаут) — не баг кода, админов не будим
+    import requests
+    if isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return
     error_trace = traceback.format_exc()
+    # Токен бота в URL запроса не должен попадать в чат
+    import re
+    error_trace = re.sub(r"bot\d+:[\w-]+", "bot***", error_trace)
     
     # Сначала экранируем, потом режем, чтобы влез в лимит Telegram (4096 символов)
     safe_trace = html.escape(error_trace)[-3500:]
