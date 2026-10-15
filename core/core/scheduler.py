@@ -1,0 +1,1128 @@
+import random
+import datetime
+import time
+from zoneinfo import ZoneInfo
+
+# 🔥 ПРАВИЛЬНЫЕ ИМПОРТЫ ПОД ТВОЙ TELEBOT 🔥
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.mongodb import MongoDBJobStore
+from database.mongo import client, db, paid_collection 
+
+from config import APP_URL
+from utils.logger import logger
+from utils.netcfg import cfg, job_on  # тумблеры и время автособытий — из панели /glaz
+WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
+
+tz = ZoneInfo("Europe/Moscow")
+
+jobstores = {
+    'default': MongoDBJobStore(client=client, database='elite_bot_db', collection='apscheduler_jobs')
+}
+
+scheduler = BackgroundScheduler(jobstores=jobstores, timezone=tz)
+
+# Копия настроек семян для планировщика
+CROPS = {
+    "radish": {"name": "🧅 Лук", "grow_time": 4*3600, "water_req": False},
+    "mizuna": {"name": "🥬 Мизуна", "grow_time": 6*3600, "water_req": False},
+    "tomato": {"name": "🍅 Помидоры", "grow_time": 12*3600, "water_req": False},
+    "sunflower": {"name": "🌻 Подсолнух", "grow_time": 24*3600, "water_req": True},
+    "watermelon": {"name": "🍉 Арбуз", "grow_time": 48*3600, "water_req": True},
+    "chestnut": {"name": "🌳 К. Каштан", "grow_time": 7*24*3600, "water_req": True},
+    "rhododendron": {"name": "🌸 Рододендрон", "grow_time": 3*24*3600, "water_req": True},
+    "parsley": {"name": "🌿 Петрушка", "grow_time": 8*3600, "water_req": False},
+    "cactus": {"name": "🌵 Кактус", "grow_time": 5*24*3600, "water_req": False},
+    "amanita": {"name": "🍄 К-Мухомор", "cost_shards": 20, "grow_time": 2*3600, "water_req": True},
+    "money_tree": {"name": "🌳 Ден. Дерево", "grow_time": 5*24*3600, "water_req": True},
+    "potato": {"name": "🥔 Картоха", "grow_time": 8*3600, "water_req": True},
+    # 🔥 НОВЫЕ ОВОЩИ 🔥
+    "carrot": {"name": "🥕 Морковь", "grow_time": 6*3600, "water_req": False},
+    "cabbage": {"name": "🥦 Капуста", "grow_time": 16*3600, "water_req": True},
+    "beetroot": {"name": "🫜 Свёкла", "grow_time": 10*3600, "water_req": True},
+    # 🔥 ГРИБНАЯ ПЕЩЕРА (ЗА ОСКОЛКИ) 🔥
+    "champignon": {"name": "🍄 Шампиньон", "grow_time": 3*3600, "water_req": False},
+    "chanterelle": {"name": "🍄 Лисичка", "grow_time": 6*3600, "water_req": False},
+    "truffle": {"name": "🍄 Трюфель", "grow_time": 12*3600, "water_req": True}
+}
+
+# ================= 1. БАЗОВЫЕ ФУНКЦИИ И РОЗЫГРЫШИ =================
+
+def schedule_message_deletion(chat_id, message_id, delay_seconds, bot_instance=None):
+    db['sec_cleanup'].insert_one({
+        "chat_id": chat_id, "msg_id": message_id,
+        "delete_at": time.time() + delay_seconds, "tries": 0
+    })
+
+def delete_task_executor(chat_id, message_id):
+    from core.bot import bot
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        error_text = f"❌ Не смог удалить msg {message_id} в чате {chat_id}: {e}"
+        print(error_text) # Оставим для логов сервера
+        
+        # 👇 Добавляем отправку в админский чат
+        from config import STAFF_GROUP_ID
+        try:
+            bot.send_message(STAFF_GROUP_ID, error_text)
+        except Exception:
+            pass
+
+def check_giveaways_task():
+    now = datetime.datetime.now()
+    
+    # 1. ЗАВЕРШЕНИЕ РОЗЫГРЫШЕЙ (Те, чье время вышло)
+    ended_gws = db['giveaways'].find({"status": "active", "end_date": {"$lte": now}})
+    
+    for gw in ended_gws:
+        gw_id = gw["_id"]
+        last_ticket = gw.get("last_ticket_num", 0)
+        
+        if last_ticket == 0:
+            db['giveaways'].update_one({"_id": gw_id}, {"$set": {"status": "completed", "winner": "Нет участников"}})
+            continue
+            
+        winners_count = gw.get("winners_count", 1)
+        # Защита: не можем выдать больше призов, чем всего куплено билетов
+        winners_count = min(winners_count, last_ticket)
+        
+        # Выбираем уникальные номера билетов
+        winning_numbers = random.sample(range(1, last_ticket + 1), winners_count)
+        tickets = list(db['tickets_history'].find({"giveaway_id": gw_id}))
+        winners_info = [] 
+        
+        for win_num in winning_numbers:
+            for t in tickets:
+                r_start, r_end = map(int, t['range'].split('-'))
+                if r_start <= win_num <= r_end:
+                    winners_info.append({"uid": t['uid'], "name": t['name'], "ticket": win_num})
+                    break
+                    
+        winners_names_str = ", ".join([f"{w['name']} (№{w['ticket']})" for w in winners_info])
+        
+        db['giveaways'].update_one({"_id": gw_id}, {
+            "$set": {
+                "status": "completed", 
+                "winner_name": winners_names_str, 
+                "winners_data": winners_info 
+            }
+        })
+        
+        from core.bot import bot
+        from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+        
+        # Уведомляем каждого счастливчика в личку
+        for w in winners_info:
+            try:
+                bot.send_message(w['uid'], f"🏆 **ВЫ СОРВАЛИ КУШ В РОЗЫГРЫШЕ!** 🏆\n\nВаш билет №{w['ticket']} оказался победным! Скоро с вами свяжутся администраторы для выдачи приза: **{gw['title']}**.", parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        # Отчет админам
+        admin_report = f"🎉 **РОЗЫГРЫШ ЗАВЕРШЕН!**\n\n🎁 Приз: **{gw['title']}**\n🏆 Победители:\n"
+        for i, w in enumerate(winners_info, 1):
+            admin_report += f"{i}. {w['name']} (`{w['uid']}`) — Билет №{w['ticket']}\n"
+            
+        try:
+            bot.send_message(STAFF_GROUP_ID, admin_report, message_thread_id=PRIZES_THREAD_ID, parse_mode="Markdown")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    # 2. ПРОГРЕВ ГОРЯЩИХ РОЗЫГРЫШЕЙ (Те, кому осталось < 1 часа)
+    almost_ended = db['giveaways'].find({
+        "status": "active", 
+        "teased": {"$ne": True}, # Ищем те, о которых мы еще не трубили
+        "end_date": {"$lte": now + datetime.timedelta(hours=1)}
+    })
+    
+    for gw in almost_ended:
+        # Ставим флажок, что мы уже прорекламировали этот розыгрыш
+        db['giveaways'].update_one({"_id": gw["_id"]}, {"$set": {"teased": True}})
+        
+        time_left_mins = int((gw['end_date'] - now).total_seconds() / 60)
+        text = f"🔥 <b>ГОРИТ РОЗЫГРЫШ: {gw['title']}!</b>\n\n⏳ Осталось всего <b>{time_left_mins} минут</b>!\n🎟 Куплено билетов: {gw.get('total_tickets', 0)}. Шансы на победу АНОМАЛЬНО ВЫСОКИЕ!\n\nЗалетай, пока время не вышло!"
+        
+        broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
+
+def tick_blue_safe():
+    """Каждую минуту добавляем 5 очков в Сейф Данных"""
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 5}})
+
+def check_auctions_task():
+    """Проверяет и завершает лоты Теневого Аукциона"""
+    import time
+    now = int(time.time())
+    ended_lots = list(db['auction_lots'].find({"status": "active", "end_time": {"$lte": now}}))
+    
+    for lot in ended_lots:
+        leader_uid = lot.get("leader_uid")
+        
+        if not leader_uid:
+            # Никто не сделал ставку, лот сгорает
+            db['auction_lots'].update_one({"_id": lot["_id"]}, {"$set": {"status": "unsold"}})
+            continue
+            
+        # Выдаем предмет победителю
+        item_id = lot["type_id"]
+        if item_id == "casino_owner":
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"casino_owner_until": int(now) + (3 * 86400)}})
+        elif item_id == "offshore":
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"offshore_until": int(now) + (7 * 86400)}})
+        elif item_id == "golden_frame":
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"golden_frame": True}})
+        else:
+            paid_collection.update_one({"uid": leader_uid}, {"$push": {"elite_items": item_id}})
+            
+        db['auction_lots'].update_one({"_id": lot["_id"]}, {"$set": {"status": "sold"}})
+        
+        # Сжигаем потраченные очки победителя навсегда, чтобы выкачать их из экономики!
+        # (Они были списаны в момент ставки)
+        
+        # Уведомляем победителя
+        from core.bot import bot
+        try:
+            bot.send_message(leader_uid, f"🔨 <b>ПРОДАНО!</b>\n\nПоздравляем! Ваша ставка в <b>{lot['current_bid']} 💎</b> сыграла.\nВы получили артефакт <b>{lot['icon']} «{lot['name']}»</b>!\n\n<i>Он добавлен в вашу базу Скайнета и готов к использованию в чатах.</i>", parse_mode="HTML")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def auto_spawn_auction_lot():
+    """Скайнет автоматически выставляет случайный элитный лот на аукцион"""
+    if not job_on("job_auction"): return   # выключено в панели /glaz
+    import time
+    import random
+    from database.mongo import db
+    from core.bot import bot
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    # Защита: не выставляем новый лот, если старый еще не продан (чтобы не сбивать фокус)
+    if db['auction_lots'].count_documents({"status": "active"}) > 0:
+        logger.info("🔨 Авто-аукцион: слот пропущен — прошлый лот ещё не завершён")
+        return
+
+    lots_pool = [
+        {"id": "thanos", "name": "Перчатка Таноса", "desc": "Замутить половину чата на 15 мин (!щелчок).", "icon": "🧤"},
+        {"id": "homewrecker", "name": "Разлучник", "desc": "Расторгнуть чужой брак (!развести @user).", "icon": "💔"},
+        {"id": "raider", "name": "Рейдерский Захват", "desc": "Украсть урожай с чужой фермы (!рейд @user).", "icon": "🧲"},
+        {"id": "gods_voice", "name": "Глас Бога", "desc": "Сообщение во все чаты сети (!глас текст).", "icon": "📢"},
+        {"id": "guantanamo", "name": "Ордер Гуантанамо", "desc": "Неснимаемый мут на 24ч (!гуантанамо @user).", "icon": "🚷"},
+        {"id": "casino_owner", "name": "Владелец Казино", "desc": "3 дня: 10% с рулетки и дуэлей идут вам.", "icon": "🎰"},
+        {"id": "offshore", "name": "Офшорный Счет", "desc": "Неделя без комиссий на Черном Рынке.", "icon": "🏦"},
+        {"id": "master_key", "name": "Мастер-Ключ", "desc": "100% вскрытие сейфа (!вскрыть синий/красный).", "icon": "🗝"},
+        {"id": "golden_frame", "name": "Золотая Рамка", "desc": "Элитный статус в профиле навсегда.", "icon": "⚜️"},
+        {"id": "personal_npc", "name": "Личный NPC", "desc": "Создать свою RP-команду (!создать_нпс).", "icon": "🤖"}
+    ]
+    
+    lot = random.choice(lots_pool)
+    end_time = int(time.time()) + (48 * 3600) # Даем 48 часов на торги (выходные)
+    
+    # Вкидываем в базу
+    db['auction_lots'].insert_one({
+        "type_id": lot["id"],
+        "name": lot["name"],
+        "desc": lot["desc"],
+        "icon": lot["icon"],
+        "current_bid": 1000, 
+        "leader_uid": None,
+        "end_time": end_time,
+        "status": "active"
+    })
+    
+    # Громогласный анонс на всю сеть
+    all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
+    
+    msg_text = (
+        f"🕷 <b>ОТКРЫТ ТЕНЕВОЙ АУКЦИОН!</b> 🕷\n\n"
+        f"Скайнет выставил на торги уникальный лот:\n"
+        f"<b>{lot['icon']} {lot['name']}</b>\n\n"
+        f"<i>{lot['desc']}</i>\n\n"
+        f"Торги продлятся ровно 48 часов. Перебейте ставку конкурентов в Игровом Кабинете, чтобы забрать артефакт себе!"
+    )
+    
+    try:
+        from core.scheduler import schedule_message_deletion
+        bot_username = bot.get_me().username
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🕷 Перейти к торгам", url=f"https://t.me/{bot_username}?start=app_auction"))
+        
+        for cid in all_chats:
+            try: 
+                sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
+                schedule_message_deletion(cid, sent_msg.message_id, 172800, bot)
+                time.sleep(0.3)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+# ================= 2. ПЕРСОНАЛЬНЫЕ УВЕДОМЛЕНИЯ В ЛС =================
+
+def personal_farm_notifications():
+    """Проверяет грядки, пишет в ЛС и генерирует нападение Вредителей!"""
+    if not job_on("job_farm_dm"): return   # выключено в панели /glaz
+    from core.bot import bot
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    from config import APP_URL
+    WEBAPP_URL = f"{APP_URL.rstrip('/')}/webapp"
+    
+    now = int(time.time())
+    growing_plots = db['farm_plots'].find({"status": "growing"})
+    
+    # === ЗООПАРК СКАЙНЕТА ===
+    possible_pests = [
+        {"id": "goat", "emoji": "🐐", "name": "Соседская Коза", "targets": ["money_tree", "chestnut", "cactus", "amanita", "champignon", "chanterelle", "truffle"]},
+        {"id": "crow", "emoji": "🐦", "name": "Наглая Ворона", "targets": ["sunflower", "watermelon"]},
+        {"id": "caterpillar", "emoji": "🐛", "name": "Троянская Гусеница", "targets": ["radish", "mizuna", "tomato", "parsley", "cabbage"]},
+        {"id": "locust", "emoji": "🚁", "name": "Дрон-Саранча", "targets": ["sunflower", "rhododendron"]},
+        {"id": "mole", "emoji": "⛏", "name": "Крипто-Крот", "targets": ["money_tree", "watermelon", "tomato", "carrot", "beetroot"]},
+        {"id": "colorado", "emoji": "🪲", "name": "Колорадский Жук", "targets": ["potato"]},
+        {"id": "miner", "emoji": "👾", "name": "Жук-Майнер", "targets": ["ALL"]}
+    ]
+    
+    for plot in growing_plots:
+        seed = plot.get("seed_type")
+        if seed not in CROPS: continue
+        crop = CROPS[seed]
+        uid = plot["uid"]
+        planted_at = plot.get("planted_at", now)
+        last_watered = plot.get("last_watered", now)
+        
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🚜 На ферму", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm")))
+
+        # --- 1. ПРОВЕРКА НА ВРЕДИТЕЛЯ (ЕСЛИ УЖЕ ЗАРАЖЕНО) ---
+        if plot.get("pest"):
+            spawned_at = plot["pest"].get("spawned_at", now)
+            if now - spawned_at > 10800: # 🔥 ИЗМЕНИЛИ НА 3 ЧАСА (10800 сек) 🔥
+                db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}, "$unset": {"pest": ""}})
+                try: bot.send_message(uid, f"🥀 <b>УРОЖАЙ УНИЧТОЖЕН!</b>\n{plot['pest']['name']} {plot['pest']['emoji']} сожрал(а) ваш {crop['name']}.", parse_mode="HTML", reply_markup=markup)
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            continue # Если заражено, воду не проверяем и не растем
+            
+        # --- 2. ГЕНЕРАЦИЯ НОВОГО НАПАДЕНИЯ (Шанс 2% каждые 15 мин) ---
+        if random.randint(1, 100) <= 2: 
+            # 🔥 ПРОВЕРКА ПУГАЛА 🔥
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            if u_info.get("scarecrow_until", 0) > now:
+                continue # Пугало активно, вредитель улетает!
+                
+            valid_pests = [p for p in possible_pests if seed in p["targets"] or "ALL" in p["targets"]]
+            if valid_pests:
+                pest = random.choice(valid_pests)
+                
+                # Проверка АВТО-ЩИТА!
+                user_db = paid_collection.find_one({"uid": uid}) or {}
+                if user_db.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                        {"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
+                    try: bot.send_message(uid, f"🛡 <b>ЗАЩИТА ФЕРМЫ!</b>\n{pest['name']} {pest['emoji']} попытался сожрать ваш {crop['name']}, но ваш <b>Щит Иммунитета</b> ударил его током!\n<i>(Списан 1 щит, урожай спасен)</i>", parse_mode="HTML", reply_markup=markup)
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                else:
+                    # Заражаем грядку!
+                    db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"pest": {"id": pest["id"], "name": pest["name"], "emoji": pest["emoji"], "spawned_at": now}}})
+                    try: bot.send_message(uid, f"🚨 <b>ТРЕВОГА НА ФЕРМЕ!</b>\nНа ваш {crop['name']} напал(а) <b>{pest['name']} {pest['emoji']}</b>!\n\nУ вас есть <b>3 часа</b>, чтобы зайти в Кабинет и прогнать вредителя, иначе он сожрет урожай!", parse_mode="HTML", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("👞 ПРОГНАТЬ!", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=farm"))))
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                continue # Прерываем цикл, так как напали
+
+        # --- 3. ОБЫЧНЫЕ ПРОВЕРКИ ВОДЫ И СОЗРЕВАНИЯ ---
+        if crop["water_req"] and (now - last_watered > 86400):
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
+            
+            # ТРЕКЕР: Засуха
+            paid_collection.update_one({"uid": uid}, {"$inc": {"withered_crops_count": 1}})
+            u_data = paid_collection.find_one({"uid": uid})
+            if u_data.get("withered_crops_count", 0) == 5 and "drought" not in u_data.get("achievements", []):
+                paid_collection.update_one({"uid": uid}, {"$push": {"achievements": "drought"}})
+                try: bot.send_message(uid, "🏆 <b>ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!</b>\nВы получили значок: 💩 <b>«Засуха»</b>! Худший фермер года.", parse_mode="HTML")
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                
+            try: bot.send_message(uid, f"🥀 <b>ПЛОХИЕ НОВОСТИ!</b>\nВаш {crop['name']} засох без воды.", parse_mode="HTML", reply_markup=markup)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            continue
+            
+        if crop["water_req"] and (now - last_watered > 72000) and not plot.get("water_warning"):
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"water_warning": True}})
+            try: bot.send_message(uid, f"⚠️ <b>ТРЕВОГА НА УЧАСТКЕ!</b>\nВаш {crop['name']} скоро засохнет! (Осталось <4 часов)", parse_mode="HTML", reply_markup=markup)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            continue
+            
+        if now >= planted_at + crop["grow_time"]:
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
+            try: bot.send_message(uid, f"✅ <b>УРОЖАЙ ГОТОВ!</b>\nВаш {crop['name']} полностью созрел!", parse_mode="HTML", reply_markup=markup)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def colorado_beetle_invasion():
+    """Расползание Колорадского Жука по картофельному полю: с уведомлением в ЛС и защитой обработанных полей"""
+    if not job_on("job_beetle"): return   # выключено в панели /glaz
+    import time, random
+    from core.bot import bot
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    from config import APP_URL
+    now = int(time.time())
+    
+    for field in db['potato_fields'].find():
+        # Обработанное поле (Обработка в мини-аппе) жуки обходят стороной
+        if field.get("protected_until", 0) > now:
+            continue
+        cells = list(field.get('cells', []))
+        if len(cells) != 100:
+            continue
+        fid = field["_id"]
+        new_hits, eaten = 0, 0
+        
+        for i in range(100):
+            # Если тут жук, он пытается перепрыгнуть на соседнюю клетку (шанс 20%)
+            if cells[i] == -1 and random.randint(1, 100) <= 20:
+                valid_neighbors = []
+                if i % 10 != 0: valid_neighbors.append(i-1)  # Лево
+                if i % 10 != 9: valid_neighbors.append(i+1)  # Право
+                if i >= 10: valid_neighbors.append(i-10)     # Верх
+                if i < 90: valid_neighbors.append(i+10)      # Низ
+                
+                target = random.choice(valid_neighbors)
+                # Жук съедает растущую картошку (точечно, чтобы не затереть действия игрока)
+                if cells[target] > 0:
+                    res = db['potato_fields'].update_one({"_id": fid, f"cells.{target}": cells[target]}, {"$set": {f"cells.{target}": -1}})
+                    if res.modified_count:
+                        cells[target] = -1
+                        eaten += 1
+                    
+            # Если тут картошка и она еще растет, есть 1% шанс, что жук прилетит сам
+            elif cells[i] > 0 and (now - cells[i] < 8 * 3600):
+                if random.randint(1, 100) <= 1:
+                    res = db['potato_fields'].update_one({"_id": fid, f"cells.{i}": cells[i]}, {"$set": {f"cells.{i}": -1}})
+                    if res.modified_count:
+                        cells[i] = -1
+                        new_hits += 1
+        
+        beetles = sum(1 for c in cells if c == -1)
+        # Уведомление в ЛС: не чаще раза в 3 часа, и только если жуки реально появились или поели кусты
+        if (new_hits or eaten) and beetles > 0 and now - field.get("beetle_notified_at", 0) > 3 * 3600:
+            try:
+                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🥔 На поле", web_app=WebAppInfo(url=f"{APP_URL.rstrip('/')}/webapp?tab=farm")))
+                bot.send_message(
+                    field["uid"],
+                    f"🪲 <b>ЖУК НА КАРТОФЕЛЬНОМ ПОЛЕ!</b>\n\nЗаражено клеток: <b>{beetles}</b>" + (f", уже съедено кустов: <b>{eaten}</b>" if eaten else "") +
+                    "\nЖук ползёт на соседние кусты и множится.\n\n"
+                    "🦶 Раздавить бесплатно: тап по жуку.\n"
+                    "☠️ <b>Дуст</b> (100 💎): уберёт всех жуков разом.\n"
+                    "🧪 <b>Обработка</b> (150 💎): 12 часов жуки не прилетают и не ползут.",
+                    parse_mode="HTML", reply_markup=markup
+                )
+            except Exception as e:
+                logger.debug(f"Игнор ошибки: {e}")
+            db['potato_fields'].update_one({"_id": fid}, {"$set": {"beetle_notified_at": now}})
+
+def daily_bonus_reminder():
+    """Вечернее пуш-уведомление для тех, кто забыл забрать Ежедневный Бонус"""
+    if not job_on("job_bonus_push"): return   # выключено в панели /glaz
+    from core.bot import bot
+    now = datetime.datetime.now()
+    
+    # Ищем тех, у кого УЖЕ есть стрик (им есть что терять)
+    forgetful_users = paid_collection.find({"bonus_streak": {"$gt": 0}})
+    
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🎁 Забрать бонус", web_app=WebAppInfo(url=f"{WEBAPP_URL}?tab=profile"))
+    )
+    
+    count = 0
+    for user in forgetful_users:
+        last_bonus = user.get("last_bonus_date")
+        if not last_bonus:
+            continue
+            
+        lb = last_bonus if last_bonus.tzinfo else last_bonus.replace(tzinfo=datetime.timezone.utc)
+        days_passed = (datetime.datetime.now(tz).date() - lb.astimezone(tz).date()).days
+        
+        # Если прошло >20 часов, но <48 часов
+        # Значит, бонус либо уже доступен, либо будет доступен с минуты на минуту, а стрик еще жив!
+        if days_passed == 1:  # вчера забирали, сегодня ещё нет: стрик сгорит в 00:00 по Москве
+            uid = user.get("uid")
+            streak = user.get("bonus_streak", 1)
+            try:
+                bot.send_message(
+                    uid,
+                    f"⚠️ **Ваш стрик ({streak} дн.) скоро сгорит!**\n\n"
+                    f"Кажется, вы забыли забрать свой Ежедневный Бонус. Зайдите в Игровой Кабинет, чтобы не потерять прогресс и получить Осколок рулетки на 7-й день!",
+                    parse_mode="Markdown",
+                    reply_markup=markup
+                )
+                count += 1
+                time.sleep(0.05) # Защита от Flood Wait
+            except Exception:
+                pass
+                
+    if count > 0:
+        from config import STAFF_GROUP_ID
+        try: bot.send_message(STAFF_GROUP_ID, f"📢 **Умные Push-уведомления:** Отправлено {count} напоминаний о бонусе.")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+# ================= 3. РЕКЛАМНАЯ ВОРОНКА ПО ЧАТАМ =================
+
+def broadcast_teaser(text, button_text, tab_name):
+    """Безопасная рассылка по группам (Исправленная версия с диплинком)"""
+    from core.bot import bot
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
+    
+    # 1. Получаем юзернейм бота, чтобы сделать ссылку на него
+    bot_username = bot.get_me().username
+    deep_link = f"https://t.me/{bot_username}?start=app_{tab_name}"
+    
+    # 2. Делаем ОБЫЧНУЮ url-кнопку (Они разрешены в группах!)
+    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton(text=button_text, url=deep_link))
+    
+    # 3. Собираем чаты
+    all_target_chats = []
+    all_target_chats.extend(chat_ids_mk.values())
+    all_target_chats.extend(chat_ids_parni.values())
+    all_target_chats.extend(chat_ids_ns.values())
+    all_target_chats.extend(chat_ids_gayznak.values())
+    all_target_chats.extend(chat_ids_rainbow.values())
+    
+    unique_chats = set(all_target_chats)
+    
+    if not unique_chats:
+        return
+
+    success_count = 0
+    first_error = None
+    
+    # scheduler.py -> функция broadcast_teaser
+
+    for chat_id in unique_chats:
+        try:
+            # СОХРАНЯЕМ РЕЗУЛЬТАТ ОТПРАВКИ В ПЕРЕМЕННУЮ sent_msg
+            sent_msg = bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
+            
+            # ДОБАВЛЯЕМ ТАЙМЕР НА УДАЛЕНИЕ (10800 секунд = 3 часа)
+            schedule_message_deletion(chat_id, sent_msg.message_id, 10800, bot)
+            
+            success_count += 1
+            import time
+            time.sleep(0.05) # Пауза от бана Telegram
+        except Exception as e:
+            if not first_error:
+                first_error = str(e)
+            
+    # Отчет админам
+    report_msg = f"📢 <b>Зазывала:</b> Реклама отправлена в {success_count} из {len(unique_chats)} чатов."
+    if success_count == 0 and first_error:
+        report_msg += f"\n\n🚨 <b>ПРИЧИНА ОШИБКИ:</b> <code>{first_error}</code>"
+        
+    try:
+        bot.send_message(STAFF_GROUP_ID, report_msg, parse_mode='HTML')
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def smart_funnel_teaser():
+    """Умная рекламная карусель с системой Анти-Попугай"""
+    if not job_on("job_funnel"): return   # выключено в панели /glaz
+    # 🔥 ПРЕДОХРАНИТЕЛЬ: СВЕРКА С БАЗОЙ ДАННЫХ 🔥
+    now = int(time.time())
+    timer_data = db['settings'].find_one({"_id": "teaser_timer"})
+    last_time = timer_data.get("last_time", 0) if timer_data else 0
+    
+    # Интервал — из панели /glaz (по умолчанию 6 часов). Если прошло меньше — молча выходим
+    if now - last_time < cfg("job_funnel_every_h") * 3600:
+        return
+
+    teasers = [
+        {
+            "text": f"🎰 <b>УДАЧА ЛЮБИТ СМЕЛЫХ!</b>\n\nДавно не крутили Гача-Рулетку? А ведь там можно выбить <b>Осколки джекпота</b>, <b>Щиты иммунитета</b> или реальные <b>Рубли</b>!\n\n<i>Стоимость прокрута: всего {cfg('casino_spin_price')} 💎</i>",
+            "btn": "🎰 Крутить барабан",
+            "tab": "profile"
+        },
+        {
+            "text": f"⚒ <b>НАКОВАЛЬНЯ ЖДЕТ!</b>\n\nЗнали ли вы, что из <b>{cfg('craft_shards')} Осколков</b> можно выковать Золотой Билет (VIP)? А за 3000 очков и 2 щита — получить статус <b>BEYOND</b>!\n\n<i>Проверьте свой инвентарь.</i>",
+            "btn": "🎒 Открыть Рюкзак",
+            "tab": "inventory"
+        },
+        {
+            "text": "💱 <b>ОБМЕННИК КЭШБЭКА</b>\n\nНакопили рубли, но не хватает до минималки на вывод? \nОбменяйте их на Очки Бдительности с выгодой до <b>30%</b> и играйте по-крупному!",
+            "btn": "💼 В Финансы",
+            "tab": "finance"
+        },
+        {
+            "text": "⚖️ <b>ТЕНЕВАЯ ЭКОНОМИКА И ГОРЯЩИЕ СКИДКИ!</b>\n\nИщете дешевый VIP или Ордер на Арест? Загляните на Черный Рынок — там игроки сбрасывают цены на артефакты!\nА если лот висит долго, Скайнет автоматически делает на него <b>УЦЕНКУ до -50%</b>!\n\n<i>Покупайте с огромной выгодой или продавайте свои излишки.</i>",
+            "btn": "🛒 На Черный Рынок",
+            "tab": "market"
+        },
+        {
+            "text": "🎁 <b>ЕЖЕДНЕВНЫЕ ЗАДАНИЯ И КЕЙСЫ!</b>\n\nСкайнет щедро награждает за активность! Общайтесь в чатах, крутите рулетку и открывайте <b>Деревянные, Серебряные и Золотые Сундуки</b> каждый день!\n\n<i>Прогресс сбрасывается в полночь. Успейте забрать награды!</i>",
+            "btn": "📋 Открыть Кейсы",
+            "tab": "tasks"
+        },
+        {
+            "text": "💼 <b>СТАНЬ АГЕНТОМ СКАЙНЕТА И ЗАБЕРИ 2000₽!</b>\n\nПриглашай друзей в наши чаты по своей ссылке и лутай <b>Кейсы Агента</b> за каждого активного реферала! Внутри кейсов — VIP-статусы, Щиты, Осколки и реальные рубли.\n\n🏆 <b>КОНКУРС МЕСЯЦА:</b> Приведи от 50 человек за месяц, войди в ТОП-5 лучших агентов и забери <b>Универсальный Сертификат до 2000₽</b> или тысячи Очков!\n\n<i>Твоя персональная ссылка и Таблица Лидеров уже ждут в Игровом Кабинете.</i>",
+            "btn": "🔗 Моя партнерская ссылка",
+            "tab": "finance"
+        },
+        {
+            "text": "🎁 <b>РЕАЛЬНЫЕ ПРИЗЫ УЖЕ ЖДУТ!</b>\n\nВ Игровом Кабинете запущены новые Розыгрыши! Покупай билеты за Очки Бдительности и выигрывай ценные призы, сертификаты и VIP-доступ.\n\n<i>Чем больше билетов, тем выше шанс сорвать куш! Победитель определяется честным рандомом.</i>",
+            "btn": "🎟 Закупиться билетами",
+            "tab": "giveaways"
+        },
+        {
+            "text": "🚜 <b>ПОРА СОБИРАТЬ УРОЖАЙ!</b>\n\nТвоя Кибер-Ферма простаивает! Посади помидоры, вырасти подсолнух или рискни с мухомором. Собирай Очки, Осколки рулетки и Ключи от банковских Сейфов!\n\n<i>Не забудь вовремя полить грядки, иначе всё засохнет!</i>",
+            "btn": "🌱 На Кибер-Участок",
+            "tab": "farm"
+        },
+        {
+            "text": "🗄 <b>ВЗЛОМ СИСТЕМЫ!</b>\n\nВ Финансовом Сейфе лежат реальные рубли, а в Сейфе Данных — горы Очков! Добудь Ключ на ферме, угадай PIN-код и забери весь банк, пока это не сделал кто-то другой!\n\n<i>Лимит взломов ограничен. Расти Конские Каштаны, чтобы получить больше попыток!</i>",
+            "btn": "🔐 Взломать Сейф",
+            "tab": "farm"
+        }
+    ]
+    
+    # Ситуативные тизеры
+    blue_safe = db['safes_state'].find_one({"_id": "safe_blue"})
+    if blue_safe and blue_safe.get("balance", 0) > 4000:
+        teasers.append({
+            "text": f"🚨 <b>СЕЙФ ДАННЫХ ПУХНЕТ!</b> 🚨\n\nТам скопилось уже <b>{blue_safe['balance']} 💎</b>!\nДобудьте Синий Ключ на ферме и подберите пин-код из 4 цифр, чтобы забрать всё!",
+            "btn": "🗄 Взломать Сейф",
+            "tab": "farm"
+        })
+        
+    fund = db['casino_bank'].find_one({"_id": "premium_fund"})
+    if fund and fund.get('balance', 0) > 800: 
+        teasers.append({
+            "text": f"🏆 <b>ФОНД TELEGRAM PREMIUM РАСТЕТ!</b>\n\nСобрано уже <b>{fund['balance']} ⭐️</b>!\nКто заберет главный куш в рулетке? Сделай прокрут первым!",
+            "btn": "🎰 Испытать удачу",
+            "tab": "profile"
+        })
+
+    # 🔥 АНТИ-ПОПУГАЙ: Исключаем то, что отправляли в прошлый раз 🔥
+    last_btn = timer_data.get("last_btn", "") if timer_data else ""
+    available_teasers = [t for t in teasers if t["btn"] != last_btn]
+    
+    # Страховка: если список почему-то опустел, берем исходный
+    if not available_teasers:
+        available_teasers = teasers
+        
+    selected = random.choice(available_teasers)
+    
+    # Записываем новое время сброса И ЗАПОМИНАЕМ ВЫБРАННЫЙ ПОСТ в базу
+    db['settings'].update_one(
+        {"_id": "teaser_timer"}, 
+        {"$set": {
+            "last_time": now,
+            "last_btn": selected["btn"]
+        }}, 
+        upsert=True
+    )
+
+    broadcast_teaser(selected["text"], selected["btn"], selected["tab"])
+
+import os
+import json
+import requests
+
+def holiday_contest_scout():
+    """Разведчик Скайнета: Ищет крупные праздники за 10 дней и предлагает лонгрид-конкурс"""
+    if not job_on("job_scout"): return   # выключено в панели /glaz
+    now = datetime.datetime.now(tz)
+    target_date = now + datetime.timedelta(days=10) # Ищем за 10 дней до события
+    month_day = target_date.strftime("%m-%d")
+
+    # Календарь КРУПНЫХ тематических праздников для мужского комьюнити
+    major_holidays = {
+        "12-31": "Новый Год",
+        "02-14": "День всех влюбленных (Конкурс для парочек и тех, кто в активном поиске)",
+        "02-23": "23 Февраля (Суровый мужской праздник)",
+        "04-01": "1 Апреля (День смеха и нелепых ситуаций)",
+        "05-01": "Майские праздники (Открытие шашлычного сезона и отдых на природе)",
+        "06-01": "Первый день Лета (Пляжный сезон, шорты и пресс)",
+        "10-31": "Хэллоуин (Время темных и мистических образов)",
+        "11-11": "Всемирный день холостяка (Показываем себя во всей красе)",
+        "11-19": "Международный мужской день"
+    }
+
+    if month_day not in major_holidays:
+        return
+
+    holiday_name = major_holidays[month_day]
+    
+    # 1. Проверяем, нет ли уже запущенного конкурса
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if active: 
+        return # Не перебиваем текущий, пусть юзеры спокойно доиграют
+        
+    # 2. Проверяем, не предлагали ли мы это уже (защита от спама)
+    year = now.year
+    proposed_id = f"scout_{month_day}_{year}"
+    if db['settings'].find_one({"_id": proposed_id}): 
+        return 
+        
+    db['settings'].insert_one({"_id": proposed_id, "status": "proposed"})
+
+    # 3. Генерируем конкурс через Gemini (Мега-Промпт по твоему ТЗ)
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key: return
+
+    system_prompt = """Ты креативный директор мужского Telegram-сообщества. Твоя задача — придумать МАСШТАБНЫЙ тематический фотоконкурс.
+    Верни СТРОГО валидный JSON без маркдауна (без ```json).
+    Формат ответа:
+    {
+      "contest_id": "уникальный_id",
+      "title": "Яркое название с эмодзи",
+      "description": "Короткое описание",
+      "announcement_text": "ОГРОМНЫЙ текст поста-анонса и правил (используй HTML теги <b> и <i>). ОБЯЗАТЕЛЬНО СКОПИРУЙ ЭТУ СТРУКТУРУ ТЕКСТА:
+      
+      [Завлекающее вступление в брутальном мужском стиле]
+      
+      <b>⚡️ Суть конкурса</b>
+      [Что нужно сфоткать в тематике праздника]
+      
+      <b>🚀 Как участвовать?</b>
+      1. Сделай снимок.
+      2. Перейди в личку бота и отправь команду /contest.
+      3. [Еще один пункт по теме]
+      
+      <b>🎭 Номинации — выбери свою категорию!</b>
+      [Придумай 4-5 крутых названий номинаций по теме конкурса и распиши, за что они даются]
+           
+      <b>💡 Советы для успеха</b>
+      [Дай 3 полезных совета по свету, фону и композиции]
+      
+      <b>📜 ПРАВИЛА КОНКУРСА</b>
+      - Кто участвует: Мужчины 18+
+      - 1 аккаунт = максимум 3 фото
+      - Никаких ИИ, стоков и чужих фото из интернета
+      - Разрешены работы 18+ 🔞 (откровенные материалы будут эксклюзивно размещены в группе «Без предрассудков»)
+      - Пользователи не имеющие действующих блокировок
+      - Запрет на реалистичную кровь (жесть) и политику
+      - Накрутка = мгновенная дисквалификация",
+      "prizes": {
+         "1": {"text": "5000 💎 + VIP + 1500 ₽"},
+         "2": {"text": "3000 💎 + 3 Ордера на Арест"},
+         "3": {"text": "1000 💎 + 2 Щита Иммунитета"}
+      }
+    }"""
+    
+    models_queue = ["gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.6-flash"]
+    ai_data = None
+    
+    for model_name in models_queue:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        for attempt in range(2):
+            try:
+                payload = {
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"parts": [{"text": f"Придумай крутой конкурс на тему: {holiday_name}"}]}],
+                    "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
+                }
+                res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+                if res.status_code == 200:
+                    raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    clean_text = raw_text.strip()
+                    if clean_text.startswith("```json"): clean_text = clean_text[7:]
+                    if clean_text.startswith("```"): clean_text = clean_text[3:]
+                    if clean_text.endswith("```"): clean_text = clean_text[:-3]
+                    ai_data = json.loads(clean_text.strip())
+                    
+                    # 👇 ДОБАВЬТЕ ЭТУ СТРОЧКУ СЮДА:
+                    ai_data['deadline_date'] = target_date.strftime("%Y-%m-%d")
+                    
+                    break
+            except Exception as e:
+                # 🔥 ВОТ ЭТОГО БЛОКА НЕ ХВАТАЛО 🔥
+                print(f"Ошибка ИИ скаута: {e}")
+                import time
+                time.sleep(2)
+        
+        # Если данные успешно получены, прерываем цикл перебора моделей
+        if ai_data:
+            break
+
+    if not ai_data: return
+
+    # 4. Сохраняем в базу как ЧЕРНОВИК СКАЙНЕТА
+    ai_data['status'] = 'scout_draft'
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
+
+    # 5. Отправляем в админ-чат красивое уведомление с кнопками
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
+    
+    prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {ai_data.get('prizes', {}).get('1', {}).get('text', '')}\n🥈 2 место: {ai_data.get('prizes', {}).get('2', {}).get('text', '')}\n🥉 3 место: {ai_data.get('prizes', {}).get('3', {}).get('text', '')}"
+    
+    full_text = f"🤖 <b>РАЗВЕДКА СКАЙНЕТА</b> 🤖\n\nСэр, через 10 дней наступит <b>{holiday_name}</b>!\nЯ проверил: активных конкурсов сейчас нет. Я подготовил для вас масштабный проект:\n\n🏷 <b>{ai_data.get('title')}</b>\n\n{ai_data.get('announcement_text')}{prize_block}\n\n👇 <i>Запустить этот конкурс в работу?</i>"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Одобрить и ЗАПУСТИТЬ", callback_data="scout_deploy_contest"))
+    markup.add(InlineKeyboardButton("❌ Отклонить идею", callback_data="scout_reject_contest"))
+    
+    try:
+        bot.send_message(STAFF_GROUP_ID, full_text, parse_mode="HTML", reply_markup=markup, message_thread_id=CONTESTS_THREAD_ID)
+    except Exception as e:
+        pass
+
+def drop_cyber_bomb():
+    """Сбрасывает кибер-бомбу в рандомный чат"""
+    if not job_on("job_bomb"): return   # выключено в панели /glaz
+    from core.bot import bot
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+    
+    all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+    unique_chats = list(set(all_chats))
+    
+    if not unique_chats: return
+    
+    target_chat = random.choice(unique_chats)
+    bomb_id = f"bomb_{int(time.time())}"
+    
+    # Записываем активную бомбу в базу
+    db['active_bombs'].insert_one({"_id": bomb_id, "status": "active", "timestamp": time.time()})
+    
+    markup = InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        InlineKeyboardButton("🔴 Красный", callback_data=f"defuse_{bomb_id}_red"),
+        InlineKeyboardButton("🔵 Синий", callback_data=f"defuse_{bomb_id}_blue"),
+        InlineKeyboardButton("🟢 Зеленый", callback_data=f"defuse_{bomb_id}_green")
+    )
+    
+    msg_text = (
+        "🚨 **ОБНАРУЖЕНА КИБЕР-БОМБА!** 🚨\n\n"
+        "Скайнет сбросил кейс с сюрпризом. Какой кабель перерезать?\n\n"
+        "🎁 **Угадаешь** = 1000 💎\n"
+        "💥 **Ошибешься** = Оторвет руки (Мут на 15 минут)\n\n"
+        "_Решайся быстрее, пока это не сделал кто-то другой!_"
+    )
+       
+    try: 
+        sent_msg = bot.send_message(target_chat, msg_text, parse_mode="Markdown", reply_markup=markup)
+        # Удаляем бомбу через 3 часа
+        schedule_message_deletion(target_chat, sent_msg.message_id, 10800, bot)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def stray_cat_tax():
+    """Соседский кот сжирает деньги лентяев (Неактив 30 дней)"""
+    if not job_on("job_cat"): return   # выключено в панели /glaz
+    import time
+    thirty_days_ago = time.time() - (30 * 86400)
+    
+    # Ищем тех, кто не заходил в Web App больше месяца
+    inactive_users = db['users'].find({"last_webapp_visit": {"$lt": thirty_days_ago}})
+    
+    for u in inactive_users:
+        uid = u["_id"]
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        rubles = user_data.get("cashback_balance", 0)
+        
+        if rubles > 0:
+            converted_pts = rubles * 2 # Утешительная конвертация
+            res = paid_collection.update_one(
+                {"uid": uid, "cashback_balance": rubles},   # только если баланс не изменился с момента чтения
+                {"$inc": {"cashback_balance": -rubles, "bounty_points": converted_pts}}
+            )
+            if res.modified_count == 0:
+                continue   # баланс поменялся - заберём в следующий запуск
+            
+            # Логируем, куда делись деньги
+            db['ruble_ledger'].insert_one({
+                "uid": uid, "amount": -rubles, 
+                "reason": "Съел соседский кот (Неактив > 30 дней)", "timestamp": time.time()
+            })
+            
+            try:
+                from core.bot import bot
+                bot.send_message(uid, f"🐈‍⬛ <b>СОСЕДСКИЙ КОТ ДОБРАЛСЯ ДО КОШЕЛЬКА!</b>\n\nВы не заходили в Кабинет больше месяца. Бездомный кот пробрался к вам и сгрыз <b>{rubles} ₽</b>...\n\nСкайнет сжалился и обменял обрывки на <b>{converted_pts} 💎</b>.", parse_mode="HTML")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+def check_contests_task():
+    from datetime import datetime
+    import time
+    import html
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, CONTESTS_THREAD_ID
+    
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if not active: return
+    
+    vote_end_str = active.get("vote_end") 
+    if not vote_end_str: return
+    
+    try:
+        vote_end_date = datetime.strptime(vote_end_str, "%Y-%m-%d").date()
+        today = datetime.now(tz).date()
+        
+        # Если сегодня СТРОГО БОЛЬШЕ последнего дня голосования (т.е. наступил следующий день)
+        if today > vote_end_date:
+            contest_id = active.get("contest_id")
+            prizes_dict = active.get("prizes", {})
+            
+            works = list(db['contests'].find({"contest_id": contest_id, "status": "published"}))
+            if not works:
+                # Если никто не участвовал, просто закрываем конкурс
+                db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})
+                try: bot.send_message(STAFF_GROUP_ID, f"🤷‍♂️ Конкурс {contest_id} завершен, но работ не было.", message_thread_id=CONTESTS_THREAD_ID)
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                return
+                
+            # Подсчет лайков (Зрительские симпатии)
+            for w in works: w['vote_count'] = len(w.get('votes', []))
+            works.sort(key=lambda x: x['vote_count'], reverse=True)
+            top_works = works[:3]
+            
+            report = f"🏆 <b>АВТО-ИТОГИ ЗРИТЕЛЬСКОГО ГОЛОСОВАНИЯ: {contest_id}</b> 🏆\n\n"
+            
+            for i, work in enumerate(top_works):
+                place = str(i + 1)
+                uid = work['uid']
+                safe_username = html.escape(work.get('username', f"ID {uid}"))
+                safe_title = html.escape(work['title'])
+                votes = work['vote_count']
+                
+                prize_text = prizes_dict.get(place, {}).get("text", "Ценный приз")
+                medal = ["🥇", "🥈", "🥉"][i]
+                
+                report += f"<b>{place} МЕСТО {medal}</b>\n👤 От: {safe_username} (<code>{uid}</code>)\n🏷 «{safe_title}»\n❤️ Голосов: <b>{votes}</b>\n🎁 Приз: <i>{prize_text}</i>\n\n"
+                
+                # Создаем заявку в ЦУП
+                db['premium_claims'].insert_one({
+                    "uid": uid, 
+                    "username": safe_username, 
+                    "timestamp": time.time(), 
+                    "status": "pending",
+                    "prize_desc": f"Зрительские симпатии ({place} место): {prize_text}"
+                })
+                
+                try: bot.send_message(uid, f"🏆 <b>ПОЗДРАВЛЯЕМ!</b> 🏆\n\nПо итогам зрительского голосования ваш образ «{safe_title}» занял <b>{place} место</b>!\nВаша награда: <b>{prize_text}</b>.\n<i>Заявка передана администрации. Ждите начисления!</i>", parse_mode="HTML")
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+            # Замораживаем работы и сам конкурс
+            db['contests'].update_many({"contest_id": contest_id, "status": "published"}, {"$set": {"status": "completed"}})
+            db['active_contest'].update_one({"_id": "current_event"}, {"$set": {"status": "completed"}})
+            
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Выдать призы в ЦУПе", url="https://elite-poster-bot.onrender.com/glaz"))
+            report += "❗️ <i>Заявки сформированы. Победителей в тематических номинациях вы можете наградить вручную!</i>"
+            
+            bot.send_message(STAFF_GROUP_ID, report, parse_mode="HTML", reply_markup=markup, message_thread_id=CONTESTS_THREAD_ID)
+            
+    except Exception as e:
+        print(f"Ошибка в авто-итогах конкурса: {e}")
+
+def refund_expired_courts():
+    """Отменяет суды старше 24 часов и возвращает деньги вкладчикам"""
+    import time
+    now = int(time.time())
+    
+    # Ищем все суды в базе
+    all_courts = list(db['active_courts'].find({}))
+    
+    for court in all_courts:
+        court_id = court['_id']
+        # Вытаскиваем timestamp из ID суда (он в формате court_1718000000_12345)
+        parts = court_id.split('_')
+        if len(parts) >= 2 and parts[1].isdigit():
+            created_at = int(parts[1])
+            
+            # Если прошло больше 24 часов (86400 секунд)
+            if now - created_at > 86400:
+                investors = court.get('investors', [])
+                
+                # ВОЗВРАЩАЕМ ДЕНЬГИ ВСЕМ, КТО СКИНУЛСЯ (по 100 очков каждому)
+                for inv_uid in investors:
+                    paid_collection.update_one({"uid": inv_uid}, {"$inc": {"bounty_points": 100}})
+                    # Уведомляем инвесторов (по желанию, можно убрать try-except блок, чтобы не спамить)
+                    from core.bot import bot
+                    try:
+                        bot.send_message(inv_uid, f"⚖️ <b>СУД ЗАКРЫТ:</b> Дело против {court.get('target_name', 'пользователя')} развалилось из-за нехватки доказательств (истек срок 24ч).\nВаши 100 💎 возвращены на баланс!", parse_mode="HTML")
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                
+                # Удаляем суд из базы
+                db['active_courts'].delete_one({"_id": court_id})
+
+def collectors_task():
+    """Проверка просроченных кредитов и выдача мутов"""
+    if not job_on("job_collectors"): return   # выключено в панели /glaz
+    import time
+    now = time.time()
+    
+    # Ищем должников, чье время истекло и которых мы еще не наказывали
+    debtors = paid_collection.find({"debt_deadline": {"$lt": now}, "debt_notified": {"$ne": True}})
+    
+    for debtor in debtors:
+        uid = debtor["uid"]
+        debt_amount = debtor.get("debt", 0)
+        
+        # Ставим флаг, чтобы не спамить в чат каждую минуту
+        paid_collection.update_one({"uid": uid}, {"$set": {"debt_notified": True}})
+        
+        # Выдаем глобальный мут через Скайнет Таски (или напрямую, если есть chat_ids)
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "global_mute", "duration": 86400 * 365, "timestamp": now})
+        
+        try:
+            from core.bot import bot
+            from core.scheduler import schedule_message_deletion
+            from config import chat_ids_mk # или любой главный чат
+            for chat_id in chat_ids_mk.values():
+                sent_msg = bot.send_message(chat_id, f"🚨 **КОЛЛЕКТОРЫ НА МЕСТЕ!** 🚨\n\nПользователь `ID {uid}` просрочил выплату кредита в МФО Скайнета!\nСумма долга: **{debt_amount} 💎**.\n\n_Имущество арестовано, должник лишен права голоса (МУТ), пока кто-нибудь не скинет ему Очки или он не задонатит!_", parse_mode="Markdown")
+                schedule_message_deletion(chat_id, sent_msg.message_id, 3600, bot)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+# Не забудь добавить в start_scheduler():
+# scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
+
+def refund_expired_user_airdrops():
+    """Возвращает остатки из неразобранных мешков пользователей (старше 24 часов), включая СТАРЫЕ мешки без created_at"""
+    import time
+    now = time.time()
+    
+    for drop in list(db['active_airdrops'].find({"_id": {"$regex": "^userdrop_"}})):
+        # У старых мешков нет created_at: время создания зашито в id (userdrop_<время>_<uid>)
+        ts = drop.get("created_at")
+        if ts is None:
+            try: ts = int(str(drop["_id"]).split("_")[1])
+            except Exception: continue
+        if ts > now - 86400:
+            continue
+        
+        # Атомарно забираем мешок: возврат произойдёт только один раз, даже при параллельном запуске
+        gone = db['active_airdrops'].find_one_and_delete({"_id": drop["_id"]})
+        if not gone:
+            continue
+        
+        claimed_count = len(gone.get("claimed_by", []))
+        # Остаток = всё, что не раздали, включая "хвост" от деления (например, 1000 на 3 -> по 333, хвост 1)
+        leftover = gone.get("total", 0) - claimed_count * gone.get("piece", 0)
+        sponsor_id = gone.get("sponsor_id")
+        
+        if leftover > 0 and sponsor_id:
+            paid_collection.update_one({"uid": sponsor_id}, {"$inc": {"bounty_points": leftover}})
+            try:
+                from core.bot import bot
+                bot.send_message(
+                    sponsor_id,
+                    f"🎒 **ВОЗВРАТ СРЕДСТВ:** Ваш мешок на {gone.get('total', 0)} 💎 не был разобран полностью.\nНеиспользованные **{leftover} 💎** вернулись на ваш баланс.",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
+# ================= ЗАПУСК ПЛАНИРОВЩИКА =================
+
+# ================= ⏰ РАСПИСАНИЕ ИЗ ПАНЕЛИ /glaz =================
+_WEEKDAYS = {"пн": "mon", "вт": "tue", "ср": "wed", "чт": "thu", "пт": "fri", "сб": "sat", "вс": "sun"}
+_APPLIED = {}   # job_id -> что уже применено (в памяти: после перезапуска применяется заново)
+
+
+def _hm(text, default):
+    try:
+        h, m = str(text).strip().split(":")
+        h, m = int(h), int(m)
+        if 0 <= h < 24 and 0 <= m < 60:
+            return h, m
+    except Exception:
+        pass
+    return default
+
+
+_AUCTION_ID = "auto_auction_spawn"   # первый слот; остальные: auto_auction_spawn_2, _3 …
+
+
+def _auction_slots():
+    """«пн 12:00, ср 15:00, пт 18:00» (разделитель — запятая, пробел или перенос строки)
+    -> [("mon", 12, 0), ("wed", 15, 0), ("fri", 18, 0)].
+    Одиночное «пт 18:00» работает как раньше. Кривые куски пропускаются; если ничего не разобрано — пятница 18:00."""
+    import re
+    slots = []
+    for day, tm in re.findall(r"(пн|вт|ср|чт|пт|сб|вс)[а-я]*\.?\s+(\d{1,2}:\d{2})", str(cfg("job_auction_when") or "").lower()):
+        hm = _hm(tm, None)
+        slot = (_WEEKDAYS[day], hm[0], hm[1]) if hm else None
+        if slot and slot not in slots:
+            slots.append(slot)
+    return slots[:10] or [("fri", 18, 0)]
+
+
+def _wanted_triggers():
+    out = {}
+    h, m = _hm(cfg("job_bonus_push_time"), (20, 0)); out["bonus_reminder"] = ("cron", {"hour": h, "minute": m})
+    h, m = _hm(cfg("job_scout_time"), (10, 0)); out["holiday_scout"] = ("cron", {"hour": h, "minute": m})
+    h, m = _hm(cfg("job_cat_time"), (12, 0)); out["stray_cat_tax"] = ("cron", {"hour": h, "minute": m})
+    for n, (dow, h, m) in enumerate(_auction_slots(), 1):
+        out[_AUCTION_ID if n == 1 else f"{_AUCTION_ID}_{n}"] = ("cron", {"day_of_week": dow, "hour": h, "minute": m})
+    out["bomb_drop"] = ("interval", {"minutes": max(10, int(cfg("job_bomb_every_min")))})
+    out["colorado_invasion"] = ("interval", {"minutes": max(5, int(cfg("job_beetle_every_min")))})
+    return out
+
+
+def sync_job_schedule():
+    """Раз в минуту: если в панели поменяли время/интервал события — переставляем задачу без деплоя.
+    Аукцион может иметь несколько слотов в неделю: лишние задачи создаются и удаляются здесь же."""
+    try:
+        wanted = _wanted_triggers()
+        for job_id, (kind, args) in wanted.items():
+            sig = (kind, tuple(sorted(args.items())))
+            exists = scheduler.get_job(job_id)
+            if exists and _APPLIED.get(job_id) == sig:
+                continue
+            if exists:
+                scheduler.reschedule_job(job_id, trigger=kind, **args)
+            elif job_id.startswith(_AUCTION_ID + "_"):
+                scheduler.add_job(auto_spawn_auction_lot, kind, id=job_id, replace_existing=True, **args)
+            else:
+                continue
+            _APPLIED[job_id] = sig
+            logger.info(f"⏰ Расписание «{job_id}» из панели: {kind} {args}")
+        # слоты аукциона, убранные из панели
+        for job in scheduler.get_jobs():
+            if job.id.startswith(_AUCTION_ID + "_") and job.id not in wanted:
+                try:
+                    scheduler.remove_job(job.id)
+                except Exception:
+                    pass   # другой воркер уже удалил
+                _APPLIED.pop(job.id, None)
+                logger.info(f"⏰ Слот аукциона «{job.id}» убран из панели — задача удалена")
+    except Exception as e:
+        logger.warning(f"sync_job_schedule: {e}")
+
+
+def start_scheduler():
+    if not scheduler.running:
+        # 1. Ежеминутные технические задачи
+        scheduler.add_job(check_giveaways_task, 'interval', minutes=1, id='gw_checker', replace_existing=True)
+        scheduler.add_job(tick_blue_safe, 'interval', minutes=1, id='tick_blue', replace_existing=True)
+        scheduler.add_job(check_auctions_task, 'interval', minutes=1, id='auction_checker', replace_existing=True)
+        
+        # 2. Уведомления в ЛС (Проверяем грядки каждые 15 минут)
+        scheduler.add_job(personal_farm_notifications, 'interval', minutes=15, id='farm_dm', replace_existing=True)
+        
+        # 3. 🔥 ВЕЧЕРНИЙ ПУШ О БОНУСАХ (Ровно в 20:00 по Москве / 22:00 ЕКБ) 🔥
+        scheduler.add_job(daily_bonus_reminder, 'cron', hour=20, minute=0, id='bonus_reminder', replace_existing=True)
+             
+        # 4. Умная воронка-карусель в чаты (Проверяет базу каждую минуту)
+        scheduler.add_job(smart_funnel_teaser, 'interval', minutes=1, id='smart_funnel', replace_existing=True)
+       
+        # 5. Разведчик конкурсов (Каждое утро в 10:00)
+        scheduler.add_job(holiday_contest_scout, 'cron', hour=10, minute=0, id='holiday_scout', replace_existing=True)
+
+        # 6. Бомба в чаты (каждые 2 часа)
+        scheduler.add_job(drop_cyber_bomb, 'interval', minutes=120, id='bomb_drop', replace_existing=True)
+
+        # 7. Авто-Аукцион (Каждую пятницу в 18:00 по МСК)
+        scheduler.add_job(auto_spawn_auction_lot, 'cron', day_of_week='fri', hour=18, minute=0, id='auto_auction_spawn', replace_existing=True)
+        
+        # 8. Набег Соседского Кота (Каждый день в 12:00)
+        scheduler.add_job(stray_cat_tax, 'cron', hour=12, minute=0, id='stray_cat_tax', replace_existing=True)
+
+        # 9. Авто-возврат средств с зависших судов (Каждый час)
+        scheduler.add_job(refund_expired_courts, 'interval', minutes=60, id='refund_courts', replace_existing=True)
+
+        # Автоматическое подведение итогов фотоконкурсов (каждый день в 10:30)
+        scheduler.add_job(check_contests_task, 'cron', hour=10, minute=30, id='contest_auto_end', replace_existing=True)
+        
+        # 🔥 10. КОЛЛЕКТОРЫ СКАЙНЕТА (Каждые 30 минут проверяют должников) 🔥
+        scheduler.add_job(collectors_task, 'interval', minutes=30, id='collectors', replace_existing=True)
+
+        # 11. Набег Колорадского Жука на картофельные поля (Каждые 30 мин)
+        scheduler.add_job(colorado_beetle_invasion, 'interval', minutes=30, id='colorado_invasion', replace_existing=True)
+
+        # Авто-возврат остатков из мешков юзеров (Каждый час)
+        scheduler.add_job(refund_expired_user_airdrops, 'interval', minutes=60, id='refund_user_airdrops', replace_existing=True)
+
+        from handlers.artifacts import expire_temp_tags, promo_expiry_job
+        scheduler.add_job(expire_temp_tags, 'interval', minutes=5, id='expire_temp_tags', replace_existing=True)
+        scheduler.add_job(promo_expiry_job, 'cron', hour=11, minute=0, id='promo_expiry', replace_existing=True)
+        
+        # ⏰ Время и интервалы событий — из панели /glaz (проверка раз в минуту)
+        scheduler.add_job(sync_job_schedule, 'interval', minutes=1, id='sync_job_schedule', replace_existing=True)
+
+        scheduler.start()
+        sync_job_schedule()
+        print("⏰ APScheduler запущен (Воронка + Ферма + Розыгрыши + Пуши + Коты + Коллекторы)!")

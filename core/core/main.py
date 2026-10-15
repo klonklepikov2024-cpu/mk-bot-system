@@ -1,0 +1,6359 @@
+import os
+import time
+import telebot
+import threading
+import requests
+from flask import Flask, request
+import hashlib
+import hmac
+import json
+import random
+import html
+from telebot.types import ChatPermissions
+from urllib.parse import unquote, parse_qsl
+from flask import render_template, jsonify
+from database.mongo import paid_collection, db
+from config import BOT_TOKEN
+
+from config import APP_URL, PORT
+from core.bot import bot
+from core.scheduler import start_scheduler
+from utils.logger import logger
+
+# Импорт хэндлеров (ПОРЯДОК КРИТИЧЕСКИ ВАЖЕН)
+from utils.validators import take_points_capped, can_withdraw, craft_slot, craft_release
+import handlers.security
+import handlers.admin
+import handlers.casino
+import handlers.payments
+import handlers.artifacts
+import handlers.polls
+import handlers.contests
+import handlers.market
+import handlers.start_menu
+from handlers.casino import create_unique_promo, msk_today, msk_day_of, msk_time_left
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, exchange_packs, withdraw_min, weighted, odds, _ints  # настройки из панели /glaz
+
+app = Flask(__name__, template_folder='templates')
+
+is_setup_done = False
+
+def setup():
+    """Настройка бота"""
+    global is_setup_done
+    try:
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"❌ Планировщик не запустился: {e}")
+    time.sleep(2)
+    
+    try:
+        if not APP_URL:
+            logger.error("❌ APP_URL не задан!")
+            return
+
+        target_url = f"{APP_URL.rstrip('/')}/webhook"
+        bot_token = os.getenv('BOT_TOKEN')
+        
+        logger.info(f"🔄 Устанавливаем вебхук: {target_url}")
+        
+        requests.get(
+            f"https://api.telegram.org/bot{bot_token}/deleteWebhook",
+            timeout=8
+        )
+        time.sleep(1)
+        
+        webhook_secret = os.getenv('WEBHOOK_SECRET', '')
+        secret_part = f"&secret_token={webhook_secret}" if webhook_secret else ""
+        res = requests.get(
+            f"https://api.telegram.org/bot{bot_token}/setWebhook?url={target_url}{secret_part}",
+            timeout=15
+        )
+        
+        if res.status_code == 200:
+            logger.info("✅ Вебхук успешно установлен!")
+        else:
+            logger.error(f"❌ Telegram ответил: {res.text}")
+            
+    except Exception as e:
+        logger.error(f"❌ Сбой вебхука: {e}")
+
+@app.route('/')
+def index():
+    return "Secretary Bot is Online and Healthy!", 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    # Принимаем только запросы с секретным заголовком от самого Telegram
+    secret = os.getenv('WEBHOOK_SECRET', '')
+    if secret and request.headers.get('X-Telegram-Bot-Api-Secret-Token') != secret:
+        return 'forbidden', 403
+    try:
+        update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+        bot.process_new_updates([update])
+    except Exception as e:
+        logger.error(f"Ошибка обработки апдейта: {e}")
+    return 'ok', 200
+
+@app.route('/ping')
+def ping():
+    return "I am alive!", 200
+
+def mute_user(chat_id, user_id, seconds, reason=""):
+    until = int(time.time()) + seconds
+    perms = ChatPermissions(
+        can_send_messages=False,
+        can_send_audios=False,
+        can_send_documents=False,
+        can_send_photos=False,
+        can_send_videos=False,
+        can_send_video_notes=False,
+        can_send_voice_notes=False,
+        can_send_polls=False,
+        can_send_other_messages=False,
+        can_add_web_page_previews=False,
+        can_change_info=False,
+        can_invite_users=False,
+        can_pin_messages=False,
+        can_manage_topics=False
+    )
+    try:
+        from core.bot import bot
+        bot.restrict_chat_member(
+            chat_id,
+            user_id,
+            until_date=until,
+            permissions=perms
+        )
+        try:   # метка «игровой мут»: по ней Ангел-Хранитель понимает, что этот мут можно снять
+            paid_collection.update_one({"uid": user_id}, {"$set": {"game_mute_until": until, "game_mute_reason": str(reason)[:100]}}, upsert=True)
+        except Exception: pass
+        return True
+    except Exception as e:
+        from config import STAFF_GROUP_ID
+        from core.bot import bot
+        error_text = f"🔇 <b>СБОЙ ВЫДАЧИ МУТА</b>\nЧат: <code>{chat_id}</code>\nЮзер: <code>{user_id}</code>\nВремя: {seconds} сек.\nПричина: {reason}\n\n<b>Ответ Telegram:</b> <code>{str(e)}</code>"
+        print(error_text)
+        try:
+            bot.send_message(STAFF_GROUP_ID, error_text, parse_mode="HTML")
+        except Exception:
+            pass
+        return False
+
+def safe_set_tag(chat_id, user_id, tag):
+    try:
+        bot.set_chat_member_tag(chat_id, user_id, tag)
+    except AttributeError:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setChatMemberTag"
+        requests.post(url, json={"chat_id": chat_id, "user_id": user_id, "tag": tag}, timeout=5)
+
+# ================= WEB APP API =================
+
+def validate_webapp_data(init_data, token):
+    """Секретная функция проверки подписи от Telegram (+ срок действия initData 48 часов)"""
+    if not init_data: return False # <--- ДОБАВИЛИ ЗАЩИТУ
+    try:
+        from urllib.parse import parse_qsl
+        parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
+        if "hash" not in parsed_data: return False
+        hash_val = parsed_data.pop("hash")
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+        secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+        calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc_hash, hash_val): return False
+        # Украденный initData нельзя использовать вечно
+        import time as _t
+        return _t.time() - int(parsed_data.get("auth_date", 0)) < 48 * 3600
+    except Exception:
+        return False
+
+@app.route('/webapp')
+def webapp_page():
+    # Цифры для кнопок мини-приложения — из панели /glaz (сервер проверяет те же значения)
+    try:
+        econ = {
+            "packs": sorted(exchange_packs().items()),
+            "min_phone": cfg("cb_min_phone"), "min_crypto": withdraw_min("crypto"), "min_card": cfg("cb_min_card"),
+            "spin_price": cfg("casino_spin_price"), "chest_price": cfg("chest_price"), "craft_shards": cfg("craft_shards"),
+        }
+    except Exception:
+        econ = {"packs": [(50, 50), (150, 175), (250, 300), (500, 650)], "min_phone": 500, "min_crypto": 1000,
+                "min_card": 3500, "spin_price": 50, "chest_price": 1000, "craft_shards": 50}
+    return render_template('webapp.html', econ=econ)
+
+# ================= 🏆 ЗАЛ СЛАВЫ: КАТАЛОГ ДОСТИЖЕНИЙ =================
+# "auto": функция (юзер, поле_картошки) -> (текущее, цель). Такие медали выдаются сами при открытии профиля.
+# Без "auto" медаль выдаётся в момент действия (grant_achievement). "reward": что добавляется в момент получения.
+ACHIEVEMENT_CATALOG = [
+    # --- события (как раньше) ---
+    {"id": "schizo", "icon": "🤡", "name": "Шизофреник", "desc": "Попытаться пожениться или выполнить RP-действие на самом себе."},
+    {"id": "black_streak", "icon": "🎰", "name": "Черная полоса", "desc": "Погибнуть 3 раза подряд в русской рулетке.", "reward_text": "🛡 1 щит"},
+    {"id": "gladiator", "icon": "⚔️", "name": "Гладиатор", "desc": "Выиграть 10 дуэлей подряд."},
+    {"id": "santa", "icon": "🎅", "name": "Санта-Клаус", "desc": "Раздать мешками 50 000 💎 суммарно. Бафф: +5% шанс джекпота (64) в рулетке."},
+    {"id": "safecracker", "icon": "🏦", "name": "Медвежатник", "desc": "Взломать сейф, угадав PIN-код. Бафф: +1 попытка взлома сейфа в сутки."},
+    {"id": "patriarch", "icon": "👨‍👩‍👧‍👦", "name": "Патриарх семьи", "desc": "Усыновить 3 детей, находясь в браке. Бафф: посадки на ферме растут на 10% быстрее."},
+    {"id": "drought", "icon": "💩", "name": "Засуха", "desc": "Дать 5 растениям засохнуть без полива."},
+    {"id": "rat", "icon": "🔪", "name": "Крыса", "desc": "Подать в суд на 5 разных игроков. Минус: вас взламывают чаще (40% вместо 30%)."},
+    {"id": "cuckold", "icon": "🦌", "name": "Рогоносец", "desc": "Остаться без пары, когда вас разводит чужой артефакт «Разлучник». Клеймо на 7 дней."},
+    {"id": "bankrupt", "icon": "📉", "name": "Банкрот", "desc": "Проиграть в дуэлях 10 000 💎 за сутки. На сутки закрывает доступ к Чёрному Рынку."},
+    # --- новые, считаются автоматически ---
+    {"id": "streak7", "icon": "🔥", "name": "Постоянство", "desc": "Забирать ежедневный бонус 7 дней подряд.", "reward": {"immunity": 1}, "reward_text": "🛡 1 щит",
+     "auto": lambda u, pf: (u.get("bonus_streak", 0), 7)},
+    {"id": "streak30", "icon": "💪", "name": "Железная воля", "desc": "Забирать ежедневный бонус 30 дней подряд.", "reward": {"immunity": 3}, "reward_text": "🛡 3 щита",
+     "auto": lambda u, pf: (u.get("bonus_streak", 0), 30)},
+    {"id": "informer10", "icon": "👁", "name": "Бдительный", "desc": "Отправить 10 успешных донесений на нарушителей.", "reward": {"jackpot_shards": 5}, "reward_text": "🧩 5 осколков",
+     "auto": lambda u, pf: (u.get("successful_reports", 0), 10)},
+    {"id": "informer50", "icon": "🛰", "name": "Глаза Скайнета", "desc": "Отправить 50 успешных донесений на нарушителей.", "reward": {"immunity": 1, "jackpot_shards": 10}, "reward_text": "🛡 1 щит и 🧩 10 осколков",
+     "auto": lambda u, pf: (u.get("successful_reports", 0), 50)},
+    {"id": "potato100", "icon": "🥔", "name": "Картофельный барон", "desc": "Собрать 100 картофелин на Колхозном поле.", "reward": {"jackpot_shards": 5}, "reward_text": "🧩 5 осколков",
+     "auto": lambda u, pf: (pf.get("t_harv", 0), 100)},
+    {"id": "potato1000", "icon": "👑", "name": "Король картохи", "desc": "Собрать 1000 картофелин.", "reward": {"immunity": 3}, "reward_text": "🛡 3 щита",
+     "auto": lambda u, pf: (pf.get("t_harv", 0), 1000)},
+    {"id": "bugkiller", "icon": "🪲", "name": "Истребитель жуков", "desc": "Раздавить или потравить 50 колорадских жуков.", "reward": {"jackpot_shards": 5}, "reward_text": "🧩 5 осколков",
+     "auto": lambda u, pf: (pf.get("t_squash", 0), 50)},
+    {"id": "married", "icon": "💍", "name": "Семьянин", "desc": "Вступить в брак.",
+     "auto": lambda u, pf: (1 if u.get("partner_id") else 0, 1)},
+    {"id": "rich10k", "icon": "💰", "name": "Богач", "desc": "Накопить 10 000 💎 на счету.",
+     "auto": lambda u, pf: (u.get("bounty_points", 0), 10000)},
+    {"id": "shield10", "icon": "🛡", "name": "Бронированный", "desc": "Накопить 10 щитов иммунитета одновременно.",
+     "auto": lambda u, pf: (u.get("immunity", 0), 10)},
+    {"id": "shards100", "icon": "🧩", "name": "Коллекционер осколков", "desc": "Накопить 100 осколков одновременно.",
+     "auto": lambda u, pf: (u.get("jackpot_shards", 0), 100)},
+    {"id": "saint", "icon": "😇", "name": "Святой", "desc": "Набрать карму 50 и выше.",
+     "auto": lambda u, pf: (u.get("social_rating", 0), 50)},
+    {"id": "villain", "icon": "😈", "name": "Злодей", "desc": "Опуститься до кармы -50 и ниже.",
+     "auto": lambda u, pf: (max(0, -u.get("social_rating", 0)), 50)},
+]
+
+def _auto_grant_achievements(uid, user_db, pf):
+    """Выдаёт медали, условия которых выполнены, и их награды. Возвращает id новых."""
+    have = set(user_db.get("achievements", []))
+    newly = []
+    for a in ACHIEVEMENT_CATALOG:
+        fn = a.get("auto")
+        if not fn or a["id"] in have:
+            continue
+        try: cur, goal = fn(user_db, pf)
+        except Exception: continue
+        if cur >= goal:
+            res = paid_collection.update_one({"uid": uid, "achievements": {"$ne": a["id"]}}, {"$push": {"achievements": a["id"]}})
+            if res.modified_count:
+                if a.get("reward"):
+                    paid_collection.update_one({"uid": uid}, {"$inc": a["reward"]})
+                newly.append(a["id"])
+    return newly
+
+def _build_ach_catalog(user_db, pf):
+    have = set(user_db.get("achievements", []))
+    out = []
+    for a in ACHIEVEMENT_CATALOG:
+        item = {"id": a["id"], "icon": a["icon"], "name": a["name"], "desc": a["desc"],
+                "unlocked": a["id"] in have, "reward": a.get("reward_text", "")}
+        fn = a.get("auto")
+        if fn and not item["unlocked"]:
+            try:
+                cur, goal = fn(user_db, pf)
+                item["progress"], item["goal"] = int(max(0, min(cur, goal))), int(goal)
+            except Exception: pass
+        out.append(item)
+    return out
+
+def _person_card(pid):
+    """Карточка человека для мини-аппа: имя и username (по ним строится ссылка на профиль)."""
+    u = db['users'].find_one({"_id": pid}, {"first_name": 1, "username": 1}) or {}
+    c = db['chat_stats'].find_one({"uid": pid}, {"name": 1, "username": 1}) or {}
+    return {"id": pid,
+            "name": u.get("first_name") or c.get("name") or f"ID {pid}",
+            "username": str(u.get("username") or c.get("username") or "").lstrip("@")}
+
+@app.route('/api/profile', methods=['POST'])
+def get_profile():
+    data = request.json
+    init_data = data.get('initData')
+    
+    if not validate_webapp_data(init_data, BOT_TOKEN):
+        return jsonify({"error": "Взлом жопы отклонен"}), 403
+
+    parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    import time
+    db['users'].update_one({"_id": uid}, {"$set": {"last_webapp_visit": time.time()}}, upsert=True)
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    
+    # --- СОБИРАЕМ ИНФУ О СЕМЬЕ ДЛЯ WEB APP ---
+    partner_id = user_db.get("partner_id")
+    partner_name = None
+    family_balance = 0 # По умолчанию копилка пуста
+    if partner_id:
+        p_stat = db['chat_stats'].find_one({"uid": partner_id}) or {}
+        partner_name = p_stat.get("name", f"ID {partner_id}")
+        
+    # Баланс копилки: у супругов общий, у детей - копилка родителей
+    _fam_id = _family_bank_id(uid, user_db)
+    if _fam_id:
+        family_balance = (db['family_banks'].find_one({"_id": _fam_id}) or {}).get("balance", 0)
+        
+    children_count = len(user_db.get("children", []))
+    
+    # 🏆 Зал Славы: авто-выдача достижений по счётчикам + каталог для мини-аппа
+    pf = db['potato_fields'].find_one({"uid": uid}) or {}
+    newly = _auto_grant_achievements(uid, user_db, pf)
+    if newly:
+        user_db = paid_collection.find_one({"uid": uid}) or user_db
+    
+    return jsonify({
+        "points": user_db.get("bounty_points", 0),
+        "rubles": user_db.get("cashback_balance", 0),
+        "karma": user_db.get("social_rating", 0),
+        "partner": partner_name,
+        "kids": children_count,
+        "family": {
+            "partner": _person_card(partner_id) if partner_id else None,
+            "kids": [_person_card(c) for c in user_db.get("children", [])[:3]],
+            "parent": _person_card(user_db["parent_id"]) if user_db.get("parent_id") else None,
+        },
+        "family_balance": family_balance,
+        "family_tree": build_family_webapp_nodes(uid), # 🔥 ДОБАВИЛИ ЭТУ СТРОЧКУ 🔥
+        "golden_frame": user_db.get("golden_frame", False),
+        "achievements": user_db.get("achievements", []),
+        "ach_catalog": _build_ach_catalog(user_db, pf),
+        "new_achievements": [a["name"] for a in ACHIEVEMENT_CATALOG if a["id"] in newly]
+    })
+
+@app.route('/api/player_card', methods=['POST'])
+def api_player_card():
+    data = request.json or {}
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data['initData'], keep_blank_values=True))['user'])['id']
+    try:
+        target = int(data.get('target'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Нет цели"}), 400
+    me = paid_collection.find_one({"uid": uid}) or {}
+    relatives = set(me.get("children", [])) | {me.get("partner_id"), me.get("parent_id")}
+    if target not in relatives:
+        return jsonify({"error": "Открывать можно только карточки своей семьи"}), 403
+    t = paid_collection.find_one({"uid": target}) or {}
+    karma = t.get("social_rating", 0)
+    if karma >= 100: title = "😇 Святой"
+    elif karma <= -100: title = "💀 Враг Народа"
+    elif karma <= -50: title = "🗑 Изгой"
+    else: title = "👑 VIP-Персона" if t.get("is_vip") else "🔴 Гражданин Империи"
+    have = set(t.get("achievements", []))
+    card = _person_card(target)
+    card.update({"title": title, "karma": karma, "kids": len(t.get("children", [])),
+                 "married": bool(t.get("partner_id")),
+                 "medals": [a["icon"] for a in ACHIEVEMENT_CATALOG if a["id"] in have]})
+    return jsonify(card)
+
+@app.route('/api/buy_ticket', methods=['POST'])
+def buy_ticket():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    username = user_info.get('first_name', 'Аноним')
+    
+    # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ В РОЗЫГРЫШАХ 🔥
+    chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 50}})
+    
+    # Достаем статусы VIP и BEYOND из ПРАВИЛЬНОЙ коллекции
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    is_elite = u_info.get("is_vip") or u_info.get("is_queer")
+    
+    if not chat_stat and not is_elite:
+        return jsonify({"error": "Розыгрыши только для своих! Напишите хотя бы 50 сообщений в чате (или получите статус VIP/BEYOND), чтобы участвовать."}), 400
+
+    try:
+        amount = int(data.get('amount', 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректное количество билетов!"}), 400
+    if amount < 1 or amount > 100000:
+        return jsonify({"error": "Некорректное количество билетов!"}), 400
+    giveaway_id = data.get('giveaway_id')
+    
+    gw = db['giveaways'].find_one({"_id": giveaway_id, "status": "active"})
+    if not gw: return jsonify({"error": "Розыгрыш окончен или не найден"}), 400
+    
+    total_cost = amount * gw['ticket_price']
+    
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": total_cost}},
+        {"$inc": {"bounty_points": -total_cost}}
+    )
+    if not updated_user:
+        return jsonify({"error": "Недостаточно очков!"}), 400
+        
+    updated_gw = db['giveaways'].find_one_and_update(
+        {"_id": giveaway_id},
+        {"$inc": {"last_ticket_num": amount, "total_tickets": amount}}
+    )
+    
+    start_num = updated_gw.get('last_ticket_num', 0) + 1
+    end_num = start_num + amount - 1
+    
+    import time
+    db['tickets_history'].insert_one({
+        "giveaway_id": giveaway_id,
+        "uid": uid,
+        "name": username,
+        "amount": amount,
+        "range": f"{start_num}-{end_num}",
+        "timestamp": time.time()
+    })
+    
+    return jsonify({"success": True, "start": start_num, "end": end_num})
+
+@app.route('/api/get_giveaways', methods=['POST'])
+def api_get_giveaways():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+        
+    import datetime
+    now = datetime.datetime.now()
+    
+    active_gws = list(db['giveaways'].find({"status": "active"}).sort("end_date", 1))
+    completed_gws = list(db['giveaways'].find({"status": "completed"}).sort("end_date", -1).limit(5))
+    
+    gws = active_gws + completed_gws
+    
+    result = []
+    for gw in gws:
+        time_left_str = ""
+        if gw['status'] == 'active':
+            # Умный расчет времени без багов
+            time_left = gw['end_date'] - now
+            total_seconds = int(time_left.total_seconds())
+            
+            if total_seconds > 0:
+                days = total_seconds // 86400
+                hours = (total_seconds % 86400) // 3600
+                mins = (total_seconds % 3600) // 60
+                
+                if days > 0: time_left_str = f"Осталось {days} д. {hours} ч."
+                elif hours > 0: time_left_str = f"Осталось {hours} ч. {mins} мин."
+                else: time_left_str = f"Осталось {mins} мин."
+            else:
+                time_left_str = "Подводим итоги..."
+        else:
+            time_left_str = "Завершен"
+            
+        winner_name = "Нет участников"
+        if gw.get('winner_name'):
+            winner_name = gw.get('winner_name')
+        elif gw.get('winner_uid'):
+            win_tx = db['tickets_history'].find_one({"giveaway_id": gw["_id"], "uid": gw["winner_uid"]})
+            if win_tx:
+                winner_name = win_tx.get('name', f"ID {gw['winner_uid']}")
+            else:
+                winner_name = f"ID {gw['winner_uid']}"
+
+        result.append({
+            "id": str(gw["_id"]),
+            "title": gw["title"],
+            "price": gw["ticket_price"],
+            "total": gw.get("total_tickets", 0),
+            "time_left": time_left_str,
+            "status": gw["status"],
+            "winner_name": winner_name,
+            "winning_number": gw.get("winning_number"),
+            "winners_count": gw.get("winners_count", 1)
+        })
+        
+    return jsonify(result)
+
+@app.route('/api/get_market', methods=['POST'])
+def api_get_market():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    lots = list(db['market_orders'].find({"status": "active"}).sort("created_at", -1))
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
+    
+    import time
+    from datetime import datetime
+    now = time.time()
+    
+    result = []
+    for lot in lots:
+        # 1. Правильные названия
+        if lot.get('type') == 'artifact' and lot.get('target') == 'tag':
+            title_str = "🏷 Купон на личный тег"
+        elif lot.get('type') == 'artifact' and lot.get('target') == 'mute':
+            title_str = "🚓 Ордер на Арест (1 час)"
+        else:
+            t_name = "Штраф" if lot.get('target') == 'fine' else "Рекламу" if lot.get('target') == 'ads' else "VIP" if lot.get('target') == 'vip' else "Любую услугу"
+            val = f"{lot.get('value')}%" if lot.get('type') == 'percent' else f"{lot.get('value')}₽"
+            title_str = f"Скидка {val} на {t_name}"
+            
+        # 2. Вычисляем, продают ли НИЖЕ РЫНКА
+        target_type = lot.get("target", "all")
+        base_price = 500
+        if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+        elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+        elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
+        
+        real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
+        rec_price = int(real_value * 0.6)
+        if rec_price < 10: rec_price = 10
+        
+        original_rub = lot['price_rub']
+        is_below_market = original_rub < rec_price # True, если цена продавца меньше рекомендованной
+            
+        # 3. Дата и время + Уценка
+        created_at = lot.get('created_at', now)
+        dt_str = datetime.fromtimestamp(created_at).strftime('%d.%m %H:%M')
+        age_seconds = now - created_at
+        
+        discount_pct = 0
+        if age_seconds > 172800: # Больше 48 часов
+            discount_pct = 50
+        elif age_seconds > 86400: # Больше 24 часов
+            discount_pct = 20
+            
+        current_rub = original_rub
+        if discount_pct > 0:
+            current_rub = int(original_rub * (1 - discount_pct / 100))
+            if current_rub < 5: current_rub = 5 
+            
+        current_pts = int(current_rub * points_per_rub())
+        original_pts = int(original_rub * points_per_rub())
+        
+        result.append({
+            "id": str(lot["_id"]),
+            "seller": lot.get('seller_name', 'Аноним'),
+            "seller_uid": lot.get('seller_uid'),
+            "title": title_str,
+            "date_str": dt_str,
+            "price_rub": current_rub,
+            "price_pts": current_pts,
+            "old_price_rub": original_rub if discount_pct > 0 else None,
+            "old_price_pts": original_pts if discount_pct > 0 else None,
+            "discount": discount_pct,
+            "is_below_market": is_below_market # <--- Передаем флаг на фронтенд
+        })
+        
+    return jsonify(result)
+
+@app.route('/api/buy_market', methods=['POST'])
+def api_buy_market():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    lot_id = data.get('lot_id')
+    currency = data.get('currency')
+    from bson.objectid import ObjectId
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    import time
+    if user_db.get("bankrupt_until", 0) > time.time():
+        return jsonify({"error": "📉 Ваш статус «Банкрот» блокирует доступ к Черному Рынку! Ограничение длится 24 часа."}), 400
+        
+    lot = db['market_orders'].find_one({"_id": ObjectId(lot_id), "status": "active"})
+    
+    if not lot: return jsonify({"error": "Упс! Лот уже продан или снят с продажи!"}), 400
+    if lot['seller_uid'] == uid: return jsonify({"error": "Вы не можете купить свой собственный лот!"}), 400
+        
+    # 🔥 ЛОГИКА УЦЕНКИ И УМНЫХ СУБСИДИЙ 🔥
+    import time
+    age_seconds = time.time() - lot.get('created_at', time.time())
+    
+    discount_pct = 0
+    if age_seconds > 172800: discount_pct = 50
+    elif age_seconds > 86400: discount_pct = 20
+    
+    original_rub = lot['price_rub']
+    buyer_price_rub = original_rub
+    
+    if discount_pct > 0:
+        buyer_price_rub = int(original_rub * (1 - discount_pct / 100))
+        if buyer_price_rub < 5: buyer_price_rub = 5
+        
+    buyer_price_pts = int(buyer_price_rub * points_per_rub())
+
+    if discount_pct > 0:
+        buyer_price_rub = int(original_rub * (1 - discount_pct / 100))
+        if buyer_price_rub < 5: buyer_price_rub = 5
+        
+    buyer_price_pts = int(buyer_price_rub * points_per_rub())
+
+    # 🔥 ВЛИЯНИЕ КАРМЫ: СКИДКА 10% ДЛЯ ХОРОШИХ ГРАЖДАН 🔥
+    is_good_citizen = user_db.get("social_rating", 0) >= 50
+    if is_good_citizen:
+        buyer_price_rub = int(buyer_price_rub * 0.9)
+        buyer_price_pts = int(buyer_price_pts * 0.9)
+        if buyer_price_rub < 1: buyer_price_rub = 1
+        if buyer_price_pts < 1: buyer_price_pts = 1
+    
+    # === 1. СПИСАНИЕ С ПОКУПАТЕЛЯ ===
+    if currency == "rub":
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "cashback_balance": {"$gte": buyer_price_rub}},
+            {"$inc": {"cashback_balance": -buyer_price_rub}}
+        )
+        if not charged: return jsonify({"error": "Недостаточно рублей (кэшбэка)!"}), 400
+    elif currency == "pts":
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": buyer_price_pts}},
+            {"$inc": {"bounty_points": -buyer_price_pts}}
+        )
+        if not charged: return jsonify({"error": "Недостаточно очков!"}), 400
+        pts_commission = buyer_price_pts - int(buyer_price_pts * 0.9)
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": pts_commission}})
+    else: return jsonify({"error": "Ошибка валюты!"}), 400
+        
+    # ⬇ было: update_one(... {"$set": {"status": "sold", ...}})
+    claimed = db['market_orders'].find_one_and_update(
+        {"_id": ObjectId(lot_id), "status": "active"},
+        {"$set": {"status": "sold", "buyer_uid": uid}}
+    )
+    if not claimed:   # лот успели купить: возвращаем деньги
+        if currency == "rub": paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": buyer_price_rub}})
+        else: paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": buyer_price_pts}})
+        return jsonify({"error": "Лот уже куплен!"}), 400
+    
+    # === 2. РАСЧЕТ ВЫПЛАТЫ ПРОДАВЦУ И СУБСИДИИ ===
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
+    target_type = lot.get("target", "all")
+    base_price = 500
+    if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+    elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+    elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
+    
+    real_value = 500 if lot.get("type") == "artifact" else int(base_price * (lot.get("value", 0) / 100))
+    rec_price = int(real_value * 0.6)
+    if rec_price < 10: rec_price = 10
+    
+    is_adequate = original_rub <= (rec_price + 10)
+    gross_payout = original_rub
+    subsidy_msg = ""
+    
+    if discount_pct > 0:
+        if is_adequate:
+            if discount_pct == 20:
+                gross_payout = int(original_rub * 0.90) 
+                subsidy_msg = "🔥 _Лот ушел со скидкой -20%. Скайнет компенсировал уценку из своих фондов!_"
+            elif discount_pct == 50:
+                gross_payout = int(original_rub * 0.85) 
+                subsidy_msg = "🔥 _Лот ушел со скидкой -50%. Скайнет компенсировал уценку из своих фондов!_"
+        else:
+            gross_payout = buyer_price_rub 
+            subsidy_msg = f"📉 _Лот продан со скидкой -{discount_pct}%. Цена была выше рекомендованной, субсидия не начислена._"
+            
+    has_rhodo = db['farm_plots'].find_one({"uid": lot['seller_uid'], "seed_type": "rhododendron", "status": "ready"})
+    multiplier = 0.95 if has_rhodo else 0.90
+    
+    # ОФШОР: Проверяем, есть ли активный офшор
+    seller_data = paid_collection.find_one({"uid": lot['seller_uid']}) or {}
+    if seller_data.get("offshore_until", 0) > time.time(): 
+        multiplier = 1.0 # 0% комиссии
+    
+    promo_id = lot['promo_id'] # <--- ПЕРЕНЕСЛИ СЮДА
+    
+    # 🔥 ПАТЧ РЫНКА: Разделение валют 🔥
+    if currency == "rub":
+        seller_profit = int(gross_payout * multiplier)
+        paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"cashback_balance": seller_profit}})
+        safe_commission = buyer_price_rub - seller_profit
+        if safe_commission > 0: db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": safe_commission}}) 
+        db['ruble_ledger'].insert_one({"uid": lot['seller_uid'], "amount": seller_profit, "reason": f"Продажа лота {promo_id} на Рынке", "timestamp": time.time()}) 
+        currency_sym = "₽"
+    else:
+        # Покупали за очки -> Продавец получает ОЧКИ
+        seller_profit = int(buyer_price_pts * multiplier)
+        paid_collection.update_one({"uid": lot['seller_uid']}, {"$inc": {"bounty_points": seller_profit}})
+        currency_sym = "💎"
+        subsidy_msg = "" # Субсидия в рублях не платится, если сделка в очках
+    
+    db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": uid}})
+    
+    # === 3. УВЕДОМЛЕНИЕ ПРОДАВЦУ ===
+    try:
+        from core.bot import bot
+        msg_text = f"💸 **НОВОСТИ С РЫНКА!**\n\nВаш лот `{promo_id}` был успешно продан!\nНа ваш счет зачислено: **{seller_profit}{currency_sym}** (комиссия рынка учтена)."
+        if subsidy_msg: msg_text += f"\n\n{subsidy_msg}"
+        bot.send_message(lot['seller_uid'], msg_text, parse_mode="Markdown")
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+    
+    return jsonify({"success": True, "promo_id": promo_id})
+
+@app.route('/api/spin_roulette', methods=['POST'])
+def api_spin_roulette():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+
+    username = user_info.get('username')
+    username_str = f"@{username}" if username else f"ID {uid}"
+    first_name = user_info.get('first_name', 'Аноним')
+
+    SPIN_PRICE = cfg("casino_spin_price")
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": SPIN_PRICE}},
+        {"$inc": {"bounty_points": -SPIN_PRICE}}
+    )
+    pay_casino_owner(5)
+
+    # 🔥 ТРЕКЕР ДЛЯ ЗОЛОТОГО КЕЙСА (СИНХРОНИЗАЦИЯ ПО ЕКБ) 🔥
+    import datetime
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"roulette_spins": 1}}, upsert=True)
+
+    if not updated_user:
+        return jsonify({"error": f"Недостаточно очков! Нужно {SPIN_PRICE} 💎."}), 400
+
+    import random
+    val = random.randint(1, 64)
+    
+    # БАФФ САНТЫ (Используем updated_user вместо user_data)
+    if "santa" in updated_user.get("achievements", []):
+        if val != 64 and random.randint(1, 100) <= 5:
+            val = 64
+            
+    prize_msg = ""
+    prize_id = ""
+    prize_name = ""
+    
+    bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+    premium_cost_stars = cfg("casino_premium_cost")
+
+    if val == 63 and bank_data.get("balance", 0) >= premium_cost_stars:
+        db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost_stars}})
+        prize_msg = "🏆 ГЛАВНЫЙ СУПЕР-ПРИЗ!!!\nВы выиграли Telegram Premium (3 мес.)!\nЗаявка отправлена админам."
+        prize_id, prize_name = "premium", "TG Premium"
+        
+        import time
+        db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
+            bot.send_message(STAFF_GROUP_ID, f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ WEB APP!</b> 🏆\n\n👤 Победитель: {first_name} ({username_str})\n\n❗️ <i>Заявка добавлена в Веб-панель.</i>", parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    elif val == 63:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_mini_points"), "jackpot_shards": cfg("casino_mini_shards")}})
+        prize_msg = f"🎰 МИНИ-ДЖЕКПОТ!\nФонд Premium пуст, поэтому вы получаете +{cfg('casino_mini_points')} Очков и {cfg('casino_mini_shards')} Осколков!"
+        prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
+
+    # === НОВЫЙ БЛОК: УНИВЕРСАЛЬНЫЙ СЕРТИФИКАТ ===
+    cert_cost_stars = cfg("casino_cert_cost")
+    cert_rub = cfg("casino_cert_rub")
+    if val == 62 and bank_data.get("balance", 0) >= cert_cost_stars:
+        db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cert_cost_stars}})
+        prize_msg = f"🛍 СУПЕР-ПРИЗ!!!\nВы выиграли Универсальный Сертификат ({cert_rub} ₽)!\nЗаявка отправлена админам."
+        prize_id, prize_name = "certificate", f"Сертификат {cert_rub}₽"
+        
+        import time
+        db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
+            bot.send_message(STAFF_GROUP_ID, f"🛍 <b>СОРВАН СУПЕР-ПРИЗ (СЕРТИФИКАТ) ИЗ WEB APP!</b> 🛍\n\n👤 Победитель: {first_name} ({username_str})\n\n❗️ <i>Заявка добавлена в Веб-панель.</i>", parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    elif val == 62:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_mini_points"), "jackpot_shards": cfg("casino_mini_shards")}})
+        prize_msg = f"🎰 МИНИ-ДЖЕКПОТ!\nФонд пуст, поэтому вы получаете +{cfg('casino_mini_points')} Очков и {cfg('casino_mini_shards')} Осколков!"
+        prize_id, prize_name = "mini_jackpot", "Мини-Джекпот"
+
+    elif val == 64:
+        code = f"JACKPOT-{random.randint(1000, 9999)}"
+        code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cfg("casino_jackpot_points")}})
+        prize_msg = f"🚨 ДЖЕКПОТ 7️⃣7️⃣7️⃣!\nЗолотой Билет (VIP) и {cfg('casino_jackpot_points')} очков!\nКод: {code}"
+        prize_id, prize_name = "jackpot", "ДЖЕКПОТ VIP"
+
+    elif val in [7, 21, 35]:
+        from handlers.artifacts import mint_tag_coupon, tag_prize_markup
+        code = mint_tag_coupon(uid)
+        prize_msg = "🌟 СУПЕР-РЕДКИЙ ДРОП!\nКупон на Личный Тег добавлен в Рюкзак (бот → Рюкзак → «Назначить тег»)."
+        prize_id, prize_name = "custom_tag", "Личный Тег"
+        try:
+            from core.bot import bot
+            bot.send_message(uid, "👑 Вы выиграли Купон на личный тег!", reply_markup=tag_prize_markup(code))
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    elif val in [1, 22, 43]:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1, "bounty_points": 50}})
+        prize_msg = "🔥 ЭПИЧЕСКИЙ ВЫИГРЫШ!\nВы получили 🛡 Щит Иммунитета и 50 очков!"
+        prize_id, prize_name = "shield", "Щит Иммунитета"
+
+    elif val in [10, 20, 40, 50]:
+        # 🔥 ВЛИЯНИЕ КАРМЫ: ШТРАФ 50% ДЛЯ ИЗГОЕВ 🔥
+        tax_pct = (cfg("casino_tax_outcast_pct") if updated_user.get("social_rating", 0) <= -50 else cfg("casino_tax_pct")) / 100
+        
+        lost_points = int(updated_user.get("bounty_points", 0) * tax_pct)
+        has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
+        if has_cactus:
+            lost_points = int(updated_user.get("bounty_points", 0) * 0.1) 
+            
+        # 🔥 ИСПРАВЛЕНИЕ МАТЕМАТИКИ: Отменяем жесткий лимит для Кактуса!
+        if lost_points < 10 and not has_cactus: 
+            lost_points = 10
+        elif has_cactus and lost_points < 1:
+            lost_points = 1 # Минимум 1 очко, если есть кактус
+
+        # ⬇ было: update_one(-lost_points) и безусловный +lost_points в синий сейф
+        from utils.validators import take_points_capped
+        lost_points = take_points_capped(uid, lost_points)  # не глубже 0
+        if lost_points > 0:
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
+        
+        if has_cactus:
+            prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
+            prize_id, prize_name = "tax_cactus", "Спас Кактус"
+        else:
+            if tax_pct != cfg("casino_tax_pct") / 100:
+                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
+            else:
+                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
+            prize_id, prize_name = "tax", f"Налог -{int(tax_pct*100)}%"
+
+    elif val in [5, 17, 29]:
+        code = f"ARREST-{random.randint(100, 999)}"
+        code = create_unique_promo(code.split("-")[0], {"type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        prize_msg = f"🚓 СОЦИАЛЬНЫЙ АРТЕФАКТ!\nВы нашли Ордер на Арест!\nКод: {code}"
+        prize_id, prize_name = "arrest", "Ордер на Арест"
+
+    elif val in [13, 26, 39, 52]:
+        strikes = updated_user.get("strikes", 0)
+        if strikes > 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"strikes": -1}})
+            prize_msg = f"🕊 АМНИСТИЯ!\nСписан 1 штрафной страйк!"
+        else:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 100}})
+            prize_msg = "🕊 БЕЛЫЙ БИЛЕТ!\nУ вас нет страйков. Получите +100 очков!"
+        prize_id, prize_name = "amnesty", "Амнистия"
+
+    elif val in [15, 30, 45, 60]:
+        win_points = random.choice(_ints("casino_points_wins") or [100])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": win_points}})
+        prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {win_points} 💎!"
+        prize_id, prize_name = "big_points", f"{win_points} 💎"
+
+    elif val % 7 == 0:
+        promos = [
+            {"target": "fine", "value": 50, "prefix": "FINE50", "name": "50% на Штраф"},
+            {"target": "ads", "value": 30, "prefix": "ADS30", "name": "30% на Рекламу"},
+            {"target": "vip", "value": 40, "prefix": "VIP40", "name": "40% на VIP"},
+            {"target": "all", "value": 15, "prefix": "ALL15", "name": "15% на Любое"}
+        ]
+        drop = random.choice(promos)
+        code = f"{drop['prefix']}-{random.randint(1000, 9999)}"
+        code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": drop["value"], "target": drop["target"], "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+        prize_msg = f"✨ РЕДКИЙ ДРОП!\nВыиграна скидка {drop['name']}!\nКод: {code}"
+        prize_id, prize_name = "discount", "Скидка"
+
+    elif val in [11, 33]:
+        _vals, _w = weighted("casino_cash_wins")
+        win_rub = random.choices(_vals, weights=_w, k=1)[0]
+        cost_in_stars = rub_to_stars(win_rub)
+        if bank_data.get("balance", 0) >= cost_in_stars:
+            db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -cost_in_stars}})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": win_rub}})
+            import time
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": win_rub, "reason": "Выигрыш в Гача-Рулетку", "timestamp": time.time()})
+            prize_msg = f"✨ ДЕНЕЖНЫЙ КУПОН! ✨\nВы выиграли {win_rub} руб. на счет!"
+            prize_id, prize_name = "rubles", f"{win_rub} ₽"
+        else:
+            fallback_points = win_rub * 2
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": fallback_points}})
+            prize_msg = f"💸 КРУПНЫЙ КУШ!\nВы выиграли {fallback_points} очков!"
+            prize_id, prize_name = "big_points", f"{fallback_points} 💎"
+
+    else:
+        shards_won = random.choice([1, 1, 1, 2])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_won}})
+        prize_msg = f"🧩 Барабан остановился...\nВы получили: +{shards_won} Осколок(ка) джекпота!"
+        prize_id, prize_name = "shards", f"{shards_won} Осколка"
+
+    return jsonify({"success": True, "message": prize_msg, "won_id": prize_id, "won_name": prize_name})
+
+@app.route('/api/claim_bonus', methods=['POST'])
+def api_claim_bonus():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    import datetime
+    now = datetime.datetime.now()
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    last_bonus = user_data.get("last_bonus_date")
+    current_streak = user_data.get("bonus_streak", 0)
+    
+    # Проверяем таймер
+    if last_bonus:
+        days_passed = (msk_today() - msk_day_of(last_bonus)).days
+        if days_passed <= 0: # Сегодня (по Москве) уже забирали
+            hours_left, mins_left = msk_time_left()
+            return jsonify({"error": f"Рано! Новый бонус будет в 00:00 по Москве (через {hours_left}ч {mins_left}м)."}), 400
+        elif days_passed > 1: # Пропущен хотя бы один день - стрик сгорел
+            current_streak = 0
+            
+    # Увеличиваем стрик
+    current_streak += 1
+
+    # 🔥 ИСПРАВЛЕНИЕ: Генерируем today_str С УЧЕТОМ ЧАСОВОГО ПОЯСА 🔥
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
+    
+    # 🔥 ТРЕКЕР ДЛЯ СЕРЕБРЯНОГО КЕЙСА (БОНУС) 🔥
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"bonus_claimed": True}}, upsert=True)
+    
+    # Награды в зависимости от стрика
+    shards_reward = 0
+    # Награды по дням серии — из панели /glaz («15, 25, 40, 50, 50, 50, 100»); последний день — мега-приз + осколок
+    streak_tbl = _ints("bonus_streak") or [15, 25, 40, 50, 50, 50, 100]
+    if current_streak >= len(streak_tbl):
+        points_reward = streak_tbl[-1]
+        shards_reward = 1
+        current_streak = 0 # Сброс после мега-приза
+    else:
+        points_reward = streak_tbl[current_streak - 1]
+
+    update_data = {
+        "$inc": {"bounty_points": points_reward, "jackpot_shards": shards_reward},
+        "$set": {"last_bonus_date": datetime.datetime.now(datetime.timezone.utc), "bonus_streak": current_streak}
+    }
+    
+    paid_collection.update_one({"uid": uid}, update_data, upsert=True)
+    
+    msg = f"🎁 День {current_streak if current_streak > 0 else len(streak_tbl)}! Вы получили {points_reward} 💎."
+    if shards_reward > 0: msg += f"\n🧩 +1 Осколок за {len(streak_tbl)} дней подряд!"
+    
+    return jsonify({"success": True, "msg": msg, "streak": current_streak})
+
+@app.route('/api/get_inventory', methods=['POST'])
+def api_get_inventory():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    shields = user_data.get("immunity", 0)
+    shards = user_data.get("jackpot_shards", 0)
+    points = user_data.get("bounty_points", 0)
+    
+    promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0}))
+    orders_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "mute")
+    tags_count = sum(1 for p in promos if p.get("type") == "artifact" and p.get("target") == "tag")
+    
+    regular_promos = []
+    for p in promos:
+        if p.get("type") != "artifact":
+            t_name = "Штраф" if p.get('target') == 'fine' else "Рекламу" if p.get('target') == 'ads' else "VIP" if p.get('target') == 'vip' else "Услугу"
+            val = f"{p.get('value')}%" if p.get('type') == 'percent' else f"{p.get('value')}₽"
+            regular_promos.append({"id": p["_id"], "desc": f"Скидка {val} на {t_name}"})
+
+    import datetime
+    d_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    used_shards = (db['craft_limits'].find_one({"_id": f"{uid}_ex_shard_{d_str}"}) or {}).get("n", 0)
+    used_shields = (db['craft_limits'].find_one({"_id": f"{uid}_ex_shield_{d_str}"}) or {}).get("n", 0)
+
+    def _c(k, d):
+        try: return int(cfg(k))
+        except Exception: return d
+
+    return jsonify({
+        "shields": shields,
+        "shards": shards,
+        "points": points,
+        "orders": orders_count,
+        "tags": tags_count,
+        "promos": regular_promos,
+        "ex": {
+            "shard_buy": _c("ex_shard_buy", 150),
+            "shard_sell": _c("ex_shard_sell", 100),
+            "shard_limit": _c("ex_shard_limit", 30),
+            "shard_used": used_shards,
+            "shield_buy": _c("ex_shield_buy", 1500),
+            "shield_sell": _c("ex_shield_sell", 1000),
+            "shield_limit": _c("ex_shield_limit", 3),
+            "shield_used": used_shields,
+            "forge_cost": _c("forge_shield_cost", 10),
+            "forge_limit": _c("forge_shield_limit", 8)
+        }
+    })
+
+@app.route('/api/item_exchange', methods=['POST'])
+def api_item_exchange():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+
+    mode = data.get('mode')
+    item = data.get('item')
+    try:
+        qty = int(data.get('qty', 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректное количество!"}), 400
+
+    if qty < 1 or qty > 100:
+        return jsonify({"error": "Укажите количество от 1 до 100!"}), 400
+
+    import datetime
+    from pymongo import ReturnDocument
+    d_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+
+    def _c(k, d):
+        try: return int(cfg(k))
+        except Exception: return d
+
+    if item == 'shard':
+        db_field = "jackpot_shards"
+        limit_key = f"{uid}_ex_shard_{d_str}"
+        daily_max = _c("ex_shard_limit", 30)
+        unit_price = _c("ex_shard_buy", 150) if mode == 'buy' else _c("ex_shard_sell", 100)
+        item_label = "🧩"
+    elif item == 'shield':
+        db_field = "immunity"
+        limit_key = f"{uid}_ex_shield_{d_str}"
+        daily_max = _c("ex_shield_limit", 3)
+        unit_price = _c("ex_shield_buy", 1500) if mode == 'buy' else _c("ex_shield_sell", 1000)
+        item_label = "🛡"
+    else:
+        return jsonify({"error": "Неизвестный предмет!"}), 400
+
+    lim_doc = db['craft_limits'].find_one_and_update(
+        {"_id": limit_key},
+        {"$inc": {"n": qty}, "$setOnInsert": {"uid": uid, "kind": f"ex_{item}"}},
+        upsert=True, return_document=ReturnDocument.AFTER
+    )
+    if lim_doc.get("n", 0) > daily_max:
+        db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+        left = max(0, daily_max - (lim_doc.get("n", 0) - qty))
+        return jsonify({"error": f"Дневной лимит исчерпан! Доступно сегодня: {left} шт."}), 400
+
+    total_pts = qty * unit_price
+
+    if mode == 'buy':
+        res = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": total_pts}},
+            {"$inc": {"bounty_points": -total_pts, db_field: qty}}
+        )
+        if not res:
+            db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+            return jsonify({"error": f"Недостаточно очков! Нужно {total_pts} 💎."}), 400
+        return jsonify({"success": True, "msg": f"Куплено: +{qty} {item_label} за {total_pts} 💎!"})
+
+    elif mode == 'sell':
+        res = paid_collection.find_one_and_update(
+            {"uid": uid, db_field: {"$gte": qty}},
+            {"$inc": {db_field: -qty, "bounty_points": total_pts}}
+        )
+        if not res:
+            db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+            return jsonify({"error": f"Недостаточно предметов ({item_label}) в рюкзаке!"}), 400
+        return jsonify({"success": True, "msg": f"Продано: {qty} {item_label} за +{total_pts} 💎!"})
+
+    db['craft_limits'].update_one({"_id": limit_key}, {"$inc": {"n": -qty}})
+    return jsonify({"error": "Неверный режим обмена!"}), 400
+
+@app.route('/api/craft', methods=['POST'])
+def api_craft():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    username = user_info.get('username')
+    username_str = f"@{username}" if username else f"ID {uid}"
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    action = data.get('action')
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if action == 'shards':
+        need_shards = cfg("craft_shards")
+        if user_data.get("jackpot_shards", 0) < need_shards: return jsonify({"error": f"Нужно {need_shards} осколков!"}), 400
+        spent = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": need_shards}},
+            {"$inc": {"jackpot_shards": -need_shards}}
+        )
+        if not spent: return jsonify({"error": f"Нужно {need_shards} осколков!"}), 400
+        
+        import random
+        chance = random.randint(1, 100)
+        t_vip, t_shield = odds("craft_odds", 3)   # шансы — из панели /glaz
+        if chance <= t_vip:
+            code = f"JACKPOT-{random.randint(1000, 9999)}"
+            import datetime
+            code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            return jsonify({"success": True, "msg": f"🎉 Собран Золотой Билет VIP!\nКод: {code}"})
+        elif chance <= t_shield:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+            return jsonify({"success": True, "msg": "🛡 Вы сковали Щит Иммунитета!"})
+        else:
+            # 🔥 БЕЗОПАСНЫЙ КРАФТ С ПРОВЕРКОЙ КАССЫ 🔥
+            bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+            premium_cost = cfg("casino_premium_cost")
+            
+            if bank_data.get("balance", 0) >= premium_cost:
+                db['casino_bank'].update_one({"_id": "premium_fund"}, {"$inc": {"balance": -premium_cost}})
+                
+                import time
+                db['premium_claims'].insert_one({"uid": uid, "username": username_str, "timestamp": time.time(), "status": "pending"})
+                
+                try:
+                    from core.bot import bot
+                    from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+                    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("✅ Обработать в ЦУП", url="https://elite-poster-bot.onrender.com/glaz"))
+                    bot.send_message(
+                        STAFF_GROUP_ID, 
+                        f"🏆 <b>СОРВАН ДЖЕКПОТ (TELEGRAM PREMIUM) ИЗ КРАФТА!</b> 🏆\n\n"
+                        f"👤 Победитель: {first_name} ({username_str})\n"
+                        f"❗️ <i>Списано {premium_cost}⭐️ из фонда. Заявка в Веб-панели.</i>", 
+                        parse_mode="HTML", reply_markup=markup, message_thread_id=PRIZES_THREAD_ID
+                    )
+                except Exception as e:
+                    pass
+                return jsonify({"success": True, "msg": "💎 ДЖЕКПОТ! Вы выиграли Telegram Premium! Заявка отправлена администрации."})
+            else:
+                # Касса пуста! Даем жирный, но ВИРТУАЛЬНЫЙ приз
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000, "jackpot_shards": 5}})
+                return jsonify({"success": True, "msg": "🎰 СУПЕР-ПРИЗ!\nФонд Premium сейчас копится, поэтому Наковальня выдала вам 3000 💎 и 5 Осколков обратно!"})
+
+    elif action == 'beyond':
+        # ⬇ было: precheck и отдельный update_one
+        # ⬇ лимит: не больше 3 элитных крафтов в сутки
+        if not craft_slot(uid, 'beyond', 3):
+            return jsonify({"error": "Лимит: 3 элитных крафта в сутки. Приходите завтра!"}), 400
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 3000}, "immunity": {"$gte": 2}},
+            {"$inc": {"bounty_points": -3000, "immunity": -2}}
+        )
+        if not paid:
+            craft_release(uid, 'beyond')
+            return jsonify({"error": "Нужно 3000 очков и 2 щита!"}), 400
+        u_info = db['users'].find_one({"_id": uid}) or {}
+        
+        import random
+        # 🔥 ПАТЧ: Выдаем КУПОНЫ вместо прямой записи в базу 🔥
+        if not u_info.get("is_queer"):
+            code = f"BEYOND-{random.randint(1000, 9999)}"
+            code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            return jsonify({"success": True, "msg": f"🏳️‍🌈 Выкован 100% Купон на BEYOND!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
+            
+        elif not u_info.get("is_vip"):
+            code = f"VIP-{random.randint(1000, 9999)}"
+            code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+            return jsonify({"success": True, "msg": f"👑 Выкован 100% Купон на VIP!\nВаш код: {code}\n(Ищите в Рюкзаке)"})
+            
+        else:
+            # ⬇ было: +25000 💎 и +5 🛡 за 3000 💎 и 2 🛡 - бесконечный цикл накрутки очков
+            paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 5}})
+            return jsonify({"success": True, "msg": "🛡 Макс. уровень! Ресурсы переплавлены в 5 Щитов Иммунитета!"})
+
+    elif action == 'shield_shop':
+        # Кузница Щитов: 10 осколков -> 1 щит, до 8 в сутки (или из ЦУП)
+        try:
+            limit = int(cfg("forge_shield_limit"))
+            cost = int(cfg("forge_shield_cost"))
+        except Exception:
+            limit, cost = 8, 10
+        if not craft_slot(uid, 'shield_shop', limit):
+            return jsonify({"error": f"Лимит: {limit} щитов в сутки."}), 400
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": cost}},
+            {"$inc": {"jackpot_shards": -cost, "immunity": 1}}
+        )
+        if not paid:
+            craft_release(uid, 'shield_shop')
+            return jsonify({"error": f"Нужно {cost} осколков!"}), 400
+        return jsonify({"success": True, "msg": "🛡 Осколки переплавлены в Щит Иммунитета!"})
+
+@app.route('/api/open_chest', methods=['POST'])
+def api_open_chest():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    PRICE = cfg("chest_price")
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    points = user_data.get("bounty_points", 0)
+    
+    if points < PRICE: return jsonify({"error": f"Нужно {PRICE} очков!"}), 400
+
+    # ⬇ было: tasks_progress.update_one(...) затем update_one(-PRICE), remaining = points - PRICE
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}}
+    )
+    if not charged: return jsonify({"error": f"Нужно {PRICE} очков!"}), 400
+    remaining = charged.get("bounty_points", 0) - PRICE
+    import datetime
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"chest_opened": 1}}, upsert=True)
+    
+    import random
+    chance = random.randint(1, 100)
+    karma = user_data.get("social_rating", 0)
+    
+    # 🔥 ВЛИЯНИЕ КАРМЫ НА СУНДУК 🔥
+    t_cat, t_shards, t_shield = odds("chest_odds", 4)   # кот / осколки / щит / джекпот — из панели /glaz
+    cat_threshold = t_cat
+    if karma >= 50: cat_threshold = min(5, t_cat)   # Святые почти не встречают кота
+    elif karma <= -50: cat_threshold = max(70, t_cat) # Злых кот грабит по-черному
+    
+    if chance <= cat_threshold:
+        rubles = user_data.get("cashback_balance", 0)
+        target = "points"
+        
+        # 🔥 УМНЫЙ КОТ: Выбирает, что жрать 🔥
+        if rubles >= 2000 and random.randint(1, 100) <= 50:
+            target = "rubles" # Шанс 50%, если денег больше 2000
+        elif rubles > 0 and random.randint(1, 100) <= 15:
+            target = "rubles" # Шанс 15%, если просто есть деньги
+            
+        if target == "rubles":
+            stolen_rub = int(rubles * random.uniform(0.10, 0.25))
+            if stolen_rub > 0 and paid_collection.update_one(
+                    {"uid": uid, "cashback_balance": {"$gte": stolen_rub}},
+                    {"$inc": {"cashback_balance": -stolen_rub}}).modified_count:
+                db['safes_state'].update_one({"_id": "safe_red"}, {"$inc": {"balance": stolen_rub}})
+                import time
+                db['ruble_ledger'].insert_one({"uid": uid, "amount": -stolen_rub, "reason": "Кот в мешке (Сундук)", "timestamp": time.time()})
+                return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ-КАПИТАЛИСТ!\nКот выскочил из сундука и разорвал ваши купюры! Потеряно {stolen_rub} ₽ (переведены в Фин. Сейф)!"})
+
+        # Если кот выбрал очки
+        steal_pct = random.uniform(0.15, 0.35) if remaining >= 10000 else random.uniform(0.10, 0.25)
+        stolen_pts = int(remaining * steal_pct)
+        if stolen_pts > 0: 
+            stolen_pts = take_points_capped(uid, stolen_pts)   # было: update_one(-stolen_pts)
+            db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": stolen_pts}})
+            
+        return jsonify({"success": True, "msg": f"🐈‍⬛ КОТ В МЕШКЕ!\nКот выскочил из сундука и украл {stolen_pts} очков, пока убегал!"})
+    elif chance <= max(t_shards, cat_threshold):
+        shards = random.randint(1, 4)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards}})
+        return jsonify({"success": True, "msg": f"📦 Сундук открыт!\nНайдено пыль и +{shards} Осколок(ка)."})
+    elif chance <= max(t_shield, cat_threshold):
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+        return jsonify({"success": True, "msg": "🛡 ОТЛИЧНЫЙ ДРОП!\nВы нашли Щит Иммунитета!"})
+    else:
+        jp_rub = cfg("chest_jackpot_rub")
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": jp_rub}})
+        import time
+        db['ruble_ledger'].insert_one({"uid": uid, "amount": jp_rub, "reason": "Джекпот в Секретном Сундуке", "timestamp": time.time()})
+        # Раньше ответа не было: деньги начислялись, а приложение показывало ошибку
+        return jsonify({"success": True, "msg": f"💎 ДЖЕКПОТ!!!\nСундук оказался набит деньгами: +{jp_rub} ₽ кэшбэка!"})
+
+@app.route('/api/get_cpa', methods=['POST'])
+def api_get_cpa():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    # 1. Личная стата агента за ВСЁ ВРЕМЯ
+    hold = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "hold"})
+    approved = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "approved"})
+    fraud_banned = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud_banned"})
+    fraud_left = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud_left"})
+    fraud_old = db['cpa_traffic'].count_documents({"agent_id": uid, "status": "fraud"})
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    dupes = user_data.get("cpa_duplicates", 0)
+    cases = user_data.get("agent_cases", 0) 
+    
+    # 2. 🔥 ФОРМИРУЕМ ЛИДЕРБОРД ТЕКУЩЕГО МЕСЯЦА (С БРАКОМ) 🔥
+    import datetime
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
+    current_month_str = now.strftime("%Y-%m")
+    start_of_month_ts = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    
+    pipeline = [
+        {"$match": {
+            "join_time": {"$gte": start_of_month_ts}
+        }},
+        {"$group": {
+            "_id": "$agent_id",
+            "valid_leads": {"$sum": {"$cond": [{"$in": ["$status", ["approved", "hold"]]}, 1, 0]}},
+            "approved": {"$sum": {"$cond": [{"$eq": ["$status", "approved"]}, 1, 0]}},
+            "hold": {"$sum": {"$cond": [{"$eq": ["$status", "hold"]}, 1, 0]}},
+            "fraud": {"$sum": {"$cond": [{"$in": ["$status", ["fraud_banned", "fraud_left", "fraud"]]}, 1, 0]}}
+        }},
+        {"$match": {"valid_leads": {"$gt": 0}}},
+        {"$sort": {"valid_leads": -1}},
+        {"$limit": 5}
+    ]
+    top_agents_raw = list(db['cpa_traffic'].aggregate(pipeline))
+    
+    top_agents = []
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    for idx, agent in enumerate(top_agents_raw):
+        u_info = db['users'].find_one({"_id": agent["_id"]}) or {}
+        first_name = u_info.get("first_name", "Аноним")
+        safe_name = f"{first_name[:6]}***" 
+        
+        is_me = (agent["_id"] == uid)
+        display_name = "Вы (Лидер!)" if is_me else safe_name
+        
+        top_agents.append({
+            "medal": medals[idx] if idx < 5 else f"{idx+1}️⃣",
+            "name": display_name,
+            "count": agent["valid_leads"],
+            "approved": agent["approved"],
+            "hold": agent["hold"],
+            "fraud": agent["fraud"], # <--- Передаем БРАК на фронтенд
+            "is_me": is_me
+        })
+    
+    return jsonify({
+        "hold": hold, 
+        "approved": approved, 
+        "fraud_banned": fraud_banned, 
+        "fraud_left": fraud_left,
+        "fraud_old": fraud_old,
+        "duplicates": dupes, 
+        "cases": cases,
+        "leaderboard": top_agents,
+        "current_month": current_month_str
+    })
+
+@app.route('/api/get_cpa_networks', methods=['POST'])
+def api_get_cpa_networks():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+    
+    # 🔥 ИМПОРТИРУЕМ ВНУТРИ ФУНКЦИИ, ЧТОБЫ БРАТЬ СВЕЖИЕ ДАННЫЕ ИЗ БАЗЫ 🔥
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+    
+    networks = {
+        "mk": {"name": "МК (Мужской Клуб)", "cities": chat_ids_mk},
+        "parni": {"name": "ПАРНИ 18+", "cities": chat_ids_parni},
+        "ns": {"name": "НС (Exotics)", "cities": chat_ids_ns},
+        "gayznak": {"name": "ГЕЙ ЧАТЫ", "cities": chat_ids_gayznak},
+        "rainbow": {"name": "РАДУГА", "cities": chat_ids_rainbow}
+    }
+    return jsonify({"networks": networks})
+
+@app.route('/api/generate_cpa_link', methods=['POST'])
+def api_generate_cpa_link():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    chat_id = data.get('chat_id')
+    
+    if not chat_id:
+        return jsonify({"error": "Город не выбран!"}), 400
+
+    # ⬇ новое: chat_id только из белого списка сетей, платные VIP/BEYOND исключены
+    from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, VIP_CHAT_ID, BEYOND_CHAT_ID
+    try: chat_id = int(chat_id)
+    except (TypeError, ValueError): return jsonify({"error": "Некорректный чат!"}), 400
+    allowed = set(chat_ids_mk.values()) | set(chat_ids_parni.values()) | set(chat_ids_ns.values()) | set(chat_ids_gayznak.values()) | set(chat_ids_rainbow.values())
+    if chat_id not in allowed or chat_id in (VIP_CHAT_ID, BEYOND_CHAT_ID):
+        return jsonify({"error": "Для этого чата ссылки недоступны!"}), 403
+    from utils.validators import is_user_locked
+    if is_user_locked(uid):
+        return jsonify({"error": "Аккаунт заблокирован."}), 403
+        
+    try:
+        # Дергаем Telegram API для создания заявки с маркером cpa_ID
+        invite = bot.create_chat_invite_link(chat_id, creates_join_request=True, name=f"cpa_{uid}")
+        return jsonify({"success": True, "link": invite.invite_link})
+    except Exception as e:
+        logger.error(f"Ошибка CPA ссылки для чата {chat_id}: {e}")
+        return jsonify({"error": "Бот не является админом в этом чате или сбой API."}), 400
+
+@app.route('/api/exchange', methods=['POST'])
+def api_exchange():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    # Курс определяет сервер, а не браузер (cost -> reward); пакеты — в панели /glaz
+    EXCHANGE_PACKS = exchange_packs()
+    try:
+        cost = int(data.get('cost'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректный пакет обмена!"}), 400
+    reward = EXCHANGE_PACKS.get(cost)
+    if reward is None:
+        return jsonify({"error": "Такого пакета обмена не существует!"}), 400
+    
+    user_db = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": cost}},
+        {"$inc": {"cashback_balance": -cost, "bounty_points": reward}}
+    )
+    if not user_db: return jsonify({"error": "Недостаточно рублей!"}), 400
+    import time
+    db['ruble_ledger'].insert_one({"uid": uid, "amount": -cost, "reason": f"Обмен на {reward} очков", "timestamp": time.time()})
+    return jsonify({"success": True, "msg": f"✅ Успешно обменяли {cost}₽ на {reward}💎!"})
+
+@app.route('/api/loan', methods=['POST'])
+def api_loan():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    action = data.get('action')
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    
+    import time
+    now = time.time()
+    
+    # === ВЗЯТЬ КРЕДИТ ===
+    if action == 'take':
+        if user_db.get("debt", 0) > 0:
+            return jsonify({"error": "У вас уже есть непогашенный кредит! МФО отказывает в выдаче."}), 400
+            
+        # 🔥 ПАТЧ: ПРОВЕРКА НА ТВИНКОВ И РЕЙТИНГ 🔥
+        karma = user_db.get("social_rating", 0)
+        if karma <= -100:
+            return jsonify({"error": "ВРАГ НАРОДА! Скайнет не спонсирует криминал. Выдача запрещена."}), 400
+
+        chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 100}})
+        if not chat_stat and karma <= 0:
+            return jsonify({"error": "МФО не дает деньги незнакомцам! Напишите хотя бы 100 сообщений в наших чатах."}), 400
+            
+        amount = int(data.get('amount', 0))
+        days = int(data.get('days', 1))
+        
+        max_loan = 20000 if karma >= 50 else 10000
+        if amount < 100 or amount > max_loan:
+            return jsonify({"error": f"Сумма кредита: от 100 до {max_loan} 💎!"}), 400
+            
+        # Считаем проценты в зависимости от Кармы
+        if days == 1: percent = 0.05 if karma >= 50 else (0.40 if karma <= -50 else 0.20)
+        elif days == 3: percent = 0.15 if karma >= 50 else (0.80 if karma <= -50 else 0.40)
+        elif days == 7: percent = 0.30 if karma >= 50 else (1.40 if karma <= -50 else 0.70)
+        else: return jsonify({"error": "Неверный срок кредита!"}), 400
+        
+        debt_amount = int(amount + (amount * percent))
+        deadline = now + (days * 86400)
+        
+        # Выдаем деньги и вешаем долг (атомарно: только если долга сейчас нет)
+        res = paid_collection.update_one(
+            {"uid": uid, "$or": [{"debt": {"$exists": False}}, {"debt": {"$lte": 0}}]},
+            {
+                "$inc": {"bounty_points": amount},
+                "$set": {"debt": debt_amount, "debt_principal": amount, "debt_deadline": deadline, "debt_notified": False}
+            }
+        )
+        if res.modified_count == 0:
+            return jsonify({"error": "У вас уже есть непогашенный кредит! МФО отказывает в выдаче."}), 400
+        
+        return jsonify({"success": True, "msg": "💳 Кредит одобрен!"})
+        
+    # === ПОГАСИТЬ КРЕДИТ ===
+    elif action == 'pay':
+        debt = user_db.get("debt", 0)
+        if debt <= 0: return jsonify({"error": "У вас нет долгов!"}), 400
+        
+        if user_db.get("bounty_points", 0) < debt:
+            return jsonify({"error": f"Недостаточно средств! Нужно {debt} 💎 для полного погашения."}), 400
+            
+        # Списываем долг и разблокируем юзера (атомарно: долг тот же и очков хватает)
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "debt": debt, "bounty_points": {"$gte": debt}},
+            {
+                "$inc": {"bounty_points": -debt},
+                "$unset": {"debt": "", "debt_deadline": "", "debt_notified": ""}
+            }
+        )
+        if not paid:
+            return jsonify({"error": "Не удалось погасить долг. Проверьте баланс и попробуйте ещё раз."}), 400
+        
+        # Снимаем мут (добавляем задачу Скайнетам)
+        db['skynet_tasks'].insert_one({"uid": uid, "action": "global_unmute", "timestamp": now})
+        
+        # Проценты (чистая прибыль) уходят в Синий Сейф!
+        principal = user_db.get("debt_principal")
+        profit = (debt - principal) if principal else int(debt * 0.2)  # у старых кредитов сумма выдачи неизвестна
+        if profit < 0: profit = 0
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": profit}})
+        
+        return jsonify({"success": True, "msg": "✅ Долг полностью погашен! Вы свободны."})
+
+def get_daily_tasks_matrix(uid, today_str):
+    """Секретная Матрица Заданий Скайнета"""
+    task_db = db['tasks_progress'].find_one({"uid": uid, "date": today_str}) or {}
+    
+    import datetime
+    weekday = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).weekday()
+    
+    msgs = task_db.get("messages", 0)
+    spins = task_db.get("roulette_spins", 0)
+    watered = task_db.get("watered", False)
+    bonus = task_db.get("bonus_claimed", False)
+    chests = task_db.get("chest_opened", 0)
+    
+    # 0=ПН, 1=ВТ, 2=СР, 3=ЧТ, 4=ПТ, 5=СБ, 6=ВС
+    matrix = {
+        0: {"name": "День Фермера", "w": {"t": "msgs", "g": 15, "d": "💬 Напишите 15 сообщений в чатах"}, "s": {"t": "water_bonus", "g": 2, "d": "💧 Полить грядку и 🎁 забрать бонус"}, "g": {"t": "spins", "g": 3, "d": "🎰 Сыграйте в Гача-Рулетку 3 раза"}},
+        3: {"name": "День Фермера", "w": {"t": "msgs", "g": 15, "d": "💬 Напишите 15 сообщений в чатах"}, "s": {"t": "water_bonus", "g": 2, "d": "💧 Полить грядку и 🎁 забрать бонус"}, "g": {"t": "spins", "g": 3, "d": "🎰 Сыграйте в Гача-Рулетку 3 раза"}},
+        
+        1: {"name": "День Общения", "w": {"t": "msgs", "g": 25, "d": "💬 Напишите 25 сообщений в чатах"}, "s": {"t": "spins", "g": 2, "d": "🎰 Сделайте 2 прокрута рулетки"}, "g": {"t": "water", "g": 1, "d": "💧 Полейте любую грядку на ферме"}},
+        4: {"name": "День Общения", "w": {"t": "msgs", "g": 25, "d": "💬 Напишите 25 сообщений в чатах"}, "s": {"t": "spins", "g": 2, "d": "🎰 Сделайте 2 прокрута рулетки"}, "g": {"t": "water", "g": 1, "d": "💧 Полейте любую грядку на ферме"}},
+        
+        2: {"name": "День Лудомана", "w": {"t": "msgs", "g": 10, "d": "💬 Напишите 10 сообщений в чатах"}, "s": {"t": "spins", "g": 3, "d": "🎰 Сделайте 3 прокрута рулетки"}, "g": {"t": "chest", "g": 1, "d": "📦 Взломайте Секретный Сундук 1 раз"}},
+        5: {"name": "День Лудомана", "w": {"t": "msgs", "g": 10, "d": "💬 Напишите 10 сообщений в чатах"}, "s": {"t": "spins", "g": 3, "d": "🎰 Сделайте 3 прокрута рулетки"}, "g": {"t": "chest", "g": 1, "d": "📦 Взломайте Секретный Сундук 1 раз"}},
+        
+        6: {"name": "День Отдыха", "w": {"t": "msgs", "g": 5, "d": "💬 Напишите всего 5 сообщений"}, "s": {"t": "bonus", "g": 1, "d": "🎁 Заберите ежедневный бонус в Кабинете"}, "g": {"t": "spins", "g": 1, "d": "🎰 Испытайте удачу: 1 прокрут рулетки"}}
+    }
+    
+    today_m = matrix.get(weekday)
+    
+    def calc(cfg):
+        t = cfg["t"]
+        if t == "msgs": return {"val": msgs, "ready": msgs >= cfg["g"]}
+        if t == "spins": return {"val": spins, "ready": spins >= cfg["g"]}
+        if t == "chest": return {"val": chests, "ready": chests >= cfg["g"]}
+        if t == "water": return {"val": 1 if watered else 0, "ready": watered}
+        if t == "bonus": return {"val": 1 if bonus else 0, "ready": bonus}
+        if t == "water_bonus": return {"val": (1 if watered else 0) + (1 if bonus else 0), "ready": watered and bonus}
+        return {"val": 0, "ready": False}
+
+    return {
+        "day_name": today_m["name"],
+        "opened": task_db.get("opened", []),
+        "watered": watered, "bonus": bonus,
+        "wooden": {"desc": today_m["w"]["d"], "val": calc(today_m["w"])["val"], "goal": today_m["w"]["g"], "ready": calc(today_m["w"])["ready"], "type": today_m["w"]["t"]},
+        "silver": {"desc": today_m["s"]["d"], "val": calc(today_m["s"])["val"], "goal": today_m["s"]["g"], "ready": calc(today_m["s"])["ready"], "type": today_m["s"]["t"]},
+        "gold":   {"desc": today_m["g"]["d"], "val": calc(today_m["g"])["val"], "goal": today_m["g"]["g"], "ready": calc(today_m["g"])["ready"], "type": today_m["g"]["t"]}
+    }
+
+@app.route('/api/get_tasks', methods=['POST'])
+def api_get_tasks():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    import datetime
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    return jsonify(get_daily_tasks_matrix(uid, today_str))
+
+@app.route('/api/open_task_case', methods=['POST'])
+def api_open_task_case():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    case_type = data.get('case_type')
+    
+    import datetime
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))).strftime("%Y-%m-%d")
+    
+    # Загружаем свежую матрицу для проверки условий!
+    matrix = get_daily_tasks_matrix(uid, today_str)
+    
+    if case_type in matrix["opened"]: return jsonify({"error": "Вы уже открывали этот кейс сегодня!"}), 400
+    if not matrix[case_type]["ready"]: return jsonify({"error": "Условия задания еще не выполнены!"}), 400
+
+    # 🔥 ПРОВЕРКА VIP И BEYOND СТАТУСА (УМНОЖАЕМ НАГРАДЫ ЕЖЕДНЕВОК) 🔥
+    u_info = db['users'].find_one({"_id": uid}) or {}
+    is_elite = u_info.get("is_vip") or u_info.get("is_queer")
+    multiplier = 2 if is_elite else 1
+    
+    # 👇 ИСПРАВЛЕНИЕ: Добавили BEYOND в текстовое уведомление! 👇
+    vip_msg = "👑 (VIP/BEYOND x2)" if is_elite else "\n_👑 Получи VIP или BEYOND, чтобы забирать х2 лута!_"
+        
+    update_query = {"$inc": {}}
+    if case_type == 'wooden':
+        pts = 50 * multiplier
+        shards = 1 * multiplier
+        update_query["$inc"]["bounty_points"] = pts
+        update_query["$inc"]["jackpot_shards"] = shards
+        msg = f"🪵 **Деревянный кейс открыт!** {vip_msg}\nВы получили {pts} 💎 и {shards} Осколок(ка)!"
+        
+    elif case_type == 'silver':
+        pts = 100 * multiplier
+        shields = 1 * multiplier
+        update_query["$inc"]["bounty_points"] = pts
+        update_query["$inc"]["immunity"] = shields
+        msg = f"🥈 **Серебряный кейс открыт!** {vip_msg}\nВы получили {pts} 💎 и {shields} Щит(а) Иммунитета!"
+        
+    elif case_type == 'gold':
+        pts = 300 * multiplier
+        keys = 1 * multiplier
+        update_query["$inc"]["bounty_points"] = pts
+        update_query["$inc"]["key_red"] = keys
+        msg = f"🥇 **Золотой кейс открыт!** {vip_msg}\nВы сорвали куш: {pts} 💎 и {keys} 🔑 Ключ(а) от Сейфа!"
+        
+    paid_collection.update_one({"uid": uid}, update_query)
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$push": {"opened": case_type}}, upsert=True)
+    
+    return jsonify({"success": True, "msg": msg})
+
+@app.route('/api/payout', methods=['POST'])
+def api_payout():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+
+    # ⬇ было: is_user_locked(uid) or bounty_points < 0
+    from utils.validators import can_withdraw
+    ok, reason = can_withdraw(uid)
+    if not ok:
+        return jsonify({"error": f"⛔️ Вывод средств заморожен: {reason}"}), 400
+    
+    username = user_info.get('username', f"ID {uid}")
+    
+    amount = int(data.get('amount', 0))
+    method = data.get('method')
+    details = data.get('details')
+    
+    if amount <= 0: return jsonify({"error": "Сумма должна быть больше нуля!"}), 400
+    if amount < withdraw_min(method): return jsonify({"error": f"Для этого способа минимум {withdraw_min(method)}₽!"}), 400
+    if not details or len(details) < 5: return jsonify({"error": "Укажите корректные реквизиты!"}), 400
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    if user_db.get("cashback_balance", 0) < amount: 
+        return jsonify({"error": "Недостаточно средств!"}), 400
+    
+    # 1. Списываем баланс (атомарно: только если денег хватает прямо сейчас)
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "cashback_balance": {"$gte": amount}},
+        {"$inc": {"cashback_balance": -amount}}
+    )
+    if not charged:
+        return jsonify({"error": "Недостаточно средств!"}), 400
+    
+    # 👇 ФИКС 1: ИМПОРТ ДО ИСПОЛЬЗОВАНИЯ ВРЕМЕНИ 👇
+    import time
+    
+    # 2. Пишем в финансовый лог
+    db['ruble_ledger'].insert_one({
+        "uid": uid, "amount": -amount, "reason": f"Заявка на вывод: {method}", "timestamp": time.time()
+    })
+    
+    # 3. Пишем в базу ЦУПа
+    db['withdrawals'].insert_one({
+        "user_id": uid, "amount": amount, "method": method, "details": details, "status": "pending", "timestamp": time.time()
+    })
+    
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, FINANCE_THREAD_ID
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    import html # 👇 ФИКС 2: БЕЗОПАСНАЯ РАЗМЕТКА 👇
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("✅ Выплачено", callback_data=f"payout_done_{uid}_{amount}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"payout_cancel_{uid}_{amount}")
+    )
+    
+    safe_username_html = html.escape(username)
+    safe_details = html.escape(details)
+    
+    try:
+        bot.send_message(
+            STAFF_GROUP_ID,
+            f"💰 <b>ЗАЯВКА НА ВЫПЛАТУ (WEB APP)</b>\n\n👤 От: {safe_username_html} (<code>{uid}</code>)\n💵 Сумма: <b>{amount} руб.</b>\n🏦 Способ: <b>{method}</b>\n📝 Реквизиты:\n<code>{safe_details}</code>",
+            reply_markup=markup, parse_mode="HTML", message_thread_id=FINANCE_THREAD_ID
+        )
+    except Exception as e:
+        logger.error(f"Ошибка уведомления о выплате: {e}")
+        
+    return jsonify({"success": True, "msg": "Заявка отправлена в финотдел!"})
+
+@app.route('/api/get_stars_invoice', methods=['POST'])
+def api_get_stars_invoice():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    # Пакеты определяет сервер: цена в звёздах -> очки
+    STAR_PACKS = {50: 50, 125: 150, 200: 300, 350: 600, 500: 1000, 1200: 3000}
+    try:
+        stars_amount = int(data.get('stars_amount'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Некорректный пакет!"}), 400
+    points_reward = STAR_PACKS.get(stars_amount)
+    if points_reward is None:
+        return jsonify({"error": "Такого пакета не существует!"}), 400
+    
+    try:
+        from core.bot import bot
+        from telebot.types import LabeledPrice
+        
+        invoice_link = bot.create_invoice_link(
+            title="Покупка Очков Бдительности",
+            description=f"Пакет: {points_reward} Очков",
+            payload=f"webapp_points_{uid}_{points_reward}",
+            provider_token="", 
+            currency="XTR",
+            prices=[LabeledPrice(label="Очки", amount=stars_amount)]
+        )
+        return jsonify({"success": True, "url": invoice_link})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/get_giveaway_participants', methods=['POST'])
+def api_get_giveaway_participants():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN):
+        return jsonify({"error": "Auth failed"}), 403
+        
+    gw_id = data.get('giveaway_id')
+    offset = int(data.get('offset', 0))
+    
+    tickets_history = list(db['tickets_history'].find({"giveaway_id": gw_id}).sort("timestamp", -1).skip(offset).limit(15))
+    
+    import datetime
+    result = []
+    for t in tickets_history:
+        r_start, r_end = map(int, t['range'].split('-'))
+        dt = datetime.datetime.fromtimestamp(t['timestamp']).strftime('%d.%m %H:%M')
+        
+        for i in range(r_end, r_start - 1, -1):
+            result.append({
+                "num": i,
+                "name": t['name'],
+                "date": dt
+            })
+            
+    next_offset = offset + 15 if len(tickets_history) == 15 else None
+    
+    return jsonify({"participants": result, "next_offset": next_offset})
+
+@app.route('/api/get_my_promos', methods=['POST'])
+def api_get_my_promos():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    promos = list(db['promocodes'].find({"owner_uid": uid, "is_active": True, "used_count": 0, "type": {"$ne": "airdrop"}}))
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
+    
+    result = []
+    for p in promos:
+        target_type = p.get("target", "all")
+        # Вычисляем базовую стоимость в рублях
+        base_price = 500
+        if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+        elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+        elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
+        
+        # Считаем Рекомендованную цену (60% от номинала)
+        if p.get('type') == 'artifact' and target_type == 'tag':
+            real_value = 50
+            name_str = "🏷 Купон на личный тег"
+        elif p.get('type') == 'artifact' and target_type == 'mute':
+            real_value = 50
+            name_str = "🚓 Ордер на Арест"
+        else:
+            val = p.get('value', 0)
+            real_value = int(base_price * (val / 100))
+            t_name = "Штраф" if target_type == 'fine' else "Рекламу" if target_type == 'ads' else "VIP" if target_type == 'vip' else "BEYOND" if target_type == 'beyond' else "Любую услугу"
+            name_str = f"Скидка {val}% на {t_name}"
+
+        rec_price = int(real_value * 0.6)
+        if rec_price < 10: rec_price = 10
+            
+        full_name_str = f"{p['_id']} ({name_str} | Рек: ~{rec_price}₽)"
+        
+        result.append({
+            "id": p["_id"], 
+            "name": full_name_str, 
+            "target": target_type
+        })
+        
+    return jsonify(result)
+
+@app.route('/api/add_market_lot', methods=['POST'])
+def api_add_market_lot():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    user_info = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    promo_id = data.get('promo_id')
+    price = int(data.get('price', 0))
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    import time
+    if user_db.get("bankrupt_until", 0) > time.time():
+        return jsonify({"error": "📉 Ваш статус «Банкрот» блокирует доступ к Черному Рынку! Ограничение длится 24 часа."}), 400
+        
+    promo = db['promocodes'].find_one({"_id": promo_id, "owner_uid": uid, "is_active": True, "used_count": 0})
+    if not promo: 
+        return jsonify({"error": "Артефакт не найден или уже продан!"}), 400
+    
+    prices_db = db['settings'].find_one({"_id": "prices"}) or {}
+    target_type = promo.get("target", "all")
+    base_price = 500
+    if target_type == "vip": base_price = to_rub(prices_db.get("vip_price_stars", 250))
+    elif target_type == "ads": base_price = to_rub(prices_db.get("ads_price_stars", 150))
+    elif target_type == "fine": base_price = to_rub((prices_db.get("fine_price_stars") or cfg("fine_tag_free")))
+    
+    # 🔥 НОВАЯ АДЕКВАТНАЯ ОЦЕНКА 🔥
+    if promo.get("type") == "artifact":
+        if promo.get("target") == "tag":
+            max_price = 50  # Для тегов жесткий потолок 50 рублей
+        else:
+            max_price = 50 # Для ордеров на арест потолок 500 рублей
+    elif promo.get("type") == "percent":
+        # Реальная ценность скидки в рублях
+        real_value = int(base_price * (promo.get("value", 0) / 100))
+        # Продавать можно максимум за 90% от реальной ценности, чтобы покупателю БЫЛО ВЫГОДНО!
+        max_price = int(real_value * 0.9)
+        if max_price < 10: max_price = 10
+    else:
+        max_price = int(base_price * 1.2)
+    
+    if price < 10 or price > max_price:
+        return jsonify({"error": f"Слишком дорого! Никто не купит без выгоды. Максимальная цена: {max_price}₽!"}), 400
+        
+    import time
+    db['promocodes'].update_one({"_id": promo_id}, {"$set": {"owner_uid": "MARKET"}})
+    db['market_orders'].insert_one({
+        "promo_id": promo_id, 
+        "seller_uid": uid, 
+        "seller_name": first_name,
+        "price_rub": price, 
+        "target": promo.get("target"), 
+        "value": promo.get("value"),
+        "type": promo.get("type"), 
+        "status": "active", 
+        "created_at": time.time()
+    })
+    
+    return jsonify({"success": True, "msg": f"Лот успешно выставлен за {price}₽!"})
+
+@app.route('/api/get_auction', methods=['POST'])
+def api_get_auction():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    # Тянем активные лоты теневого аукциона
+    lots = list(db['auction_lots'].find({"status": "active"}).sort("end_time", 1))
+    
+    import time
+    now = int(time.time())
+    result = []
+    for lot in lots:
+        time_left = lot['end_time'] - now
+        if time_left < 0: time_left = 0
+        
+        hrs = time_left // 3600
+        mins = (time_left % 3600) // 60
+        time_str = f"{hrs}ч {mins}м" if time_left > 0 else "Завершается..."
+        
+        result.append({
+            "id": str(lot["_id"]),
+            "name": lot["name"],
+            "desc": lot["desc"],
+            "icon": lot["icon"],
+            "current_bid": lot["current_bid"],
+            "leader_name": lot.get("leader_name", "Нет ставок"),
+            "time_left": time_str
+        })
+    return jsonify(result)
+
+@app.route('/api/place_bid', methods=['POST'])
+def api_place_bid():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    lot_id = data.get('lot_id')
+    bid_amount = int(data.get('bid', 0))
+    
+    from bson.objectid import ObjectId
+    import time
+    
+    lot = db['auction_lots'].find_one({"_id": ObjectId(lot_id), "status": "active"})
+    if not lot: return jsonify({"error": "Лот уже продан или не существует!"}), 400
+    
+    if lot['end_time'] <= int(time.time()):
+        return jsonify({"error": "Торги по этому лоту уже завершены!"}), 400
+        
+    min_bid = lot['current_bid'] + 100 # Минимальный шаг 100 очков
+    if bid_amount < min_bid:
+        return jsonify({"error": f"Ставка перебита! Минимальная ставка сейчас: {min_bid} 💎"}), 400
+        
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    if user_db.get("bounty_points", 0) < bid_amount:
+        return jsonify({"error": "Недостаточно очков для такой ставки!"}), 400
+        
+    # Шаг 1. Атомарно замораживаем очки новой ставки (если хватает прямо сейчас)
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": bid_amount}},
+        {"$inc": {"bounty_points": -bid_amount}}
+    )
+    if not charged:
+        return jsonify({"error": "Недостаточно очков для такой ставки!"}), 400
+
+    # Анти-снайпер: если до конца < 5 минут, продлеваем на 5 минут
+    end_time = lot['end_time']
+    if end_time - int(time.time()) < 300:
+        end_time += 300
+
+    # Шаг 2. Атомарно занимаем лот, только если ставка в нём не изменилась с момента проверки
+    old_lot = db['auction_lots'].find_one_and_update(
+        {
+            "_id": ObjectId(lot_id),
+            "status": "active",
+            "current_bid": lot['current_bid'],
+            "end_time": {"$gt": int(time.time())}
+        },
+        {"$set": {
+            "current_bid": bid_amount,
+            "leader_uid": uid,
+            "leader_name": first_name,
+            "end_time": end_time
+        }}
+    )
+    if not old_lot:
+        # Нас опередили: возвращаем очки и просим повторить
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": bid_amount}})
+        return jsonify({"error": "Ставку только что перебили! Обновите страницу и попробуйте ещё раз."}), 400
+
+    # Шаг 3. Возвращаем очки прежнему лидеру (берём то, что реально было в лоте)
+    prev_leader = old_lot.get("leader_uid")
+    prev_bid = old_lot.get("current_bid", 0)
+    if prev_leader and prev_bid > 0:
+        paid_collection.update_one({"uid": prev_leader}, {"$inc": {"bounty_points": prev_bid}})
+        try:
+            from core.bot import bot
+            bot.send_message(prev_leader, f"⚠️ <b>АУКЦИОН:</b> Вашу ставку на лот «{lot['name']}» перебили! Ваши {prev_bid} 💎 возвращены на баланс.", parse_mode="HTML")
+        except Exception:
+            pass
+    
+    return jsonify({"success": True, "msg": f"Ваша ставка {bid_amount} 💎 принята!"})
+
+@app.route('/api/inventory_action', methods=['POST'])
+def api_inventory_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Ошибка авторизации (Неверная подпись)"}), 403
+        
+    user_info = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])
+    uid = user_info['id']
+    first_name = user_info.get('first_name', 'Аноним')
+    
+    action = data.get('action')
+    
+    # Секретный переводчик @username -> ID
+    def resolve_uid(target_info):
+        t_info = str(target_info).strip()
+        if t_info.isdigit(): return int(t_info)
+        if t_info.startswith('@'):
+            # В базе ник бывает записан и с «@», и в другом регистре — ищем все варианты
+            import re as _re
+            uname = t_info.lstrip('@').strip()
+            if not uname: return None
+            rx = {"$regex": "^@?" + _re.escape(uname) + "$", "$options": "i"}
+            u = db['users'].find_one({"username": rx})
+            if u: return u['_id']
+            cs = db['chat_stats'].find_one({"username": rx})
+            if cs: return cs['uid']
+        return None
+
+    if action == 'cancel_lot':
+        lot_id = data.get('lot_id')
+        from bson.objectid import ObjectId
+        lot = db['market_orders'].find_one_and_update(
+            {"_id": ObjectId(lot_id), "seller_uid": uid, "status": "active"},
+            {"$set": {"status": "cancelled"}}
+        )
+        if not lot: return jsonify({"error": "Лот не найден или уже продан!"}), 400
+        db['promocodes'].update_one({"_id": lot['promo_id']}, {"$set": {"owner_uid": uid}})
+        return jsonify({"success": True, "msg": "✅ Лот снят с продажи. Артефакт возвращен в рюкзак."})
+        
+    elif action == 'pawn_promo':
+        promo_id = data.get('promo_id')
+        promo = db['promocodes'].find_one_and_delete({"_id": promo_id, "owner_uid": uid, "is_active": True})
+        if not promo: return jsonify({"error": "Промокод не найден!"}), 400
+        
+        shards_reward = 10 if promo.get("target") == "vip" else 5
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": shards_reward}})
+        return jsonify({"success": True, "msg": f"♻️ Артефакт уничтожен!\nВы получили: +{shards_reward} Осколков рулетки 🧩."})
+        
+    elif action == 'angel':
+        target_uid = resolve_uid(data.get('target_info'))
+        if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
+        from utils.validators import angel_check
+        ok, why = angel_check(uid, target_uid)   # проверка ДО списания щита
+        if not ok: return jsonify({"error": why}), 400
+        
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        if user_data.get("immunity", 0) < 1: return jsonify({"error": "Нет активных Щитов!"}), 400
+        
+        if not paid_collection.find_one_and_update({"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
+            return jsonify({"error": "Нет активных Щитов!"}), 400
+        paid_collection.update_one({"uid": target_uid}, {"$unset": {"game_mute_until": "", "game_mute_reason": ""}})
+        
+        import time
+        db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_unmute", "source": "angel", "timestamp": time.time()})
+        return jsonify({"success": True, "msg": f"👼 Чудо свершилось!\nВы пожертвовали щит. Юзер {target_uid} спасен!"})
+        
+    elif action == 'arrest':
+        target_info = data.get('target_info')
+        if not target_info or len(target_info) < 3: return jsonify({"error": "Укажите цель и причину!"}), 400
+        promo = db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "mute", "is_active": True, "used_count": 0})
+        if not promo: return jsonify({"error": "У вас нет Ордеров!"}), 400
+        from handlers.artifacts import execute_arrest
+        ok, text = execute_arrest(uid, first_name, promo["_id"], target_info)
+        if not ok: return jsonify({"error": text}), 400
+        return jsonify({"success": True, "msg": text})
+
+    elif action == 'tag':
+        target_info = data.get('target_info')
+        if not target_info or " " not in target_info.strip():
+            return jsonify({"error": "Укажите цель и тег! (Например: @user Бариста 1d)"}), 400
+            
+        parts = target_info.strip().split()
+        target_user_str = parts[0]
+        
+        # Пытаемся вытащить время из последнего слова (1h, 12h, 1d, 7d, 30d)
+        time_str = parts[-1].lower()
+        duration = 3600 # по умолчанию 1 час
+        duration_text = "1 час"
+        has_time_flag = False
+        
+        import re
+        match = re.match(r"^(\d+)([hd])$", time_str) # h - часы, d - дни
+        if match:
+            val = int(match.group(1))
+            unit = match.group(2)
+            if unit == 'h': 
+                duration = val * 3600
+                duration_text = f"{val} ч."
+            elif unit == 'd': 
+                duration = val * 86400
+                duration_text = f"{val} дн."
+            has_time_flag = True
+            
+        # 🔥 ОГРАНИЧЕНИЕ СРОКА ПОДАРКА (МАКСИМУМ 30 ДНЕЙ) 🔥
+        if duration > 30 * 86400:
+            duration = 30 * 86400
+            duration_text = "30 дн. (Максимум)"
+            
+        # Формируем сам тег (склеиваем слова между целью и временем)
+        if has_time_flag:
+            tag_text = " ".join(parts[1:-1])[:15]
+        else:
+            tag_text = " ".join(parts[1:])[:15]
+            
+        if not tag_text:
+            return jsonify({"error": "Тег не может быть пустым!"}), 400
+            
+        # 🔥 ФИЛЬТР ЗАРЕЗЕРВИРОВАННЫХ СЛОВ И ШРИФТОВ 🔥
+        from utils.validators import reserved_tag_reason, SHAME_TAGS
+        why_bad = reserved_tag_reason(tag_text)
+        if why_bad:
+            return jsonify({"error": f"Этот текст запрещен: {why_bad}"}), 400
+            
+        # Если юзер ввел "себе" или "me", вешаем на него
+        if target_user_str.lower() in ["себе", "me", "я"]:
+            target_uid = uid
+        else:
+            target_uid = resolve_uid(target_user_str)
+            
+        if not target_uid:
+            return jsonify({"error": "Пользователь не найден!"}), 400
+            
+        promo = db['promocodes'].find_one({"owner_uid": uid, "type": "artifact", "target": "tag", "is_active": True, "used_count": 0})
+        if not promo:
+            return jsonify({"error": "У вас нет купонов на тег!"}), 400
+            
+        # 🔥 ПРОВЕРКА СТАТУСОВ (КТО ДАРИТ И КОМУ) 🔥
+        if target_uid != uid:
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            t_info = db['users'].find_one({"_id": target_uid}) or {}
+            
+            def has_good_status(user_doc):
+                good_tags = ("Верифицирован МК", "Спонсор_Одобрен", "Свободен", "Индульгенция")
+                has_trusted_tag = not user_doc.get("tag_game") and user_doc.get("custom_tag") in good_tags
+                return (
+                    user_doc.get("is_vip") or user_doc.get("is_queer") or user_doc.get("is_verified")
+                    or user_doc.get("is_sponsor") or user_doc.get("is_free") or user_doc.get("indulgence")
+                    or has_trusted_tag
+                )
+
+            if not has_good_status(u_info):
+                return jsonify({"error": "Дарить теги может только Элита (VIP, Спонсор, Верифицированные и т.д.)!"}), 400
+                
+            if not has_good_status(t_info):
+                return jsonify({"error": "Получатель тоже должен быть верифицирован или иметь статус!"}), 400
+                
+            if t_info.get("shame_tag") in SHAME_TAGS or t_info.get("custom_tag") in SHAME_TAGS:
+                return jsonify({"error": "Нельзя дарить теги пользователям с позорным клеймом!"}), 400
+                
+            if db['banned'].find_one({"_id": target_uid}):
+                return jsonify({"error": "Этот пользователь находится в Черном Списке!"}), 400
+        else:
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            if u_info.get("shame_tag") in SHAME_TAGS or u_info.get("custom_tag") in SHAME_TAGS:
+                return jsonify({"error": "Нельзя устанавливать теги, пока на вас висит позорное клеймо!"}), 400
+            
+        # Атомарно сжигаем купон (защита от двойного нажатия)
+        if not db['promocodes'].find_one_and_update({"_id": promo["_id"], "is_active": True, "used_count": 0}, {"$inc": {"used_count": 1}}):
+            return jsonify({"error": "Этот купон уже использован!"}), 400
+            
+        # 1. ВЕШАЕМ НА СЕБЯ (АВТОМАТИЧЕСКИ, НАВСЕГДА)
+        if target_uid == uid:
+            # Сносим все временные наложения, чтобы они не затерли наш новый личный тег при истечении
+            db['temp_troll_tags'].delete_many({"uid": uid})
+            db['users'].update_one({"_id": uid}, {"$set": {"custom_tag": tag_text, "tag_game": True}}, upsert=True)
+            
+            try: 
+                from core.bot import bot
+                bot.send_message(
+                    uid, 
+                    f"🎉 **Поздравляем!**\nВаш личный тег **«{tag_text}»** успешно применен и установлен во всех чатах сети!", 
+                    parse_mode="Markdown"
+                )
+            except Exception: pass
+            
+            return jsonify({"success": True, "msg": f"✅ Тег «{tag_text}» успешно установлен!"})
+        
+        # 2. ВЕШАЕМ НА ДРУГОГО (ТРОЛЛИНГ ИЛИ ПОДАРОК НА ВРЕМЯ)
+        else:
+            import time
+            now_ts = int(time.time())
+            expire_time = now_ts + duration 
+            
+            # «Базовый» тег (к нему откатимся, когда истекут ВСЕ временные)
+            target_data = db['users'].find_one({"_id": target_uid}) or {}
+            active_tags = list(db['temp_troll_tags'].find({"uid": target_uid, "expire_at": {"$gt": now_ts}}).sort("created", 1))
+            if active_tags:
+                base_tag = active_tags[0].get("base_tag", active_tags[0].get("old_tag", ""))
+            else:
+                base_tag = target_data.get("custom_tag", "")
+            
+            db['temp_troll_tags'].insert_one({
+                "uid": target_uid,
+                "tag": tag_text,
+                "base_tag": base_tag,
+                "old_tag": base_tag,
+                "created": now_ts,
+                "expire_at": expire_time
+            })
+            
+            # 🔥 ИСПРАВЛЕНИЕ: Добавлен флаг tag_game: True 🔥
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag_text, "tag_game": True}}, upsert=True)
+            
+            try:
+                from core.bot import bot
+                bot.send_message(uid, f"🏷 Вы успешно повесили статус «{tag_text}» на {duration_text}!")
+                bot.send_message(target_uid, f"✨ <b>НОВЫЙ СТАТУС!</b>\nКто-то из участников подарил вам временный тег <b>«{tag_text}»</b>!\nОн исчезнет автоматически через {duration_text}.", parse_mode="HTML")
+            except Exception: pass
+            
+            return jsonify({"success": True, "msg": f"🏷 Статус «{tag_text}» успешно повешен на {duration_text}!"})
+
+    elif action == 'hack':
+        target_uid = resolve_uid(data.get('target_info')) 
+        if not target_uid: return jsonify({"error": "Пользователь не найден в базе! Пусть напишет что-то в чат."}), 400
+        
+        if target_uid == uid: return jsonify({"error": "Нельзя взломать самого себя!"}), 400
+        
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        target_data = paid_collection.find_one({"uid": target_uid}) or {}
+        target_karma = target_data.get("social_rating", 0)
+        
+        import time
+        now = time.time()
+
+        # Проверка Анархии
+        anarchy = db['settings'].find_one({"_id": "anarchy_mode"}) or {}
+        is_anarchy = anarchy.get("active", False) and anarchy.get("end_time", 0) > time.time()
+        
+        # 1. ПРОВЕРКА КУЛДАУНА ХАКЕРА
+        last_hack = user_data.get("last_hack_time", 0)
+        cooldown_time = 900 if is_anarchy else 3600 # 15 минут при Анархии
+        
+        if now - last_hack < cooldown_time:
+            left_mins = int((cooldown_time - (now - last_hack)) / 60)
+            return jsonify({"error": f"Ваш вирус еще компилируется! Ждите {left_mins} мин."}), 400
+            
+        if user_data.get("bounty_points", 0) < 200:
+            return jsonify({"error": "У вас нет 200 💎 для запуска вируса!"}), 400
+            
+        # Семейная копилка жертвы (грабится только в Судную ночь) — та же, что у команды «!копилка»
+        target_fam_id = _family_bank_id(target_uid, target_data) if is_anarchy else None
+        target_fam_bal = (db['family_banks'].find_one({"_id": target_fam_id}) or {}).get("balance", 0) if target_fam_id else 0
+        # Раньше пустой кошелёк отменял атаку целиком, и копилки копящих семей были неуязвимы
+        if target_data.get("bounty_points", 0) < 100 and target_fam_bal <= 0:
+            return jsonify({"error": "Жертва слишком бедна, нечего красть!"}), 400
+            
+        # 2. ПРОВЕРКА ИММУНИТЕТА ЖЕРТВЫ
+        if not is_anarchy:
+            if target_karma >= 50: 
+                imm_time = 21600 # 6 часов
+                imm_text = "6 часов"
+            elif target_karma <= -50: 
+                imm_time = 7200  # 2 часа
+                imm_text = "2 часа"
+            else: 
+                imm_time = 14400 # 4 часа
+                imm_text = "4 часа"
+
+            last_hacked = target_data.get("last_hacked_time", 0)
+            if now - last_hacked < imm_time:
+                return jsonify({"error": f"Сервер жертвы под защитой! ..."}), 400
+            
+        # Списываем 200 очков за попытку  ⬇ атомарно + защита от двойного тапа
+        from utils.validators import take_points_capped
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 200},
+             "$or": [{"last_hack_time": {"$exists": False}}, {"last_hack_time": {"$lte": now - cooldown_time}}]},
+            {"$inc": {"bounty_points": -200}, "$set": {"last_hack_time": now}}
+        )
+        if not paid:
+            return jsonify({"error": "Вирус ещё компилируется или нет 200 💎!"}), 400
+        from core.bot import bot
+        
+        # 3. ПРОБИТИЕ ЩИТА (Анархия дает 50% шанс пробить щит насквозь)
+        shield_broken_by_anarchy = False
+        if target_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                {"uid": target_uid, "immunity": {"$gte": 1}},
+                {"$inc": {"immunity": -1}, "$set": {"last_hacked_time": now}}):
+            
+            import random
+            if is_anarchy and random.randint(1, 100) <= 50:
+                shield_broken_by_anarchy = True # Щит уничтожен, но атака проходит!
+            else:
+                try: bot.send_message(target_uid, f"🛡 **ВАШ СЕРВЕР АТАКОВАЛИ!**\nХакер `ID {uid}` пытался украсть ваши Очки, но Щит Иммунитета ударил его током!\n_(Щит разрушен, система в безопасности на 4 часа)_", parse_mode="Markdown")
+                except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+                return jsonify({"success": True, "msg": "❌ АТАКА ОТРАЖЕНА!\nУ жертвы был Щит. Вирус уничтожен, вы потеряли 200 💎."})
+            
+        # 4. БРОСАЕМ КУБИК НА ВЗЛОМ
+        import random
+        target_achievements = target_data.get("achievements", [])
+        hack_chance = 40 if "rat" in target_achievements else 30
+        
+        extra_msg = ""
+        if is_anarchy:
+            hack_chance = 80 # При Анархии шанс взлома 80% для всех!
+            extra_msg = "\n🏴‍☠️ <b>СУДНАЯ НОЧЬ!</b> Брандмауэры отключены, грабеж прошел как по маслу!"
+            if shield_broken_by_anarchy:
+                extra_msg += "\n⚠️ <b>ЩИТ ПРОБИТ!</b> Перегрузка сети разорвала щит жертвы, вирус прошел насквозь!"
+        
+        if random.randint(1, 100) <= hack_chance:
+            if target_karma <= -50:
+                steal_pct = random.uniform(0.15, 0.30)
+                if not is_anarchy:
+                    extra_msg = "\n📉 *Цель неблагонадежна!* Защита сервера была ослаблена из-за плохой кармы, вы украли в 2 раза больше очков!"
+            else:
+                steal_pct = random.uniform(0.05, 0.15)
+                
+            # Крадем с личного счета (пустой кошелёк — просто 0, копилку это не отменяет)
+            wallet = max(0, int(target_data.get("bounty_points", 0)))
+            stolen = min(wallet, max(10, int(wallet * steal_pct)))
+            # ⬇ было: update_one(-stolen) жертве и +stolen хакеру
+            stolen = take_points_capped(target_uid, stolen)   # жертва не уйдёт в минус
+            paid_collection.update_one({"uid": target_uid}, {"$set": {"last_hacked_time": now}})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": stolen}})
+            
+            victim_msg = f"🚨 **СИСТЕМА ВЗЛОМАНА!**\nХакер `ID {uid}` пробил вашу защиту и украл **{stolen} 💎** с личного счета!"
+            
+            # 🔥 5. ВЗЛОМ СЕМЕЙНОЙ КОПИЛКИ ВО ВРЕМЯ АНАРХИИ 🔥
+            family_stolen = 0
+            partner_id = target_data.get("partner_id")
+            family_id = target_fam_id
+            
+            if is_anarchy and family_id:
+                fam_db = db['family_banks'].find_one({"_id": family_id}) or {}
+                fam_balance = fam_db.get("balance", 0)
+                
+                if fam_balance > 0:
+                    # Крадем от 10% до 25% из семейного общака
+                    fam_steal_pct = random.uniform(0.10, 0.25)
+                    family_stolen = max(1, int(fam_balance * fam_steal_pct))
+                    
+                    # атомарно: только если в копилке ещё есть столько (параллельные взломы не уводят её в минус)
+                    if db['family_banks'].find_one_and_update({"_id": family_id, "balance": {"$gte": family_stolen}},
+                                                              {"$inc": {"balance": -family_stolen}}):
+                        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": family_stolen}})
+                    else:
+                        family_stolen = 0
+                    
+                    if family_stolen > 0:
+                        extra_msg += f"\n🏦 <b>ВЗЛОМ КОПИЛКИ!</b> Вирус добрался до семейного счета жертвы и выкачал оттуда еще {family_stolen} 💎!"
+                        victim_msg += f"\n\n🏦 <b>ВНИМАНИЕ!</b> Вирус проник в ваш Семейный Фонд и вывел оттуда **{family_stolen} 💎**!"
+                    
+                        # Инфарктное уведомление партнеру
+                        try: bot.send_message(partner_id, f"🚨 **СЕМЕЙНЫЙ СЧЕТ ВЗЛОМАН!**\nВ рамках Судной Ночи хакер атаковал вашу семью и украл **{family_stolen} 💎** из вашей общей копилки!", parse_mode="Markdown")
+                        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+            victim_msg += "\n_Срочно покупайте Щиты на Ферме или в Рюкзаке._"
+            try: bot.send_message(target_uid, victim_msg, parse_mode="Markdown")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+            total_loot = stolen + family_stolen
+            return jsonify({"success": True, "msg": f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {total_loot} 💎 у жертвы!{extra_msg}"})
+        else:
+            return jsonify({"success": True, "msg": "📉 Атака провалилась. Брандмауэр жертвы выстоял, вирус стерт. Вы потеряли 200 💎."})
+
+# ================= 🚜 КИБЕР-ФЕРМА: БЭКЕНД =================
+
+CROPS = {
+    "radish": {"name": "🧅 Лук", "cost_pts": 15, "grow_time": 4*3600, "water_req": False, "reward_pts": [20, 30], "shards_chance": 0},
+    "mizuna": {"name": "🥬 Мизуна", "cost_pts": 35, "grow_time": 6*3600, "water_req": False, "reward_pts": [45, 60], "shards_chance": 10},
+    "tomato": {"name": "🍅 Помидоры", "cost_pts": 80, "grow_time": 12*3600, "water_req": False, "reward_pts": [100, 150], "key": None},
+    "sunflower": {"name": "🌻 Подсолнух", "cost_pts": 150, "grow_time": 24*3600, "water_req": True, "reward_pts": [180, 220], "key": "blue", "key_chance": 25},
+    "watermelon": {"name": "🍉 Арбуз", "cost_pts": 300, "grow_time": 48*3600, "water_req": True, "reward_pts": [400, 500], "key": "red", "key_chance": 20},
+    "chestnut": {"name": "🌳 К. Каштан", "cost_pts": 1000, "grow_time": 7*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
+    "rhododendron": {"name": "🌸 Рододендрон", "cost_pts": 1500, "grow_time": 3*24*3600, "water_req": True, "reward_pts": [0, 0], "is_decor": True},
+    "parsley": {"name": "🌿 Петрушка", "cost_pts": 100, "grow_time": 8*3600, "water_req": False, "reward_pts": [50, 80]},
+    "cactus": {"name": "🌵 Кактус", "cost_pts": 800, "grow_time": 5*24*3600, "water_req": False, "reward_pts": [0, 0], "is_decor": True},
+    "amanita": {"name": "🍄 К-Мухомор", "cost_shards": 20, "grow_time": 2*3600, "water_req": True, "reward_pts": [0, 0]},
+    "money_tree": {"name": "🌳 Ден. Дерево", "cost_pts": 5000, "grow_time": 5*24*3600, "water_req": True, "reward_rub": [10, 30]},
+    "potato": {"name": "🥔 Картоха", "cost_pts": 60, "grow_time": 8*3600, "water_req": True, "reward_pts": [70, 110]},
+    
+    # 🔥 НОВЫЕ ОВОЩИ 🔥
+    "carrot": {"name": "🥕 Морковь", "cost_pts": 45, "grow_time": 6*3600, "water_req": False, "reward_pts": [52, 70], "shield_chance": 6},
+    "cabbage": {"name": "🥦 Капуста", "cost_pts": 120, "grow_time": 16*3600, "water_req": True, "reward_pts": [135, 175]},
+    "beetroot": {"name": "🫜 Свёкла", "cost_pts": 90, "grow_time": 10*3600, "water_req": True, "reward_pts": [95, 125], "shield_chance": 7},
+    
+    # 🔥 ГРИБНАЯ ПЕЩЕРА (СЛИВ ОСКОЛКОВ) 🔥
+    "champignon": {"name": "🍄 Шампиньон", "cost_shards": 5, "grow_time": 3*3600, "water_req": False},
+    "chanterelle": {"name": "🍄 Лисичка", "cost_shards": 12, "grow_time": 6*3600, "water_req": False},
+    "truffle": {"name": "🍄 Трюфель", "cost_shards": 30, "grow_time": 12*3600, "water_req": True}
+}
+
+@bot.message_handler(commands=['check_gw'])
+def force_check_gw(message):
+    from config import STAFF_GROUP_ID, OWNER_ID
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID:
+        return
+        
+    from core.scheduler import check_giveaways_task
+    bot.reply_to(message, "⏳ Принудительно сканирую базу розыгрышей...")
+    try:
+        check_giveaways_task()
+        bot.reply_to(message, "✅ Сканирование завершено! Если чье-то время вышло, победитель уже определен и опубликован в чате!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка при сканировании: {e}")
+
+@app.route('/api/get_farm', methods=['POST'])
+def api_get_farm():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    # Инициализация обычных грядок (ID 1-16)
+    plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$lt": 100}}).sort("slot_id", 1))
+    if len(plots) == 0:
+        for i in range(1, 5):
+            db['farm_plots'].insert_one({"uid": uid, "slot_id": i, "status": "empty"})
+        plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$lt": 100}}).sort("slot_id", 1))
+        
+    # Инициализация пещеры (ID 101-106)
+    cave_plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$gt": 100}}).sort("slot_id", 1))
+    if len(cave_plots) == 0:
+        for i in range(101, 107):
+            db['farm_plots'].insert_one({"uid": uid, "slot_id": i, "status": "empty"})
+        cave_plots = list(db['farm_plots'].find({"uid": uid, "slot_id": {"$gt": 100}}).sort("slot_id", 1))
+        
+    import time
+    now = int(time.time())
+    
+    def process_plot_list(plot_list):
+        res = []
+        for plot in plot_list:
+            status = plot.get("status")
+            seed_type = plot.get("seed_type")
+            
+            if status == "growing" and seed_type in CROPS:
+                crop = CROPS[seed_type]
+                planted_at = plot.get("planted_at", now)
+                last_watered = plot.get("last_watered", now)
+                
+                if crop.get("water_req", False) and (now - last_watered > 86400):
+                    db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
+                    status = "withered"
+                elif now >= planted_at + crop["grow_time"]:
+                    db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "ready"}})
+                    status = "ready"
+                    
+            res.append({
+                "slot_id": plot["slot_id"],
+                "status": status,
+                "seed_type": seed_type,
+                "name": CROPS[seed_type]["name"] if seed_type in CROPS else "",
+                "planted_at": plot.get("planted_at"),
+                "grow_time": CROPS[seed_type]["grow_time"] if seed_type in CROPS else 0,
+                "water_req": CROPS.get(seed_type, {}).get("water_req", False),
+                "last_watered": plot.get("last_watered"),
+                "fertilized": plot.get("fertilized", False),
+                "pest": plot.get("pest")
+            })
+        return res
+        
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    keys = {"blue": user_db.get("key_blue", 0), "red": user_db.get("key_red", 0)}
+        
+    user_info = db['users'].find_one({"_id": uid}) or {}
+    scarecrow_left = max(0, int(user_info.get("scarecrow_until", 0) - now))
+            
+    return jsonify({
+        "plots": process_plot_list(plots), 
+        "cave_plots": process_plot_list(cave_plots),
+        "keys": keys, 
+        "scarecrow_left": scarecrow_left
+    })
+
+@app.route('/api/farm_action', methods=['POST'])
+def api_farm_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    action = data.get('action') 
+    slot_id = int(data.get('slot_id', 0))
+    
+    import time
+    now = int(time.time())
+    
+    # === ПУГАЛО (ЗАЩИТА ОТ ВРЕДИТЕЛЕЙ) ===
+    if action == 'buy_scarecrow':
+        cost_shards = 20
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": cost_shards}},
+            {"$inc": {"jackpot_shards": -cost_shards}}
+        )
+        if not user_db: return jsonify({"error": "Нужно 20 🧩 осколков!"}), 400
+        
+        # Ставим защиту на 24 часа
+        db['users'].update_one({"_id": uid}, {"$set": {"scarecrow_until": now + 86400}}, upsert=True)
+        return jsonify({"success": True, "msg": "🧑‍🌾 Пугало установлено!\nВредители не сунутся на вашу ферму 24 часа."})
+
+    # === РАСЧИСТКА ПЕЩЕРЫ (ДИНАМИТ) ===
+    if action == 'buy_cave_slot':
+        current_cave_slots = db['farm_plots'].count_documents({"uid": uid, "slot_id": {"$gt": 100}})
+        if current_cave_slots >= 12: 
+            return jsonify({"error": "Пещера расширена до максимума (12 слотов)!"}), 400
+        
+        # Цена растет: 10, 20, 30... осколков за слот
+        cost = (current_cave_slots - 5) * 10
+        if cost < 10: cost = 10
+        
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": cost}},
+            {"$inc": {"jackpot_shards": -cost}}
+        )
+        if not user_db: 
+            return jsonify({"error": f"Недостаточно осколков для покупки динамита (нужно {cost} 🧩)!"}), 400
+        
+        db['farm_plots'].insert_one({"uid": uid, "slot_id": 100 + current_cave_slots + 1, "status": "empty"})
+        return jsonify({"success": True, "msg": f"⛏ Взрыв прошел успешно!\nРасчищено место для лунки #{current_cave_slots + 1}."})
+
+    # === ПОКУПКА СЛОТА (ТРАКТОР) ===
+    if action == 'buy_slot':
+        current_slots = db['farm_plots'].count_documents({"uid": uid, "slot_id": {"$lt": 100}})
+        if current_slots >= 16: 
+            return jsonify({"error": "У вас уже максимальное число грядок (16)!"}), 400
+        
+        cost = (current_slots - 3) * 1000
+        if cost < 1000: cost = 1000
+        
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": cost}},
+            {"$inc": {"bounty_points": -cost}}
+        )
+        if not user_db: 
+            return jsonify({"error": f"Недостаточно очков для аренды трактора (нужно {cost} 💎)!"}), 400
+        
+        db['farm_plots'].insert_one({"uid": uid, "slot_id": current_slots + 1, "status": "empty"})
+        return jsonify({"success": True, "msg": f"🚜 Трактор расчистил слот #{current_slots + 1}!"})
+
+    # === ДЛЯ ОСТАЛЬНЫХ ДЕЙСТВИЙ НУЖНА КОНКРЕТНАЯ ГРЯДКА ===
+    plot = db['farm_plots'].find_one({"uid": uid, "slot_id": slot_id})
+    if not plot: return jsonify({"error": "Грядка не найдена!"}), 400 
+
+    # Защита от действий во время заражения
+    if action in ['water', 'fertilize', 'harvest']:
+        if plot.get('pest'):
+            return jsonify({"error": f"Сначала прогоните вредителя ({plot['pest']['emoji']})!"}), 400
+    
+    # === ПОСАДКА ===
+    if action == 'plant':
+        seed_type = data.get('seed_type')
+        if seed_type not in CROPS: return jsonify({"error": "Таких семян нет!"}), 400
+        if plot['status'] != 'empty': return jsonify({"error": "Этот слот уже занят!"}), 400
+        
+        crop = CROPS[seed_type]
+        
+        if "cost_shards" in crop:
+            cost = crop['cost_shards']
+            user_db = paid_collection.find_one_and_update(
+                {"uid": uid, "jackpot_shards": {"$gte": cost}},
+                {"$inc": {"jackpot_shards": -cost}}
+            )
+            if not user_db: return jsonify({"error": f"Нужно {cost} 🧩 осколков!"}), 400
+        else:
+            cost = crop['cost_pts']
+            user_db = paid_collection.find_one_and_update(
+                {"uid": uid, "bounty_points": {"$gte": cost}},
+                {"$inc": {"bounty_points": -cost}}
+            )
+            if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
+        
+        grow_time = crop['grow_time']
+        if "patriarch" in (paid_collection.find_one({"uid": uid}) or {}).get("achievements", []):
+            now -= int(grow_time * 0.1)
+            
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {
+            "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now, "fertilized": False}
+        })
+        return jsonify({"success": True, "msg": f"🌱 Вы посадили {crop['name']}!"})
+        
+    # === ПРОГНАТЬ ВРЕДИТЕЛЯ ===
+    elif action == 'chase_pest':
+        if not plot.get('pest'): return jsonify({"error": "На грядке никого нет!"}), 400
+        pest_emoji = plot['pest']['emoji']
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$unset": {"pest": ""}})
+        return jsonify({"success": True, "msg": f"👞 Вы успешно прогнали гада ({pest_emoji})! Растение снова в безопасности."})
+
+    # === ПОЛИВ ===
+    elif action == 'water':
+        if plot['status'] != 'growing': return jsonify({"error": "Нечего поливать!"}), 400
+
+        import datetime
+        tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+        today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
+        db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$set": {"watered": True}}, upsert=True)
+        
+        last_watered = plot.get('last_watered', 0)
+        time_passed = now - last_watered
+        cooldown = 4 * 3600 
+        
+        if time_passed < cooldown:
+            left_mins = int((cooldown - time_passed) / 60)
+            return jsonify({"error": f"Грядка еще влажная! Возвращайтесь через {left_mins} мин."}), 400
+            
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"last_watered": now}})
+        
+        user_db = paid_collection.find_one({"uid": uid}) or {}
+        partner_id = user_db.get("partner_id")
+        extra_msg = ""
+        
+        if partner_id:
+            db['farm_plots'].update_many(
+                {"uid": partner_id, "status": "growing"}, 
+                {"$set": {"last_watered": now}}
+            )
+            extra_msg = "\n💖 Грядки вашего супруга(и) также автоматически политы!"
+            
+        return jsonify({"success": True, "msg": f"💧 Растение успешно полито. Таймер засухи сброшен!{extra_msg}"})
+        
+    # === ОЧИСТКА ЗАСОХШЕГО ===
+    elif action == 'clear':
+        if plot['status'] != 'withered': return jsonify({"error": "Грядка еще жива!"}), 400
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "fertilized": False}})
+        return jsonify({"success": True, "msg": "🥀 Засохший куст убран. Слот свободен."})
+        
+    # === ВЫКОПКА ЖИВОГО РАСТЕНИЯ ===
+    elif action == 'dig_up':
+        if plot['status'] == 'empty': return jsonify({"error": "Грядка и так пуста!"}), 400
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "planted_at": None, "last_watered": None, "fertilized": False}})
+        return jsonify({"success": True, "msg": "⛏ Вы вырвали растение с корнем. Грядка очищена!"})
+        
+    # === СБОР УРОЖАЯ ===
+    elif action == 'harvest':
+        if plot['status'] != 'ready': return jsonify({"error": "Урожай еще не созрел!"}), 400
+        crop = CROPS.get(plot['seed_type'])
+                       
+        if crop.get('is_decor'): return jsonify({"error": "Декор нельзя собрать, он дает пассивный бонус!"}), 400
+        
+        import random
+        update_query = {"$inc": {}}
+        msg = "🚜 Урожай собран!"
+        
+        user_db = paid_collection.find_one({"uid": uid}) or {}
+        karma = user_db.get("social_rating", 0)
+
+        if plot['seed_type'] == 'amanita':
+            if random.randint(1, 100) <= 50:
+                update_query["$inc"]["bounty_points"] = 1000
+                msg = "🎰 ДЖЕКПОТ!\nКибер-Мухомор выдал 1000 💎!"
+            else:
+                update_query["$inc"]["bounty_points"] = 0 
+                msg = "🍄 Отравленная земля...\nМухомор сгнил, вы потеряли вложения."
+                
+        elif plot['seed_type'] == 'champignon':
+            if random.randint(1, 100) <= 70:
+                update_query["$inc"]["bounty_points"] = 150
+                msg = "🍄 Отлично!\nШампиньон принёс 150 💎!"
+            else:
+                msg = "🍄 Гнилой гриб...\nВам ничего не досталось."
+                
+        elif plot['seed_type'] == 'chanterelle':
+            if random.randint(1, 100) <= 55:
+                update_query["$inc"]["bounty_points"] = 300
+                msg = "🍄 Успех!\nЛисичка принесла 300 💎!"
+            else:
+                update_query["$inc"]["bounty_points"] = 50
+                msg = "🍄 Слабый урожай...\nЛисичка дала лишь 50 💎."
+            if random.randint(1, 100) <= 45:
+                update_query["$inc"]["immunity"] = 1
+                msg += "\n🛡 В грибнице найден Щит Иммунитета!"
+                
+        elif plot['seed_type'] == 'truffle':
+            if random.randint(1, 100) <= 35:
+                update_query["$inc"]["bounty_points"] = 1500
+                msg = "🍄 ДЖЕКПОТ!\nКоролевский трюфель принёс 1500 💎!"
+            else:
+                msg = "🍄 Провал...\nТрюфель сгнил."
+            if random.randint(1, 100) <= 15:
+                update_query["$inc"]["immunity"] = 1
+                msg += "\n🛡 Вы раскопали Щит Иммунитета!"
+                
+        elif plot['seed_type'] == 'money_tree':
+            reward_rub = random.randint(crop['reward_rub'][0], crop['reward_rub'][1])
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": reward_rub}})
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": reward_rub, "reason": "Урожай: Денежное Дерево", "timestamp": time.time()})
+            
+            new_planted_at = now - (crop['grow_time'] - 86400) 
+            db['farm_plots'].update_one({"_id": plot["_id"]}, {
+                "$set": {
+                    "status": "growing", 
+                    "planted_at": new_planted_at,
+                    "last_watered": now,
+                    "fertilized": False
+                }
+            })
+            return jsonify({"success": True, "msg": f"🌳 Вы стрясли с дерева {reward_rub} ₽!\nДерево сбросило плоды. Следующий урожай будет готов через 24 часа. Не забывайте поливать!"})
+                
+        else:
+            reward_pts = random.randint(crop['reward_pts'][0], crop['reward_pts'][1])
+            
+            if plot['seed_type'] == 'cabbage' and random.randint(1, 100) <= 10:
+                reward_pts *= 2
+                msg += f"\n🥬 КОЧАН С КУПЮРАМИ! Награда удвоена: {reward_pts} 💎!"
+            else:
+                if karma <= -50 and random.randint(1, 100) <= 10:
+                    penalty = int(reward_pts * 0.5)
+                    reward_pts -= penalty
+                    msg += f"\n📉 <b>ЭКО-ШТРАФ!</b> Участок признан свалкой из-за кармы. Удержано {penalty} 💎."
+                msg += f"\nВы получили {reward_pts} 💎."
+                
+            update_query["$inc"]["bounty_points"] = reward_pts
+            
+            if plot['seed_type'] == 'parsley':
+                chance = random.randint(1, 100)
+                if chance <= 10:
+                    update_query["$inc"]["immunity"] = 1
+                    msg += "\n🛡 В кустах найден Щит Иммунитета!"
+                elif chance <= 20:
+                    code = f"ARREST-{random.randint(100, 999)}"
+                    code = create_unique_promo(code.split("-")[0], {"type": "artifact", "value": 0, "target": "mute", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    msg += f"\n🚓 В кустах найден Ордер на Арест!\nКод: {code}"
+                    
+            shield_chance = crop.get('shield_chance', 0)
+            if shield_chance > 0 and random.randint(1, 100) <= shield_chance:
+                update_query["$inc"]["immunity"] = 1
+                msg += "\n🛡 В корнях найден Щит Иммунитета!"
+
+        if crop.get('shards_chance') and random.randint(1, 100) <= crop['shards_chance']:
+            update_query["$inc"]["jackpot_shards"] = 1
+            msg += "\n🧩 Найден Осколок рулетки!"
+            
+        key_type = crop.get('key')
+        key_chance = crop.get('key_chance', 0)
+        if karma >= 50: key_chance += 5 
+        
+        if key_type and random.randint(1, 100) <= key_chance:
+            update_query["$inc"][f"key_{key_type}"] = 1
+            key_name = "Синий 🗄" if key_type == "blue" else "Красный 🏦"
+            msg += f"\n\n🔑 УРА! ВЫ НАШЛИ {key_name} КЛЮЧ ОТ СЕЙФА!"
+            
+        paid_collection.update_one({"uid": uid}, update_query)
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "fertilized": False}})
+        
+        return jsonify({"success": True, "msg": msg})
+
+    # === УДОБРЕНИЕ ===
+    elif action == 'fertilize':
+        cost = 50 
+        if plot['status'] != 'growing': 
+            return jsonify({"error": "Удобрение работает только на растущие культуры!"}), 400
+            
+        if plot.get('fertilized'):
+            return jsonify({"error": "Это растение уже удобрено! Максимум 1 раз."}), 400
+        
+        user_db = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": cost}},
+            {"$inc": {"bounty_points": -cost}}
+        )
+        if not user_db: 
+            return jsonify({"error": "Недостаточно очков для покупки нано-удобрения (50 💎)!"}), 400
+        
+        crop = CROPS.get(plot['seed_type'])
+        
+        elapsed = now - plot.get('planted_at', now)
+        remaining_time = crop['grow_time'] - elapsed
+        
+        if remaining_time <= 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": cost}})
+            return jsonify({"error": "Растение уже почти созрело, удобрение не требуется!"}), 400
+            
+        time_boost = remaining_time // 2
+        
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {
+            "$inc": {"planted_at": -time_boost},
+            "$set": {"fertilized": True}
+        })
+        
+        return jsonify({"success": True, "msg": "🧪 Удобрение применено!\nОставшееся время до созревания сокращено в 2 раза."})
+    
+    return jsonify({"error": "Неизвестное действие"}), 400
+
+# ================= КАРТОФЕЛЬНОЕ ПОЛЕ (БЭКЕНД) =================
+
+# ================= 🥔 КОЛХОЗНОЕ ПОЛЕ 10x10 =================
+POTATO_COST = 60                 # цена семян за клетку
+POTATO_GROW = 8 * 3600           # созревание
+POTATO_DUST_COST = 100           # Дуст: убрать всех жуков разом
+POTATO_SPRAY_COST = 150          # Обработка поля: жуки обходят поле
+POTATO_SPRAY_SECONDS = 12 * 3600
+
+def _potato_get_field(uid):
+    field = db['potato_fields'].find_one({"uid": uid})
+    if not field:
+        # Инициализируем пустое поле 10х10 (100 нулей)
+        db['potato_fields'].insert_one({"uid": uid, "cells": [0] * 100})
+        field = db['potato_fields'].find_one({"uid": uid}) or {"uid": uid, "cells": [0] * 100}
+    return field
+
+def _potato_stats(field, now):
+    cells = field.get("cells", [0] * 100)
+    return {
+        "ready": sum(1 for c in cells if c > 0 and now - c >= POTATO_GROW),
+        "growing": sum(1 for c in cells if c > 0 and now - c < POTATO_GROW),
+        "beetles": sum(1 for c in cells if c == -1),
+        # «волна» - с момента, когда поле было пустым: сколько посажено, собрано и на какую сумму
+        "wave_plant": field.get("s_plant", 0),
+        "wave_harv_cnt": field.get("s_cnt", 0),
+        "wave_reward": field.get("s_harv", 0),
+        "wave_spent": field.get("s_plant", 0) * POTATO_COST,
+        "spray_left": max(0, int(field.get("protected_until", 0) - now)),
+        "total_harvested": field.get("t_harv", 0),
+        "total_squashed": field.get("t_squash", 0),
+    }
+
+@app.route('/api/get_potato_field', methods=['POST'])
+def api_get_potato_field():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    import time
+    field = _potato_get_field(uid)
+    return jsonify({"cells": field["cells"], "stats": _potato_stats(field, int(time.time()))})
+
+@app.route('/api/potato_action', methods=['POST'])
+def api_potato_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    import time, random
+    now = int(time.time())
+    action = data.get('action')
+    try: index = int(data.get('index', 0))
+    except (TypeError, ValueError): index = -1
+    
+    field = _potato_get_field(uid)
+    cells = field['cells']
+    fid = {"uid": uid}
+    
+    def reset_wave_if_empty():
+        if all(c == 0 for c in cells):
+            db['potato_fields'].update_one(fid, {"$set": {"s_plant": 0, "s_cnt": 0, "s_harv": 0}})
+    
+    # --- ПОСАДИТЬ ВЕЗДЕ (на все свободные клетки, сколько хватит очков) ---
+    if action == 'plant_all':
+        empty = [i for i, c in enumerate(cells) if c == 0]
+        if not empty: return jsonify({"error": "Нет свободных клеток!"}), 400
+        pts = (paid_collection.find_one({"uid": uid}) or {}).get("bounty_points", 0)
+        n = min(len(empty), pts // POTATO_COST)
+        if n <= 0: return jsonify({"error": f"Нет {POTATO_COST} 💎 на семена!"}), 400
+        total_cost = n * POTATO_COST
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": total_cost}},
+            {"$inc": {"bounty_points": -total_cost}}
+        )
+        if not charged: return jsonify({"error": "Баланс изменился, попробуйте ещё раз."}), 400
+        reset_wave_if_empty()
+        planted = 0
+        for i in empty[:n]:
+            res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": 0}, {"$set": {f"cells.{i}": now}})
+            if res.modified_count: planted += 1
+        if planted < n:   # клетку успели занять параллельным запросом: возвращаем деньги
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": (n - planted) * POTATO_COST}})
+        db['potato_fields'].update_one(fid, {"$inc": {"s_plant": planted}})
+        return jsonify({"success": True, "msg": f"🌱 Посажено {planted} шт. за {planted * POTATO_COST} 💎."})
+    
+    # --- СОБРАТЬ ВСЁ (одним запросом и одним окошком вместо 100 тапов) ---
+    if action == 'harvest_all':
+        total, cnt = 0, 0
+        for i, c in enumerate(cells):
+            if c > 0 and now - c >= POTATO_GROW:
+                res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": c}, {"$set": {f"cells.{i}": 0}})
+                if res.modified_count:
+                    total += random.randint(70, 110)
+                    cnt += 1
+        if cnt == 0: return jsonify({"error": "Нет созревшей картохи!"}), 400
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": total}})
+        db['potato_fields'].update_one(fid, {"$inc": {"s_harv": total, "s_cnt": cnt, "t_harv": cnt}})
+        return jsonify({"success": True, "reward": total, "count": cnt, "msg": f"🥔 Собрано {cnt} шт., получено {total} 💎!"})
+    
+    # --- ДУСТ: убрать всех жуков разом ---
+    if action == 'dust':
+        if not any(c == -1 for c in cells): return jsonify({"error": "На поле нет жуков!"}), 400
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": POTATO_DUST_COST}},
+            {"$inc": {"bounty_points": -POTATO_DUST_COST}}
+        )
+        if not charged: return jsonify({"error": f"Нужно {POTATO_DUST_COST} 💎 на дуст!"}), 400
+        killed = 0
+        for i, c in enumerate(cells):
+            if c == -1:
+                res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": -1}, {"$set": {f"cells.{i}": 0}})
+                if res.modified_count: killed += 1
+        if killed == 0:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": POTATO_DUST_COST}})
+            return jsonify({"error": "Жуки уже исчезли."}), 400
+        db['potato_fields'].update_one(fid, {"$inc": {"t_squash": killed}})
+        return jsonify({"success": True, "msg": f"☠️ Дуст сработал: уничтожено жуков: {killed}."})
+    
+    # --- ОБРАБОТКА ПОЛЯ: 12 часов жуки не прилетают и не ползут ---
+    if action == 'spray':
+        left = field.get("protected_until", 0) - now
+        if left > 3600: return jsonify({"error": f"Поле уже обработано (ещё {int(left // 3600)} ч)."}), 400
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": POTATO_SPRAY_COST}},
+            {"$inc": {"bounty_points": -POTATO_SPRAY_COST}}
+        )
+        if not charged: return jsonify({"error": f"Нужно {POTATO_SPRAY_COST} 💎 на обработку!"}), 400
+        db['potato_fields'].update_one(fid, {"$set": {"protected_until": now + POTATO_SPRAY_SECONDS}})
+        return jsonify({"success": True, "msg": "🧪 Поле обработано! 12 часов жуки не прилетят и не поползут."})
+    
+    # --- ДЕЙСТВИЯ НАД ОДНОЙ КЛЕТКОЙ ---
+    if index < 0 or index > 99: return jsonify({"error": "Клетка за пределами поля!"}), 400
+    
+    if action == 'plant':
+        if cells[index] != 0: return jsonify({"error": "Занято!"}), 400
+        reset_wave_if_empty()
+        # Сначала атомарно занимаем клетку, потом списываем семена (двойной тап не оплатит одну клетку дважды)
+        claimed = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": 0}, {"$set": {f"cells.{index}": now}})
+        if claimed.modified_count == 0: return jsonify({"error": "Занято!"}), 400
+        paid = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": POTATO_COST}},
+            {"$inc": {"bounty_points": -POTATO_COST}}
+        )
+        if not paid:
+            db['potato_fields'].update_one({"uid": uid, f"cells.{index}": now}, {"$set": {f"cells.{index}": 0}})
+            return jsonify({"error": f"Нет {POTATO_COST} 💎 на семена!"}), 400
+        db['potato_fields'].update_one(fid, {"$inc": {"s_plant": 1}})
+        return jsonify({"success": True})
+        
+    elif action == 'harvest':
+        planted_at = cells[index]
+        if planted_at <= 0 or now - planted_at < POTATO_GROW:
+            return jsonify({"error": "Еще не созрело!"}), 400
+        # Атомарно убираем клетку: двойной тап не выдаст награду дважды
+        res = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": planted_at}, {"$set": {f"cells.{index}": 0}})
+        if res.modified_count == 0: return jsonify({"error": "Уже собрано!"}), 400
+        reward = random.randint(70, 110)
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}})
+        db['potato_fields'].update_one(fid, {"$inc": {"s_harv": reward, "s_cnt": 1, "t_harv": 1}})
+        return jsonify({"success": True, "reward": reward})
+        
+    elif action == 'squash':
+        res = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": -1}, {"$set": {f"cells.{index}": 0}})
+        if res.modified_count == 0: return jsonify({"error": "Здесь нет жука!"}), 400
+        db['potato_fields'].update_one(fid, {"$inc": {"t_squash": 1}})
+        return jsonify({"success": True})
+    
+    return jsonify({"error": "Неизвестное действие"}), 400
+
+# ================= 🗄 КИБЕР-СЕЙФЫ: БЭКЕНД =================
+
+@app.route('/api/get_safes', methods=['POST'])
+def api_get_safes():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    keys = {"blue": user_db.get("key_blue", 0), "red": user_db.get("key_red", 0)}
+    
+    import random
+    blue_safe = db['safes_state'].find_one({"_id": "safe_blue"})
+    if not blue_safe:
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(4)]) # Было 3
+        blue_safe = {"_id": "safe_blue", "pin_code": new_pin, "balance": 15000, "logs": []}
+        db['safes_state'].insert_one(blue_safe)
+        
+    red_safe = db['safes_state'].find_one({"_id": "safe_red"})
+    if not red_safe:
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(6)]) # Было 4
+        red_safe = {"_id": "safe_red", "pin_code": new_pin, "balance": 500, "logs": []}
+        db['safes_state'].insert_one(red_safe)
+
+    return jsonify({
+        "keys": keys,
+        "blue_bal": blue_safe.get("balance", 0),
+        "blue_logs": blue_safe.get("logs", []),
+        "red_bal": red_safe.get("balance", 0),
+        "red_logs": red_safe.get("logs", [])
+    })
+
+@app.route('/api/crack_safe', methods=['POST'])
+def api_crack_safe():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+    
+    user_info = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])
+    uid = user_info['id']
+    username = user_info.get('username')
+    user_name_str = f"@{username}" if username else user_info.get('first_name', 'Аноним')
+    
+    safe_color = data.get('color') 
+    guess_pin = data.get('pin')
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    key_field = f"key_{safe_color}"
+    
+    if user_db.get(key_field, 0) < 1:
+        key_name = "Синий" if safe_color == 'blue' else "Красный"
+        return jsonify({"error": f"Вам нужен {key_name} ключ! Вырастите его на грядке."}), 400
+
+    # 🔥 ПАССИВКА: КОНСКИЙ КАШТАН И ИДЕАЛЬНОЕ ВРЕМЯ 🔥
+    import datetime
+    # Сдвиг +5 часов для Екатеринбурга (работает всегда и без сторонних библиотек!)
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
+    
+    current_cracks = user_db.get("daily_cracks", 0)
+    is_new_day = (user_db.get("last_crack_date") != today_str)
+    
+    # Сброс лимитов на новый день в памяти
+    if is_new_day:
+        current_cracks = 0
+        
+    # === ИЗМЕНИТЬ ВОТ ТАК ===
+    chestnuts_count = db['farm_plots'].count_documents({"uid": uid, "seed_type": "chestnut", "status": "ready"})
+    max_cracks = 3 + chestnuts_count
+    
+    # БАФФ МЕДВЕЖАТНИКА
+    if "safecracker" in user_db.get("achievements", []):
+        max_cracks += 1
+    
+    if current_cracks >= max_cracks:
+        return jsonify({"error": f"Лимит взломов на сегодня исчерпан ({current_cracks}/{max_cracks})!\nПриходите завтра или посадите больше Каштанов."}), 400
+        
+    # 🔥 ЖЕСТКИЙ СБРОС ЛИМИТОВ В БАЗЕ (Больше не зациклится!) 🔥
+    if is_new_day:
+        paid_collection.update_one(
+            {"uid": uid}, 
+            {"$inc": {key_field: -1}, "$set": {"daily_cracks": 1, "last_crack_date": today_str}}
+        )
+    else:
+        paid_collection.update_one(
+            {"uid": uid}, 
+            {"$inc": {key_field: -1, "daily_cracks": 1}, "$set": {"last_crack_date": today_str}}
+        )
+    
+    safe_id = f"safe_{safe_color}"
+    safe = db['safes_state'].find_one({"_id": safe_id})
+    real_pin = safe['pin_code']
+    prize = safe['balance']
+    
+    if guess_pin == real_pin:
+        grant_achievement(uid, "safecracker", "Медвежатник", "🏦", None)
+        if safe_color == 'blue':
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": prize}})
+            currency = "💎"
+        else:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": prize}})
+            currency = "₽"
+            # 👇 ЛОГИРУЕМ ВЗЛОМ
+            db['ruble_ledger'].insert_one({"uid": uid, "amount": prize, "reason": "Взлом Финансового Сейфа", "timestamp": time.time()})
+            
+        import random
+        pin_len = 4 if safe_color == 'blue' else 6 # Было 3 и 4
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
+        start_balance = 10000 if safe_color == 'blue' else 500
+        
+        db['safes_state'].update_one({"_id": safe_id}, {
+            "$set": {"pin_code": new_pin, "balance": start_balance, "logs": []}
+        })
+        
+        # 1. Отчет админам (Тихо)
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            safe_name = "СЕЙФА ДАННЫХ (Очки)" if safe_color == 'blue' else "ФИНАНСОВОГО СЕЙФА (Рубли)"
+            bot.send_message(STAFF_GROUP_ID, f"🚨 <b>СИСТЕМА ВЗЛОМАНА!</b>\n\nХакер {user_name_str} подобрал пароль от {safe_name} и унес куш в размере <b>{prize} {currency}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+        # 🔥 2. ГРОМКОЕ ОПОВЕЩЕНИЕ ПО ВСЕМ ЧАТАМ 🔥
+        def broadcast_safe_crack():
+            from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+            import time
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            from core.scheduler import schedule_message_deletion # 👈 Импорт функции удаления
+            
+            all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+            unique_chats = set(all_chats)
+            
+            safe_title = "🔵 СЕЙФ ДАННЫХ" if safe_color == 'blue' else "🔴 ФИНАНСОВЫЙ СЕЙФ"
+            
+            msg_text = (
+                f"🚨 <b>ВНИМАНИЕ ВСЕМ УЗЛАМ СКАЙНЕТА! СИСТЕМА ВЗЛОМАНА!</b> 🚨\n\n"
+                f"Хакер {user_name_str} только что подобрал пароль и вскрыл <b>{safe_title}</b>!\n"
+                f"💰 Украденный куш: <b>{prize} {currency}</b>!\n\n"
+                f"<i>Сейф обнулен, сгенерирован новый пароль. Успей добыть ключи на Кибер-Участке и сорвать следующий джекпот!</i>"
+            )
+            
+            try:
+                bot_username = bot.get_me().username
+                markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔐 Пойти взламывать", url=f"https://t.me/{bot_username}?start=app_farm"))
+                
+                for cid in unique_chats:
+                    try:
+                        # 👈 1. Ловим отправленное сообщение в переменную sent_msg
+                        sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
+                        
+                        # 👈 2. Отправляем его в таймер на 1 час (3600 секунд)
+                        schedule_message_deletion(cid, sent_msg.message_id, 3600, bot)
+                        
+                        time.sleep(0.3) 
+                    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+        import threading
+        threading.Thread(target=broadcast_safe_crack, daemon=True).start()
+
+        return jsonify({"success": True, "msg": f"ПОЛНЫЙ ДОСТУП!\nВы сорвали куш: {prize} {currency}!", "cracked": True})
+        
+    else:
+        exact_matches = sum(1 for a, b in zip(guess_pin, real_pin) if a == b)
+        result_text = f"Точных совпадений: {exact_matches}"
+        
+        new_log = {"name": user_name_str, "guess": guess_pin, "result": result_text}
+        db['safes_state'].update_one(
+            {"_id": safe_id}, 
+            {"$push": {"logs": {"$each": [new_log], "$slice": -6}}} 
+        )
+        
+        return jsonify({"success": True, "msg": f"Доступ запрещен!\n{result_text}\nКлюч сожжен. Попыток сегодня: {current_cracks + 1}/{max_cracks}", "cracked": False})
+
+@app.route('/api/open_agent_case', methods=['POST'])
+def api_open_agent_case():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+    
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    cases_count = user_db.get("agent_cases", 0)
+    
+    if cases_count < 1:
+        return jsonify({"error": "У вас нет Кейсов Агента! Приглашайте друзей по ссылке."}), 400
+        
+    # Списываем 1 кейс сразу, чтобы не накрутили
+    paid_collection.update_one({"uid": uid}, {"$inc": {"agent_cases": -1}})
+    
+    # 🎲 ЛУТ-ТАБЛИЦА (Наши утвержденные шансы)
+    # Формат: (ID_приза, Название, Вес/Шанс)
+    loot_table = [
+        ("points_25", "25 💎 Очков", 40.0),
+        ("points_50", "50 💎 Очков", 30.0),
+        ("points_100", "100 💎 Очков", 15.0),
+        ("shield_1", "🛡 Щит Иммунитета", 7.0),
+        ("shards_5", "🧩 5 Осколков", 3.0),
+        ("points_500", "500 💎 Очков", 4.0),
+        ("vip_status", "👑 VIP-Статус", 0.5),
+        ("cash_500", "💸 500 Рублей", 0.5)
+    ]
+    
+    # Разделяем таблицу для random.choices
+    prizes = [item for item in loot_table]
+    weights = [item[2] for item in loot_table]
+    
+    # Бросаем кубик!
+    won_prize = random.choices(prizes, weights=weights, k=1)[0]
+    prize_id = won_prize[0]
+    prize_name = won_prize[1]
+    
+    # 🎁 ВЫДАЧА ПРИЗА В БАЗУ
+    if prize_id.startswith("points_"):
+        amount = int(prize_id.split("_")[1])
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}})
+    elif prize_id == "shield_1":
+        paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+    elif prize_id == "shards_5":
+        paid_collection.update_one({"uid": uid}, {"$inc": {"jackpot_shards": 5}})
+    elif prize_id == "cash_500":
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+    elif prize_id == "vip_status":
+        db['users'].update_one({"_id": uid}, {"$set": {"is_vip": True}}, upsert=True)
+        
+    # Если выпал джекпот — трубим админам
+    if prize_id in ["vip_status", "cash_500", "points_500"]:
+        try:
+            from core.bot import bot
+            from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+            bot.send_message(STAFF_GROUP_ID, f"🎰 <b>ДЖЕКПОТ В КЕЙСАХ АГЕНТА!</b>\nПользователь `{uid}` выбил: <b>{prize_name}</b>!", parse_mode="HTML", message_thread_id=PRIZES_THREAD_ID)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    # Отправляем на фронтенд ТОЛЬКО ID выигранного приза.
+    # Остальную магию (прокрутку, генерацию ленты и т.д.) будет делать JavaScript.
+    return jsonify({
+        "success": True, 
+        "won_id": prize_id, 
+        "won_name": prize_name,
+        "cases_left": cases_count - 1
+    })
+
+# ================= АДМИН-ПАНЕЛЬ (ЦУП В WEB APP) =================
+
+@app.route('/api/admin/generate_contest', methods=['POST'])
+def api_admin_generate_contest():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    from config import ADMIN_CHAT_IDS
+    if str(uid) not in [str(x) for x in ADMIN_CHAT_IDS]:
+        return jsonify({"error": "Доступ запрещен. Вы не администратор."}), 403
+
+    active = db['active_contest'].find_one({"_id": "current_event", "status": "running"})
+    if active:
+        return jsonify({"error": f"Сейчас уже идет конкурс «{active.get('title', 'Без названия')}»! Сначала подведите итоги."}), 400
+
+    theme = data.get('theme')
+    theme_instruction = f"Сгенерируй конкурс на тему: {theme}" if theme else "Определи ближайший крупный праздник, время года или актуальный тренд (сейчас 2026 год) и придумай масштабный конкурс."
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key: return jsonify({"error": "Ключ Gemini не найден на сервере!"}), 500
+
+    # 🔥 Промпт без дат! Нейросеть генерирует только креатив 🔥
+    system_prompt = """Ты креативный директор мужского Telegram-сообщества. Твоя задача — придумать МАСШТАБНЫЙ тематический фотоконкурс.
+    Верни СТРОГО валидный JSON без маркдауна (без ```json) и без комментариев.
+    Формат ответа:
+    {
+      "contest_id": "уникальный_id_на_английском",
+      "title": "Яркое название с эмодзи",
+      "description": "Короткое описание",
+      "announcement_text": "ОГРОМНЫЙ текст поста-анонса и правил (используй HTML теги <b> и <i>). ОБЯЗАТЕЛЬНО СКОПИРУЙ ЭТУ СТРУКТУРУ ТЕКСТА:
+      
+      [Завлекающее вступление и призыв к действию]
+      
+      <b>⚡️ Суть конкурса</b>
+      [Что именно нужно сфоткать и как проявить креатив]
+      
+      <b>🚀 Как участвовать?</b>
+      1. Сделай снимок.
+      2. Перейди в личку бота и отправь команду /contest.
+      3. (Добавь свои пункты по теме).
+      
+      <b>🎭 Номинации</b>
+      [Придумай 4-5 крутых названий номинаций по теме конкурса и распиши, за что они даются]
+      
+      <b>💡 Советы для успеха</b>
+      [Дай 3 креативных совета участникам]
+      
+      <b>📜 ПРАВИЛА КОНКУРСА</b>
+      - Кто участвует: Мужчины 18+
+      - 1 аккаунт = максимум 3 фото
+      - Никаких ИИ, стоков и чужих фото из интернета
+      - Разрешены работы 18+ 🔞 (откровенные материалы будут эксклюзивно размещены в группе «Без предрассудков»)
+      - Пользователи не имеющие действующих блокировок
+      - Запрет на реалистичную кровь (жесть) и политику
+      - Накрутка = мгновенная дисквалификация",
+      "prizes": {
+         "1": {"text": "5000 💎 + VIP + 1500 ₽"},
+         "2": {"text": "3000 💎 + 3 Ордера на Арест"},
+         "3": {"text": "1000 💎 + 2 Щита Иммунитета"}
+      }
+    }"""
+    
+    models_queue = ["gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.6-flash"]
+    ai_data = None
+    last_err_msg = "Неизвестная ошибка"
+    
+    import requests, time
+    for model_name in models_queue:
+        # Убрали скобки и дублирование ссылки
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        try:
+            payload = {
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"parts": [{"text": theme_instruction}]}],
+                "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"}
+            }
+            res = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=25)
+            
+            if res.status_code == 200:
+                try:
+                    raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    clean_text = raw_text.strip()
+                    if clean_text.startswith("```json"): clean_text = clean_text[7:]
+                    if clean_text.startswith("```"): clean_text = clean_text[3:]
+                    if clean_text.endswith("```"): clean_text = clean_text[:-3]
+                    
+                    ai_data = json.loads(clean_text.strip())
+                    break 
+                except (KeyError, IndexError):
+                    last_err_msg = "Цензура Gemini заблокировала генерацию (Safety Filter)."
+            else:
+                last_err_msg = f"Ошибка API: HTTP {res.status_code}"
+                
+        except requests.exceptions.Timeout:
+            last_err_msg = f"Таймаут: Скайнет думал дольше 25 секунд."
+            break 
+        except json.JSONDecodeError as e:
+            last_err_msg = f"Кривой JSON от нейросети: {str(e)}"
+        except Exception as e:
+            last_err_msg = f"Системная ошибка: {str(e)}"
+            
+        time.sleep(1)
+        
+    if not ai_data:
+        return jsonify({"error": f"{last_err_msg}"}), 400
+
+    ai_data['status'] = 'draft'
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": ai_data}, upsert=True)
+
+    return jsonify(ai_data)
+
+@app.route('/api/admin/deploy_contest', methods=['POST'])
+def api_admin_deploy_contest():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    from config import ADMIN_CHAT_IDS
+    if uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен"}), 403
+
+    # Сохраняем все 4 даты в базу
+    update_fields = {
+        "title": data.get("title"),
+        "announcement_text": data.get("desc"),
+        "sub_start": data.get("sub_start"),
+        "sub_end": data.get("sub_end"),
+        "vote_start": data.get("vote_start"),
+        "vote_end": data.get("vote_end"),
+        "prizes": {
+            "1": {"text": data.get("prize1")},
+            "2": {"text": data.get("prize2")},
+            "3": {"text": data.get("prize3")}
+        },
+        "status": "running"
+    }
+    db['active_contest'].update_one({"_id": "current_event"}, {"$set": update_fields})
+
+    def broadcast():
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow, STAFF_GROUP_ID
+        from core.bot import bot
+        import time
+        from datetime import datetime, timedelta # <--- ДОБАВИЛИ timedelta
+        
+        all_chats = list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())
+        unique_chats = set(all_chats)
+        
+        # Переводим машинные даты в человеческие
+        def format_date(d_str):
+            try: return datetime.strptime(d_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+            except Exception: return "??.??.????"
+
+        # 🔥 НОВАЯ ФУНКЦИЯ: Вычисляет дату итогов (+1 день к концу голосования)
+        def get_results_date(d_str):
+            try: 
+                return (datetime.strptime(d_str, "%Y-%m-%d") + timedelta(days=1)).strftime("%d.%m.%Y")
+            except Exception: return "??.??.????"
+            
+        ss = format_date(data.get("sub_start"))
+        se = format_date(data.get("sub_end"))
+        vs = format_date(data.get("vote_start"))
+        ve = format_date(data.get("vote_end"))
+        
+        # Получаем дату итогов
+        res_date = get_results_date(data.get("vote_end"))
+        
+        dates_block = (
+            f"\n\n⏰ <b>ВАЖНЫЕ ДАТЫ (МСК):</b>\n"
+            f"— Прием работ: <b>с {ss} по {se}</b>\n"
+            f"— Зрительское голосование: <b>с {vs} по {ve}</b>\n"
+            f"— Подведение итогов: <b>{res_date} в 10:30</b>\n" # <--- ДОБАВИЛИ СТРОЧКУ
+        )
+        
+        prize_block = f"\n\n🎁 <b>ПРИЗОВОЙ ФОНД:</b>\n🥇 1 место: {data.get('prize1')}\n🥈 2 место: {data.get('prize2')}\n🥉 3 место: {data.get('prize3')}"
+        announcement = data.get("desc") + dates_block + prize_block
+        
+        # Склеиваем франкенштейна
+        announcement = data.get("desc") + dates_block + prize_block
+        
+        success = 0
+        for chat_id in unique_chats:
+            try:
+                bot.send_message(chat_id, announcement, parse_mode="HTML")
+                success += 1
+                time.sleep(0.3)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        try: bot.send_message(STAFF_GROUP_ID, f"📢 <b>Анонс конкурса успешно разослан в {success} чатов!</b>", parse_mode="HTML")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    import threading
+    threading.Thread(target=broadcast, daemon=True).start()
+
+    return jsonify({"success": True, "msg": "Конкурс запущен! Идет рассылка по чатам."})
+
+# ================= АДМИН-ПАНЕЛЬ (ЦУП В WEB APP) =================
+
+@app.route('/api/admin/user_action', methods=['POST'])
+def api_admin_user_action():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    admin_uid = json.loads(parsed_data['user'])['id']
+    from config import ADMIN_CHAT_IDS
+    if admin_uid not in ADMIN_CHAT_IDS: return jsonify({"error": "Доступ запрещен."}), 403
+
+    target_uid = data.get('target_uid')
+    action = data.get('action')
+    value = data.get('value', '')
+    
+    if not target_uid or not target_uid.isdigit(): return jsonify({"error": "Некорректный ID."}), 400
+    target_uid = int(target_uid)
+
+    from core.bot import bot
+    from utils.cryptobot import get_crypto_pay_url
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    import time, datetime
+
+    try:
+        if action == "invoice":
+            amount = int(value)
+            # Тут старый код генерации меню (как в предыдущем сообщении)
+            url_usdt = get_crypto_pay_url(f"fine_{target_uid}", amount, f"Оплата штрафа ({amount}⭐️)", asset="USDT")
+            markup = InlineKeyboardMarkup(row_width=1).add(InlineKeyboardButton(f"💳 Оплатить {amount}⭐️", callback_data=f"checkout_pay_fine_{amount}"))
+            bot.send_message(target_uid, f"🧾 **Вам выставлен счет на: {amount}⭐️**", reply_markup=markup, parse_mode="Markdown")
+            return jsonify({"success": True, "msg": f"Счет на {amount}⭐️ отправлен!"})
+
+        elif action == "give_points":
+            v = int(value)
+            if v >= 0:
+                paid_collection.update_one({"uid": target_uid}, {"$inc": {"bounty_points": v}}, upsert=True)
+            else:
+                take_points_capped(target_uid, -v)   # списание не глубже нуля
+            bot.send_message(target_uid, f"🎁 **Бонус!**\nНачислено: **{value} Очков**.", parse_mode="Markdown")
+            return jsonify({"success": True, "msg": f"Выдано {value} очков."})
+
+        elif action == "give_shards":
+            paid_collection.update_one({"uid": target_uid}, {"$inc": {"jackpot_shards": int(value)}}, upsert=True)
+            bot.send_message(target_uid, f"🧩 **Бонус!**\nНачислено: **{value} Осколков**.", parse_mode="Markdown")
+            return jsonify({"success": True, "msg": f"Выдано {value} осколков."})
+
+        elif action == "send_msg":
+            bot.send_message(target_uid, f"🎁 **Сообщение от Администрации:**\n\n{value}", parse_mode="Markdown")
+            return jsonify({"success": True, "msg": "Сообщение доставлено!"})
+            
+        elif action == "ban":
+            db['banned'].insert_one({"_id": target_uid, "reason": "Бан из ЦУПа"})
+            return jsonify({"success": True, "msg": "Пользователь забанен."})
+            
+        elif action == "unban":
+            db['banned'].delete_one({"_id": target_uid})
+            db['skynet_tasks'].insert_one({"uid": target_uid, "action": "full_unban", "timestamp": time.time()})
+            return jsonify({"success": True, "msg": "Приказ на разбан передан."})
+            
+        elif action == "mute":
+            hours = int(value)
+            db['skynet_tasks'].insert_one({"uid": target_uid, "action": "global_mute", "duration": hours * 3600, "timestamp": time.time()})
+            return jsonify({"success": True, "msg": f"Мут на {hours}ч. выдан."})
+
+        elif action == "statement":
+            logs = list(db['ruble_ledger'].find({"uid": target_uid}).sort("timestamp", -1).limit(40))
+            if not logs:
+                return jsonify({"success": True, "msg": f"🪹 У пользователя {target_uid} нет истории рублевых операций.", "is_statement": True})
+                
+            text = f"📜 ВЫПИСКА ЮЗЕРА {target_uid}\n\n"
+            total_earned = 0
+            for l in logs:
+                import datetime
+                dt = datetime.datetime.fromtimestamp(l['timestamp']).strftime('%d.%m %H:%M')
+                sign = "+" if l['amount'] > 0 else ""
+                if l['amount'] > 0: total_earned += l['amount']
+                text += f"• {dt} | {sign}{l['amount']}₽ | {l['reason']}\n"
+                
+            text += f"\n📊 Всего получено (последние 40 опер.): {total_earned} ₽"
+            return jsonify({"success": True, "msg": text, "is_statement": True})
+            
+        elif action == "tag":
+            tag = value[:15]
+            db['users'].update_one({"_id": target_uid}, {"$set": {"custom_tag": tag}}, upsert=True)
+            return jsonify({"success": True, "msg": f"Тег {tag} установлен."})
+            
+        # 🔥 ВОТ ЭТОТ БЛОК НОВЫЙ 🔥
+        elif action == "city":
+            city = value.strip()
+            db['users'].update_one({"_id": target_uid}, {"$set": {"main_city": city}}, upsert=True)
+            return jsonify({"success": True, "msg": f"Город {city} успешно установлен."})
+
+    except Exception as e:
+        return jsonify({"error": f"Ошибка API: {str(e)}"}), 500
+
+@app.route('/api/admin/giveaway', methods=['POST'])
+def api_admin_giveaway():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    # ⬇ новое: только админы (раньше эндпоинт был открыт любому игроку с валидной подписью)
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    _adm_uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    if _adm_uid not in ADMIN_CHAT_IDS and _adm_uid != OWNER_ID:
+        return jsonify({"error": "Доступ запрещен."}), 403
+    
+    import datetime
+    title = data.get('title')
+    price = int(data.get('price'))
+    hours = int(data.get('hours'))
+    winners = int(data.get('winners'))
+    
+    end_date = datetime.datetime.now() + datetime.timedelta(hours=hours)
+    gw_id = f"gw_{int(datetime.datetime.now().timestamp())}" 
+    
+    db['giveaways'].insert_one({
+        "_id": gw_id, "title": title, "ticket_price": price, 
+        "last_ticket_num": 0, "total_tickets": 0, 
+        "winners_count": winners, "status": "active", "end_date": end_date
+    })
+    return jsonify({"success": True, "msg": f"Розыгрыш '{title}' успешно запущен!"})
+
+@app.route('/api/admin/emission', methods=['POST'])
+def api_admin_emission():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    # ⬇ новое: только админы (раньше эндпоинт был открыт любому игроку с валидной подписью)
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    _adm_uid = json.loads(dict(parse_qsl(data.get('initData'), keep_blank_values=True))['user'])['id']
+    if _adm_uid not in ADMIN_CHAT_IDS and _adm_uid != OWNER_ID:
+        return jsonify({"error": "Доступ запрещен."}), 403
+    action = data.get('action')
+    
+    import random
+    if action == "promo_vip":
+        code = f"VIP-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True})
+        return jsonify({"success": True, "msg": f"Код VIP: {code}"})
+        
+    elif action == "promo_ads":
+        code = f"ADS-{random.randint(1000, 9999)}"
+        db['promocodes'].insert_one({"_id": code, "type": "percent", "value": 100, "target": "ads", "usage_limit": 1, "used_count": 0, "is_active": True})
+        return jsonify({"success": True, "msg": f"Код Реклама: {code}"})
+        
+    elif action == "airdrop":
+        try:
+            from handlers.casino import trigger_random_airdrop 
+            trigger_random_airdrop(is_manual=True)
+            return jsonify({"success": True, "msg": "Аирдроп успешно сброшен в чат!"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/stats', methods=['POST'])
+def api_admin_stats():
+    data = request.json
+    if not validate_webapp_data(data.get('initData'), BOT_TOKEN): return jsonify({"error": "Auth failed"}), 403
+    stat_type = data.get('type')
+    
+    parsed_data = dict(parse_qsl(data.get('initData'), keep_blank_values=True))
+    uid = json.loads(parsed_data['user'])['id']
+    
+    import datetime
+    import time
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    
+    if uid not in ADMIN_CHAT_IDS and uid != OWNER_ID:
+        return jsonify({"error": "Доступ запрещен."}), 403
+
+    # 🔥 ВЫНОСИМ ФУНКЦИЮ В САМОЕ НАЧАЛО, ЧТОБЫ НЕ ЛОМАТЬ ЦЕПОЧКУ IF-ELIF 🔥
+    def get_real_wealth():
+        pts_res = list(paid_collection.aggregate([
+            {"$match": {
+                "uid": {"$nin": ADMIN_CHAT_IDS}, 
+                "bounty_points": {"$gt": 0}
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$bounty_points"}}}
+        ]))
+        
+        cb_res = list(paid_collection.aggregate([
+            {"$match": {
+                "uid": {"$nin": ADMIN_CHAT_IDS}, 
+                "cashback_balance": {"$gt": 0}
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$cashback_balance"}}}
+        ]))
+        
+        return (
+            pts_res[0]["total"] if pts_res else 0,
+            cb_res[0]["total"] if cb_res else 0
+        )
+
+    # 🔥 ПРАВДОПОДОБНОЕ ОТРИЦАНИЕ: Скрываем финансы от модераторов 🔥
+    if stat_type in ["zreport", "bank", "global", "cpa"] and uid != OWNER_ID:
+        return jsonify({"text": "🛠 **Ошибка синхронизации кластера.**\n\nФинансовые шарды базы данных временно отключены сервером для создания бэкапа. Попробуйте запросить аналитику позже."})
+
+    # === ТОП 30 БОГАЧЕЙ (ОЧКИ 💎) ===
+    if stat_type == "top30_pts":
+        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
+        top_pts = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "bounty_points": {"$gt": 0}}).sort("bounty_points", -1).limit(30))
+        
+        text = "🏆 **ТОП 30 БОГАЧЕЙ (ОЧКИ 💎)**\n\n"
+        for i, u in enumerate(top_pts, 1):
+            uid = u['uid']
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            c_info = db['chat_stats'].find_one({"uid": uid}) or {}
+            name = u_info.get("first_name") or c_info.get("name") or "Аноним"
+            
+            # 🔥 ВЫВОДИМ И ИМЯ, И ID 🔥
+            text += f"{i}. {name} [ID: {uid}] — {int(u.get('bounty_points', 0))} 💎\n"
+        return jsonify({"text": text})
+
+    # === ТОП 30 ОЛИГАРХОВ (РУБЛИ) ===
+    elif stat_type == "top30_rub":
+        exclude_ids = list(set(ADMIN_CHAT_IDS + [OWNER_ID]))
+        top_rub = list(paid_collection.find({"uid": {"$nin": exclude_ids}, "cashback_balance": {"$gt": 0}}).sort("cashback_balance", -1).limit(30))
+        
+        text = "💸 **ТОП 30 ОЛИГАРХОВ (РУБЛИ ₽)**\n\n"
+        for i, u in enumerate(top_rub, 1):
+            uid = u['uid']
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            c_info = db['chat_stats'].find_one({"uid": uid}) or {}
+            name = u_info.get("first_name") or c_info.get("name") or "Аноним"
+            
+            # 🔥 ВЫВОДИМ И ИМЯ, И ID 🔥
+            text += f"{i}. {name} [ID: {uid}] — {int(u.get('cashback_balance', 0))} ₽\n"
+        return jsonify({"text": text})
+
+    # === ГЛОБАЛЬНАЯ СВОДКА ===
+    elif stat_type == "global":
+        total_users = db['users'].count_documents({})
+        total_banned = db['banned'].count_documents({})
+        
+        now_time = time.time()
+        webapp_total = db['users'].count_documents({"last_webapp_visit": {"$exists": True}})
+        webapp_dau = db['users'].count_documents({"last_webapp_visit": {"$gt": now_time - 86400}})
+        active_plots = db['farm_plots'].count_documents({"status": "growing"})
+        
+        total_points, total_cb = get_real_wealth()
+        
+        active_promos = db['promocodes'].count_documents({"is_active": True, "used_count": 0})
+        active_airdrops = db['active_airdrops'].count_documents({"claimed_count": {"$lt": 5}})
+        
+        text = (
+            f"📊 ГЛОБАЛЬНАЯ СВОДКА\n\n"
+            f"👥 Всего бот-юзеров: {total_users}\n"
+            f"🚷 В глобальном бане: {total_banned}\n\n"
+            f"📱 ИГРОВАЯ СТАТИСТИКА (WEB APP):\n"
+            f"🎮 Всего игроков: {webapp_total}\n"
+            f"🔥 Онлайн за 24 часа: {webapp_dau} чел.\n"
+            f"🌱 Растущих грядок: {active_plots} шт.\n\n"
+            f"💰 Очков на руках (у игроков): {total_points} 💎\n"
+            f"💸 Кэшбека на руках (у игроков): {total_cb} ₽\n\n"
+            f"🎟 Активных артефактов: {active_promos}\n"
+            f"📦 Аирдропов в чатах: {active_airdrops}"
+        )
+        return jsonify({"text": text})
+
+    # === БАНК КАЗИНО ===
+    elif stat_type == "bank":
+        bank_data = db['casino_bank'].find_one({"_id": "premium_fund"}) or {"balance": 0}
+        _, total_cb = get_real_wealth()
+        
+        text = (
+            f"🏦 БАНК КАЗИНО\n\n"
+            f"💎 Фонд Premium: {int(bank_data.get('balance', 0))} ⭐️\n"
+            f"💸 На руках у юзеров (Кэшбэк): {total_cb} ₽\n\n"
+            f"Фонд пополняется на 10% от всех покупок в боте."
+        )
+        return jsonify({"text": text})
+        
+    # === CPA СТАТИСТИКА ===
+    elif stat_type == "cpa":
+        import datetime
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
+        current_month_str = now.strftime("%Y-%m")
+        start_of_month_ts = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+        
+        total = db['cpa_traffic'].count_documents({})
+        approved = db['cpa_traffic'].count_documents({"status": "approved"})
+        hold = db['cpa_traffic'].count_documents({"status": "hold"})
+        
+        fraud_banned = db['cpa_traffic'].count_documents({"status": "fraud_banned"})
+        fraud_left = db['cpa_traffic'].count_documents({"status": "fraud_left"})
+        fraud_old = db['cpa_traffic'].count_documents({"status": "fraud"})
+        total_fraud = fraud_banned + fraud_left + fraud_old
+        
+        pipeline = [
+            {"$match": {"join_time": {"$gte": start_of_month_ts}}},
+            {"$group": {
+                "_id": "$agent_id",
+                "valid_leads": {"$sum": {"$cond": [{"$in": ["$status", ["approved", "hold"]]}, 1, 0]}},
+                "approved": {"$sum": {"$cond": [{"$eq": ["$status", "approved"]}, 1, 0]}},
+                "hold": {"$sum": {"$cond": [{"$eq": ["$status", "hold"]}, 1, 0]}},
+                "fraud": {"$sum": {"$cond": [{"$in": ["$status", ["fraud_banned", "fraud_left", "fraud"]]}, 1, 0]}}
+            }},
+            {"$match": {"valid_leads": {"$gt": 0}}}, 
+            {"$sort": {"valid_leads": -1}},
+            {"$limit": 15}
+        ]
+        top_agents = list(db['cpa_traffic'].aggregate(pipeline))
+        
+        text = (
+            f"🔗 CPA СТАТИСТИКА (ГЛОБАЛЬНАЯ)\n\n"
+            f"👁 Всего заявок (кликов): {total}\n"
+            f"⏳ На проверке (Холд {cfg('cpa_hold_days')} дн.): {hold}\n"
+            f"🚫 Забраковано всего: {total_fraud}\n"
+            f"   ├ Сбежали из чата: {fraud_left}\n"
+            f"   └ Забанены за спам: {fraud_banned}\n"
+            f"✅ ОДОБРЕНО (Лиды за всё время): {approved}\n\n"
+            f"🏆 ДЕТАЛЬНЫЙ ТОП АГЕНТОВ ЗА {current_month_str}:\n\n"
+        )
+        
+        if top_agents:
+            medals = ["🥇", "🥈", "🥉"]
+            for i, agent in enumerate(top_agents):
+                agent_id = agent["_id"]
+                valid_leads = agent["valid_leads"]
+                approved_leads = agent["approved"]
+                hold_leads = agent["hold"]
+                fraud_leads = agent["fraud"]
+                
+                u_info = db['users'].find_one({"_id": agent_id}) or {}
+                username = u_info.get("username")
+                first_name = u_info.get("first_name", "Аноним")
+                
+                agent_name = f"@{username.lstrip('@')}" if username else first_name
+                
+                medal = medals[i] if i < 3 else "🔹"
+                text += f"{medal} {agent_name} (ID {agent_id})\n"
+                text += f"   ├ В зачёт: {valid_leads} (Одобрено: {approved_leads} | Холд: {hold_leads})\n"
+                text += f"   └ Брак (сбежали/бан): {fraud_leads}\n\n"
+        else:
+            text += "В этом месяце пока нет переходов по ссылкам."
+            
+        return jsonify({"text": text})
+        
+    # === Z-ОТЧЕТ ===
+    elif stat_type == "zreport":
+        today_str = datetime.datetime.now().strftime("%d.%m.%Y")
+        
+        all_time_raw = list(db['daily_revenue'].aggregate([{"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        today_raw = list(db['daily_revenue'].aggregate([{"$match": {"date": today_str}}, {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]))
+        
+        all_dict = {str(item["_id"]).lower() if item["_id"] else "unknown": item["total"] for item in all_time_raw}
+        today_dict = {str(item["_id"]).lower() if item["_id"] else "unknown": item["total"] for item in today_raw}
+        
+        def format_money(d, key): return d.get(key, 0)
+        
+        known_keys = ['fine', 'fine_partial', 'ads', 'vip', 'beyond', 'indulgence', 'support', 'points_shop', 'donation', 'refund', 'city_access', 'ads_rub_balance', 'ads_points', 'payout', 'market_fee']
+        
+        today_other = sum(today_dict.values()) - sum(today_dict.get(k, 0) for k in known_keys)
+        all_other = sum(all_dict.values()) - sum(all_dict.get(k, 0) for k in known_keys)
+
+        today_ads = format_money(today_dict, 'ads') + format_money(today_dict, 'ads_rub_balance') + format_money(today_dict, 'ads_points')
+        all_ads = format_money(all_dict, 'ads') + format_money(all_dict, 'ads_rub_balance') + format_money(all_dict, 'ads_points')
+
+        today_fine = format_money(today_dict, 'fine') + format_money(today_dict, 'fine_partial')
+        all_fine = format_money(all_dict, 'fine') + format_money(all_dict, 'fine_partial')
+        
+        text = (
+            f"🧾 Z-ОТЧЕТ ({today_str})\n\n"
+            f"📅 СЕГОДНЯ:\n"
+            f"💰 Штрафы: {today_fine} ⭐️\n"
+            f"📢 Реклама: {today_ads} ⭐️\n"
+            f"👑 VIP-доступ: {format_money(today_dict, 'vip')} ⭐\n"
+            f"🏳️‍🌈 BEYOND-чат: {format_money(today_dict, 'beyond')} ⭐️\n"
+            f"📜 Индульгенции: {format_money(today_dict, 'indulgence')} ⭐️\n"
+            f"🛒 Магазин очков: {format_money(today_dict, 'points_shop')} ⭐️\n"
+            f"⚖️ Ком-я рынка: {format_money(today_dict, 'market_fee')} ⭐️\n"
+            f"💸 Возвраты/Выплаты: {format_money(today_dict, 'refund') + format_money(today_dict, 'payout')} ⭐️\n"
+        )
+        if today_other != 0: text += f"📦 Прочее: {today_other} ⭐️\n"
+        text += f"🟢 ИТОГО ЗА ДЕНЬ: {sum(today_dict.values())} ⭐️\n\n"
+        
+        text += (
+            f"🌍 ЗА ВСЁ ВРЕМЯ:\n"
+            f"💰 Штрафы: {all_fine} ⭐️\n"
+            f"📢 Реклама: {all_ads} ⭐️\n"
+            f"👑 VIP-доступ: {format_money(all_dict, 'vip')} ⭐️\n"
+            f"🏳‍🌈 BEYOND-чат: {format_money(all_dict, 'beyond')} ⭐️\n"
+            f"📜 Индульгенции: {format_money(all_dict, 'indulgence')} ⭐️\n"
+            f"🛒 Магазин очков: {format_money(all_dict, 'points_shop')} ⭐️\n"
+            f"⚖️ Ком-я рынка: {format_money(all_dict, 'market_fee')} ⭐️\n"
+            f"💸 Возвраты/Выплаты: {format_money(all_dict, 'refund') + format_money(all_dict, 'payout')} ⭐️\n"
+        )
+        if all_other != 0: text += f"📦 Прочее: {all_other} ⭐️\n"
+        text += f"🏆 ОБЩАЯ КАССА: {sum(all_dict.values())} ⭐️"
+        
+        return jsonify({"text": text})
+
+@app.route('/api/submit_quest', methods=['POST'])
+def api_submit_quest():
+    init_data = request.form.get('initData')
+    quest_id = request.form.get('quest_id')
+    reward_type = request.form.get('reward_type', 'points') # Получаем выбор юзера
+    screenshot = request.files.get('screenshot')
+    
+    if not validate_webapp_data(init_data, BOT_TOKEN): 
+        return jsonify({"error": "Auth failed"}), 403
+        
+    if not screenshot:
+        return jsonify({"error": "Файл скриншота не найден!"}), 400
+        
+    parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
+    user_info = json.loads(parsed_data['user'])
+    uid = user_info['id']
+    username = user_info.get('username')
+    user_name_str = f"@{username}" if username else user_info.get('first_name', 'Аноним')
+    
+    # Анти-спам защита
+    last_quest = db['quests_history'].find_one({"uid": uid, "quest_id": quest_id, "status": "pending"})
+    if last_quest:
+        return jsonify({"error": "Ваша предыдущая заявка еще на проверке у админов!"}), 400
+
+    import time
+    # Сохраняем в базу, ЧТО именно он выбрал
+    db['quests_history'].insert_one({
+        "uid": uid, "quest_id": quest_id, "reward_type": reward_type, "status": "pending", "timestamp": time.time()
+    })
+    
+    # Перевод для админа (Рубли убрали)
+    reward_text = "3000 💎 + 3 🛡"
+    if reward_type == 'elite': reward_text = "Статус VIP / BEYOND"
+    
+    from core.bot import bot
+    from config import STAFF_GROUP_ID, PRIZES_THREAD_ID
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("✅ Одобрить", callback_data=f"q_ok_{uid}_{quest_id}"),
+        InlineKeyboardButton("❌ Отклонить (Фейк)", callback_data=f"q_no_{uid}_{quest_id}")
+    )
+    
+    try:
+        safe_username = user_name_str.replace('_', '\\_')
+        bot.send_photo(
+            STAFF_GROUP_ID,
+            screenshot.read(),
+            caption=f"📸 **НОВАЯ ЗАЯВКА НА КВЕСТ**\n\n👤 Юзер: {safe_username} (`{uid}`)\n🛍 Партнер: **ABC Poppers**\n🎁 Хочет: **{reward_text}**\n\n_Проверьте скриншот. Если всё четко, жмите кнопку!_",
+            parse_mode="Markdown",
+            reply_markup=markup,
+            message_thread_id=PRIZES_THREAD_ID
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки квеста: {e}")
+        db['quests_history'].delete_one({"uid": uid, "quest_id": quest_id, "status": "pending"})
+        return jsonify({"error": "Не удалось загрузить фото. Попробуйте сжать скриншот."}), 500
+        
+    return jsonify({"success": True, "msg": "Скриншот успешно передан в Спецотдел Скайнета! Ожидайте начисления награды."})
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('q_ok_') or call.data.startswith('q_no_'))
+def handle_quest_resolution(call):
+    parts = call.data.split('_')
+    action = parts[1]  # 'ok' или 'no'
+    uid = int(parts[2])
+    quest_id = parts[3]
+    
+    quest = db['quests_history'].find_one_and_update(
+        {"uid": uid, "quest_id": quest_id, "status": "pending"},
+        {"$set": {"status": "resolved"}}
+    )
+    
+    if not quest:
+        bot.answer_callback_query(call.id, "Эта заявка уже обработана!", show_alert=True)
+        return
+
+    reward_type = quest.get('reward_type', 'points')
+
+    try:
+        # 🔥 БРОНЕБОЙНЫЙ ФИКС: Сначала принудительно стираем кнопки отдельным запросом! 🔥
+        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+        if action == 'ok':
+            import time
+            import random
+                
+            if reward_type == 'elite':
+                u_info = db['users'].find_one({"_id": uid}) or {}
+                
+                if not u_info.get("is_queer"):
+                    code = f"BEYOND-{random.randint(1000, 9999)}"
+                    code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "beyond", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    granted = f"Купон 100% на BEYOND 🏳️‍🌈 (Код: `{code}`)"
+                    
+                elif not u_info.get("is_vip"):
+                    code = f"VIP-{random.randint(1000, 9999)}"
+                    code = create_unique_promo(code.split("-")[0], {"type": "percent", "value": 100, "target": "vip", "usage_limit": 1, "used_count": 0, "is_active": True, "owner_uid": uid})
+                    granted = f"Купон 100% на VIP 👑 (Код: `{code}`)"
+                    
+                else:
+                    paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": 500}})
+                    db['ruble_ledger'].insert_one({"uid": uid, "amount": 500, "reason": "Квест (Компенсация за фулл-элиту)", "timestamp": time.time()})
+                    granted = "500 ₽ (т.к. все статусы уже есть)"
+                
+                admin_msg = f"Награда ({granted}) выдана!"
+                user_msg = f"🎉 **Партнерский Квест выполнен!**\nЧек проверен. Вы получили:\n**{granted}**!\n\n_Ищите купон в Рюкзаке или введите его при оплате в боте._"
+                
+            else:
+                paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 3000, "immunity": 3}})
+                admin_msg = "Награда (3000💎 + 3🛡) выдана!"
+                user_msg = "🎉 **Партнерский Квест выполнен!**\nЧек проверен. Награда: **3000 💎 и 3 🛡 Щита**!"
+                
+            bot.edit_message_caption(f"✅ **ЗАЯВКА ОДОБРЕНА**\n{admin_msg}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            bot.send_message(uid, user_msg, parse_mode="Markdown")
+            
+        else:
+            bot.edit_message_caption("❌ **ЗАЯВКА ОТКЛОНЕНА**\nПричина: Фейк / Чек недействителен.", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            bot.send_message(uid, "❌ **Заявка на квест отклонена.**\nЧек недействителен, не читается или заказ отменен.", parse_mode="Markdown")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при обработке квеста: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('defuse_'))
+def handle_defuse(call):
+    parts = call.data.split('_')
+    bomb_id = f"{parts[1]}_{parts[2]}"
+    color = parts[3]
+    
+    # Пытаемся захватить бомбу (чтобы 2 человека не нажали одновременно)
+    bomb = db['active_bombs'].find_one_and_update(
+        {"_id": bomb_id, "status": "active"},
+        {"$set": {"status": "defused", "defuser_id": call.from_user.id}}
+    )
+    
+    if not bomb:
+        bot.answer_callback_query(call.id, "Слишком поздно! Бомба уже взорвалась или обезврежена!", show_alert=True)
+        return
+        
+    uid = call.from_user.id
+    user_name = call.from_user.first_name
+    
+    # Рандомим правильный провод на лету
+    import random
+    correct_wire = random.choice(['red', 'blue', 'green'])
+    color_emoji = {"red": "🔴 Красный", "blue": "🔵 Синий", "green": "🟢 Зеленый"}[color]
+    
+    from core.scheduler import schedule_message_deletion
+    
+    if color == correct_wire:
+        # УГАДАЛ!
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}}, upsert=True)
+        text = f"✅ **БОМБА ОБЕЗВРЕЖЕНА!**\n\nГерой [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель и сорвал куш в **1000 💎**!\n\n_Чат спасен._"
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        schedule_message_deletion(call.message.chat.id, call.message.message_id, 120, bot)
+    else:
+        # БАБАХ!
+        text = f"💥 **БАБАХ!** 💥\n\nХакер [{user_name}](tg://user?id={uid}) перерезал {color_emoji} кабель... ОШИБКА!\n\nЕму оторвало руки, он отправляется в реанимацию (Мут на 15 минут)."
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        schedule_message_deletion(call.message.chat.id, call.message.message_id, 120, bot)
+        mute_user(call.message.chat.id, uid, 15 * 60, "Провал в разминировании бомбы")
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 1: РОЛПЛЕЙ И РАЗДАЧИ) =================
+
+# 1. Интерактивные RP-команды (РАСШИРЕННЫЙ АРСЕНАЛ)
+RP_COMMANDS = {
+    # Добрые / Дружеские
+    "обнять": "🤗 [{name1}](tg://user?id={id1}) тепло обнял(а) [{name2}](tg://user?id={id2})",
+    "поцеловать": "💋 [{name1}](tg://user?id={id1}) страстно поцеловал(а) [{name2}](tg://user?id={id2})",
+    "погладить": "🐈 [{name1}](tg://user?id={id1}) ласково погладил(а) [{name2}](tg://user?id={id2})",
+    "дать пять": "✋ [{name1}](tg://user?id={id1}) дал(а) пять [{name2}](tg://user?id={id2}). Красава!",
+    "пожать": "🤝 [{name1}](tg://user?id={id1}) с уважением пожал(а) руку [{name2}](tg://user?id={id2})",
+    "укрыть": "🛌 [{name1}](tg://user?id={id1}) заботливо укрыл(а) пледом [{name2}](tg://user?id={id2})",
+
+    # Агрессивные / Смешные
+    "укусить": "🧛‍♂️ [{name1}](tg://user?id={id1}) кусьнул(а) [{name2}](tg://user?id={id2}) за бочок",
+    "ударить": "🥊 [{name1}](tg://user?id={id1}) прописал(а) мощный хук [{name2}](tg://user?id={id2})",
+    "лещ": "🐟 [{name1}](tg://user?id={id1}) отвесил(а) звонкого леща [{name2}](tg://user?id={id2})",
+    "пнуть": "🥾 [{name1}](tg://user?id={id1}) дал(а) смачного пинка [{name2}](tg://user?id={id2})",
+    "задушить": "🤲 [{name1}](tg://user?id={id1}) начал(а) безжалостно душить [{name2}](tg://user?id={id2})",
+    "расстрелять": "🔫 [{name1}](tg://user?id={id1}) выпустил(а) обойму в [{name2}](tg://user?id={id2}). F.",
+    "отравить": "🧪 [{name1}](tg://user?id={id1}) подсыпал(а) яд в бокал [{name2}](tg://user?id={id2})",
+    "послать": "🖕 [{name1}](tg://user?id={id1}) послал(а) [{name2}](tg://user?id={id2}) куда подальше",
+
+    # Пошловатые / 18+
+    "отшлепать": "🍑 [{name1}](tg://user?id={id1}) жестко отшлепал(а) [{name2}](tg://user?id={id2})",
+    "связать": "🪢 [{name1}](tg://user?id={id1}) крепко связал(а) [{name2}](tg://user?id={id2})",
+    "наказать": "😈 [{name1}](tg://user?id={id1}) жестоко наказал(а) [{name2}](tg://user?id={id2})",
+    "лизнуть": "👅 [{name1}](tg://user?id={id1}) облизал(а) [{name2}](tg://user?id={id2})",
+    "потрогать": "👉 [{name1}](tg://user?id={id1}) бесстыдно потрогал(а) [{name2}](tg://user?id={id2})",
+    "раздеть": "👕 [{name1}](tg://user?id={id1}) стянул(а) одежду с [{name2}](tg://user?id={id2})",
+    "трахнуть": "🔞 [{name1}](tg://user?id={id1}) жестко трахнул(а) [{name2}](tg://user?id={id2})",
+    "отжарить": "🔥 [{name1}](tg://user?id={id1}) отжарил(а) во все щели [{name2}](tg://user?id={id2})",
+    "выебать": "💦 [{name1}](tg://user?id={id1}) выебал(а) без смазки [{name2}](tg://user?id={id2})",
+    "нагнуть": "😈 [{name1}](tg://user?id={id1}) нагнул(а) раком [{name2}](tg://user?id={id2})",
+    "сдать": "👴 [{name1}](tg://user?id={id1}) сдал(а) в дом престарелых [{name2}](tg://user?id={id2})",
+    "посадить на бутылку": "🍾 [{name1}](tg://user?id={id1}) посадил(а) на бутылку [{name2}](tg://user?id={id2})",
+
+    # Бар / Взаимодействия
+    "выпить": "🍻 [{name1}](tg://user?id={id1}) чокнулся(лась) бокалами с [{name2}](tg://user?id={id2}). За здоровье!",
+    "напоить": "🥃 [{name1}](tg://user?id={id1}) угостил(а) [{name2}](tg://user?id={id2}) элитным коньяком",
+    "накормить": "🍔 [{name1}](tg://user?id={id1}) накормил(а) [{name2}](tg://user?id={id2}) шаурмой",
+    "украсть": "🥷 [{name1}](tg://user?id={id1}) украл(а) сердечко у [{name2}](tg://user?id={id2})",
+    "понюхать": "👃 [{name1}](tg://user?id={id1}) подозрительно обнюхал(а) [{name2}](tg://user?id={id2})",
+
+    # --- Новые: мемные / дерзкие ---
+    "убить": "💀 [{name1}](tg://user?id={id1}) безжалостно убил(а) [{name2}](tg://user?id={id2}). Земля пухом!",
+    "сжечь": "🔥 [{name1}](tg://user?id={id1}) поджёг(ла) [{name2}](tg://user?id={id2}) на костре, как ведьму",
+    "растворить в кислоте": "🧪 [{name1}](tg://user?id={id1}) опустил(а) [{name2}](tg://user?id={id2}) в ванну с кислотой. Остались только тапки",
+    "закопать": "⚰️ [{name1}](tg://user?id={id1}) закопал(а) [{name2}](tg://user?id={id2}) на заднем дворе. Лопату вернуть не забыл(а)",
+    "утопить": "🌊 [{name1}](tg://user?id={id1}) утопил(а) [{name2}](tg://user?id={id2}) в ближайшей луже",
+    "отправить в космос": "🚀 [{name1}](tg://user?id={id1}) запустил(а) [{name2}](tg://user?id={id2}) в космос. Билет в один конец",
+    "скормить крокодилам": "🐊 [{name1}](tg://user?id={id1}) скормил(а) [{name2}](tg://user?id={id2}) голодным крокодилам",
+    "превратить в жабу": "🐸 [{name1}](tg://user?id={id1}) превратил(а) [{name2}](tg://user?id={id2}) в жабу. Ква!",
+    "закидать помидорами": "🍅 [{name1}](tg://user?id={id1}) закидал(а) помидорами [{name2}](tg://user?id={id2})",
+    "кинуть тапком": "🩴 [{name1}](tg://user?id={id1}) метко кинул(а) тапком в [{name2}](tg://user?id={id2})",
+    "облить водой": "💦 [{name1}](tg://user?id={id1}) облил(а) ледяной водой [{name2}](tg://user?id={id2})",
+    "выставить за дверь": "🚪 [{name1}](tg://user?id={id1}) выставил(а) [{name2}](tg://user?id={id2}) за дверь с чемоданом",
+    "сдать в полицию": "👮 [{name1}](tg://user?id={id1}) сдал(а) [{name2}](tg://user?id={id2}) в полицию. Всё, приплыли",
+    "сдать в ломбард": "🏪 [{name1}](tg://user?id={id1}) заложил(а) [{name2}](tg://user?id={id2}) в ломбард. Оценили в три шоколадки",
+    "ограбить": "🥷 [{name1}](tg://user?id={id1}) ограбил(а) [{name2}](tg://user?id={id2}) и скрылся(лась) в ночи",
+    "обмануть": "🃏 [{name1}](tg://user?id={id1}) красиво развёл(а) [{name2}](tg://user?id={id2}) на пустом месте",
+    "оштрафовать": "📝 [{name1}](tg://user?id={id1}) выписал(а) штраф [{name2}](tg://user?id={id2}) за неправильное дыхание",
+
+    # --- Новые: добрые / романтика ---
+    "расцеловать": "😘 [{name1}](tg://user?id={id1}) расцеловал(а) [{name2}](tg://user?id={id2}) с головы до ног",
+    "подарить цветы": "💐 [{name1}](tg://user?id={id1}) подарил(а) [{name2}](tg://user?id={id2}) огромный букет",
+    "позвать на свидание": "🌹 [{name1}](tg://user?id={id1}) позвал(а) [{name2}](tg://user?id={id2}) на свидание при свечах",
+    "признаться в любви": "💘 [{name1}](tg://user?id={id1}) признался(лась) в любви [{name2}](tg://user?id={id2}). Сердце замерло",
+    "спеть серенаду": "🎸 [{name1}](tg://user?id={id1}) спел(а) серенаду под окном [{name2}](tg://user?id={id2})",
+    "потанцевать": "💃 [{name1}](tg://user?id={id1}) закружил(а) в танце [{name2}](tg://user?id={id2})",
+    "похвалить": "🌟 [{name1}](tg://user?id={id1}) от души похвалил(а) [{name2}](tg://user?id={id2}). Молодец!",
+    "пожалеть": "🥺 [{name1}](tg://user?id={id1}) пожалел(а) [{name2}](tg://user?id={id2}) и погладил(а) по головке",
+    "вылечить": "🩹 [{name1}](tg://user?id={id1}) заботливо вылечил(а) [{name2}](tg://user?id={id2}). Здоров как бык",
+    "почесать": "🐾 [{name1}](tg://user?id={id1}) почесал(а) за ушком [{name2}](tg://user?id={id2})",
+    "помассажировать": "💆 [{name1}](tg://user?id={id1}) сделал(а) расслабляющий массаж [{name2}](tg://user?id={id2})",
+    "подмигнуть": "😉 [{name1}](tg://user?id={id1}) многозначительно подмигнул(а) [{name2}](tg://user?id={id2})",
+    "угостить кофе": "☕ [{name1}](tg://user?id={id1}) угостил(а) [{name2}](tg://user?id={id2}) ароматным кофе",
+    "поздравить": "🎉 [{name1}](tg://user?id={id1}) поздравил(а) [{name2}](tg://user?id={id2}) и запустил(а) салют",
+    "погрозить": "☝️ [{name1}](tg://user?id={id1}) строго погрозил(а) пальцем [{name2}](tg://user?id={id2})"
+}
+
+# Ловим команды, но СТРОГО игнорируем системные
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники', '!амнистия', 'амнистия')))
+def handle_rp_commands(message):
+    # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
+    if message.sender_chat:
+        # Отвечаем только если это реально похоже на команду
+        if message.text.startswith('!') or any(message.text.lower().startswith(k) for k in RP_COMMANDS.keys()):
+            bot.reply_to(message, "👻 Вы пишете от имени группы! Выйдите из анонимного режима, чтобы играть.")
+        return
+
+    text_lower = message.text.strip().lower()
+    if text_lower.startswith('!'):
+        text_lower = text_lower[1:]
+        
+    cmd = None
+    for k in sorted(RP_COMMANDS.keys(), key=len, reverse=True):
+        if text_lower.startswith(k):
+            cmd = k
+            break
+
+    user_data = paid_collection.find_one({"uid": message.from_user.id}) or {}
+    karma = user_data.get("social_rating", 0)
+
+    # Блокировка добрых действий для изгоев
+    if karma <= -50:
+        good_cmds = ["обнять", "поцеловать", "погладить", "дать пять", "пожать", "укрыть"]
+        if cmd in good_cmds:
+            return bot.reply_to(message, "🚫 <b>ЦЕНЗУРА:</b> Грязным преступникам (Карма < -50) запрещено прикасаться к порядочным гражданам. Вам доступны только агрессивные действия!", parse_mode="HTML")
+            
+    text_template = None
+            
+    text_template = None
+    if cmd:
+        text_template = RP_COMMANDS[cmd]
+    else:
+        # Проверяем личных NPC
+        for npc in db['custom_rp'].find({"uid": message.from_user.id}):
+            if text_lower.startswith(npc['cmd']):
+                text_template = npc['text']
+                cmd = npc['cmd']
+                break
+                
+    if not text_template: return
+    
+    name1 = message.from_user.first_name
+    id1 = message.from_user.id
+    name2 = message.reply_to_message.from_user.first_name
+    id2 = message.reply_to_message.from_user.id
+    
+    if id1 == id2:
+        bot.reply_to(message, "🤡 Одиночество — это когда ты пытаешься сделать это с самим собой.")
+        grant_achievement(id1, "schizo", "Шизофреник", "🤡", message.chat.id)
+        return
+        
+    # 🔥 ХВАТАЕМ ТЕКСТ ПОСЛЕ КОМАНДЫ (ХВОСТ) 🔥
+    clean_text = message.text.strip()
+    if clean_text.startswith('!'):
+        clean_text = clean_text[1:]
+        
+    extra_text = clean_text[len(cmd):].strip()
+    tail = f" {extra_text}" if extra_text else ""
+        
+    bot.send_message(message.chat.id, text_template.format(name1=name1, id1=id1, name2=name2, id2=id2) + tail, parse_mode="Markdown")
+
+# 1.5 СПРАВОЧНИК КОМАНД ДЛЯ ИГРОКОВ
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!рп', 'рп', '/rp'])
+def show_rp_list(message):
+    text = "🎭 **ДОСТУПНЫЕ RP-КОМАНДЫ СКАЙНЕТА** 🎭\n_Отправьте любое из этих слов в ответ (реплай) на сообщение другого игрока._\n\n"
+    text += "🤗 **Добрые:** `обнять`, `поцеловать`, `расцеловать`, `погладить`, `почесать`, `дать пять`, `пожать`, `укрыть`, `похвалить`, `пожалеть`, `вылечить`, `поздравить`, `угостить кофе`\n"
+    text += "💘 **Романтика:** `подарить цветы`, `позвать на свидание`, `признаться в любви`, `спеть серенаду`, `потанцевать`, `помассажировать`, `подмигнуть`\n"
+    text += "🤬 **Агрессивные:** `ударить`, `пнуть`, `лещ`, `задушить`, `расстрелять`, `отравить`, `послать`, `погрозить`\n"
+    text += "💀 **Мемные казни:** `убить`, `сжечь`, `растворить в кислоте`, `закопать`, `утопить`, `отправить в космос`, `скормить крокодилам`, `превратить в жабу`\n"
+    text += "🎯 **Пакости:** `закидать помидорами`, `кинуть тапком`, `облить водой`, `выставить за дверь`, `сдать в полицию`, `сдать в ломбард`, `ограбить`, `обмануть`, `оштрафовать`\n"
+    text += "🔞 **Горячие:** `отшлепать`, `связать`, `наказать`, `лизнуть`, `потрогать`, `раздеть`\n"
+    text += "🍻 **Взаимодействие:** `выпить`, `напоить`, `накормить`, `украсть`, `понюхать`, `укусить`\n\n"
+    text += "💡 _Подсказка: Вы можете добавлять текст после команды. Например: «Обнять очень крепко!»._"
+    
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 2: КИБЕР-БРАКИ И СИНДИКАТЫ) =================
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!свадьба', '!брак')))
+def propose_marriage(message):
+    initiator_id = message.from_user.id
+    initiator_name = message.from_user.first_name
+    partner_id = message.reply_to_message.from_user.id
+    partner_name = message.reply_to_message.from_user.first_name
+    
+    if initiator_id == partner_id:
+        bot.reply_to(message, "🤡 Скайнет не регистрирует браки с самим собой. Найдите кого-нибудь живого!")
+        grant_achievement(initiator_id, "schizo", "Шизофреник", "🤡", message.chat.id)
+        return
+        
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 Любовь к машинам — это похвально, но незаконно.")
+        return
+        
+    init_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    part_data = paid_collection.find_one({"uid": partner_id}) or {}
+    
+    if init_data.get("partner_id"):
+        bot.reply_to(message, "💍 Вы уже состоите в Кибер-Браке! Сначала оформите `!развод`.")
+        return
+        
+    if part_data.get("partner_id"):
+        bot.reply_to(message, f"💍 [{partner_name}](tg://user?id={partner_id}) уже состоит в браке! Отбивать чужих партнеров нельзя.", parse_mode="Markdown")
+        return
+        
+    PRICE = 500
+    if init_data.get("bounty_points", 0) < PRICE:
+        bot.reply_to(message, f"💸 Регистрация Синдиката стоит {PRICE} 💎! У вас недостаточно средств.")
+        return
+        
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("💖 Согласиться", callback_data=f"marry_yes_{initiator_id}_{partner_id}"),
+        InlineKeyboardButton("💔 Отказать", callback_data=f"marry_no_{initiator_id}_{partner_id}")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        f"💍 **ПРЕДЛОЖЕНИЕ О КИБЕР-БРАКЕ!**\n\n[{initiator_name}](tg://user?id={initiator_id}) предлагает [{partner_name}](tg://user?id={partner_id}) объединить капиталы и создать Синдикат.\n\n_Пошлина ({PRICE} 💎) будет списана с инициатора._\n\n[{partner_name}](tg://user?id={partner_id}), ваш ответ?",
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('marry_'))
+def handle_marriage_response(call):
+    parts = call.data.split('_')
+    action = parts[1]
+    initiator_id = int(parts[2])
+    partner_id = int(parts[3])
+    
+    if call.from_user.id != partner_id:
+        bot.answer_callback_query(call.id, "Эй! Предложение сделали не вам!", show_alert=True)
+        return
+        
+    PRICE = 500
+    init_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    
+    if init_data.get("partner_id") or (paid_collection.find_one({"uid": partner_id}) or {}).get("partner_id"):
+        bot.edit_message_text("❌ Предложение отменено: кто-то из вас уже успел вступить в брак!", call.message.chat.id, call.message.message_id)
+        return
+        
+    if action == 'no':
+        bot.edit_message_text(f"💔 **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={partner_id}) отверг(ла) предложение. Капиталы остаются раздельными.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        return
+        
+    if init_data.get("bounty_points", 0) < PRICE:
+        bot.edit_message_text("❌ Свадьба отменяется: у инициатора закончились деньги на оплату пошлины!", call.message.chat.id, call.message.message_id)
+        return
+        
+    # Списываем деньги и женим!  ⬇ атомарно: баланс + оба свободны
+    charged = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "partner_id": {"$exists": False}, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}, "$set": {"partner_id": partner_id}}
+    )
+    if not charged:
+        bot.edit_message_text("❌ Свадьба отменяется: у инициатора нет средств или он уже в браке!", call.message.chat.id, call.message.message_id)
+        return
+    paid_collection.update_one({"uid": partner_id}, {"$set": {"partner_id": initiator_id}})
+    
+    bot.edit_message_text(f"🎊 **НОВЫЙ СИНДИКАТ ЗАРЕГИСТРИРОВАН!** 🎊\n\nСкайнет официально объявляет вас Кибер-Партнерами!\n\n_Пошлина {PRICE} 💎 уплачена. Теперь вы одна семья!_", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!развод')
+def divorce(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    partner_id = user_data.get("partner_id")
+    
+    if not partner_id:
+        bot.reply_to(message, "🤷‍♂️ Вы не состоите в браке. Разводиться не с кем!")
+        return
+        
+    PENALTY = 1000
+    
+    # ⬇ было: precheck + два update_one
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "partner_id": partner_id, "bounty_points": {"$gte": PENALTY}},
+        {"$unset": {"partner_id": ""}, "$inc": {"bounty_points": -PENALTY}}
+    )
+    if not charged:
+        bot.reply_to(message, f"💸 Госпошлина за развод — {PENALTY} 💎. У вас недостаточно средств.")
+        return
+    paid_collection.update_one({"uid": partner_id, "partner_id": uid}, {"$unset": {"partner_id": ""}})
+    
+    bot.reply_to(message, f"💔 **СИНДИКАТ РАСПАЛСЯ!**\n\nВы расторгли Кибер-Брак с [{partner_id}](tg://user?id={partner_id}).\n_За развод в одностороннем порядке с вас удержан штраф в размере {PENALTY} 💎._", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!брак', '!свадьба'])
+def empty_marriage(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "💍 Чтобы сделать предложение, отправьте `!свадьба` в ответ (реплай) на сообщение вашего избранника!")
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 3: ТОПЫ И АЗАРТ) =================
+
+# 1. РУССКАЯ РУЛЕТКА (Вирусный PvP-азарт + Трекер Ачивок)
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!рулетка', 'рулетка', '/рулетка'])
+def russian_roulette(message):
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    import random, time
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    from core.scheduler import schedule_message_deletion
+    
+    if random.randint(1, 6) == 1:
+        # УВЕЛИЧИВАЕМ СЧЕТЧИК СМЕРТЕЙ
+        paid_collection.update_one({"uid": uid}, {"$inc": {"roulette_deaths_streak": 1}}, upsert=True)
+        new_data = paid_collection.find_one({"uid": uid}) or {}
+        
+        if user_data.get("immunity", 0) > 0 and paid_collection.find_one_and_update(
+                {"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1}}):
+            sent_msg = bot.reply_to(message, "💥 **БАБАХ!**\nПуля вылетела, но отрикошетила от **Щита Иммунитета**!\n_Вам повезло. Щит разрушен._", parse_mode="Markdown")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
+        else:
+            sent_msg = bot.reply_to(message, "💥 **БАБАХ!**\nВы словили пулю. Скайнет отправляет вас в реанимацию на 1 час.\n_F._", parse_mode="Markdown")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
+            mute_user(message.chat.id, uid, 3600, "Смерть в русской рулетке")
+            
+        # ПРОВЕРЯЕМ АЧИВКУ (3 смерти подряд)
+        if new_data.get("roulette_deaths_streak", 0) == 3:
+            granted = grant_achievement(uid, "black_streak", "Черная полоса", "🎰", message.chat.id)
+            if granted:
+                paid_collection.update_one({"uid": uid}, {"$inc": {"immunity": 1}})
+                bot.send_message(message.chat.id, "🎁 Скайнет сжалился над вашим невезением и выдал **1 🛡 Щит Иммунитета** в качестве утешения!", parse_mode="Markdown")
+
+    else:
+        # ВЫЖИЛ - ОБНУЛЯЕМ СЧЕТЧИК СМЕРТЕЙ
+        reward = random.randint(5, 15)
+        bonus_text = ""
+        
+        # 🔥 ВЛИЯНИЕ КАРМЫ: Х2 НАГРАДА ЗА ВЫЖИВАНИЕ 🔥
+        if user_data.get("social_rating", 0) >= 50:
+            reward *= 2
+            bonus_text = "\n🌟 _Бонус за Отличную Карму (x2)!_"
+            
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}, "$set": {"roulette_deaths_streak": 0}}, upsert=True)
+        sent_msg = bot.reply_to(message, f"😅 *Щелк...* Осечка!\n[{name}](tg://user?id={uid}) выживает и получает **+{reward} 💎**.{bonus_text}", parse_mode="Markdown")
+        schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
+
+# 2. РЕЙТИНГ АКТИВНОСТИ ЧАТА
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!топ', 'топ чата', '/top'])
+def chat_top_activity(message):
+    top_users = list(db['chat_stats'].find({"chat_id": message.chat.id}).sort("msgs", -1).limit(10))
+    if not top_users: return bot.reply_to(message, "🪹 В этом чате еще никто ничего не писал.")
+        
+    text = f"🏆 **ТОП БОЛТУНОВ ЧАТА** 🏆\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, u in enumerate(top_users):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        text += f"{medal} **{u.get('name', 'Аноним')}** — {u.get('msgs', 0)} сообщ.\n"
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+# --- СЕКРЕТНЫЙ РАЗДАВАТЕЛЬ АЧИВОК ---
+def grant_achievement(uid, ach_id, ach_name, ach_icon, chat_id):
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    achievements = user_data.get("achievements", [])
+    
+    if ach_id not in achievements:
+        paid_collection.update_one({"uid": uid}, {"$push": {"achievements": ach_id}})
+        try:
+            from core.bot import bot
+            from core.scheduler import schedule_message_deletion
+            sent_msg = bot.send_message(chat_id, f"🏆 **ДОСТИЖЕНИЕ РАЗБЛОКИРОВАНО!**\nВы получили значок: {ach_icon} **«{ach_name}»**!", parse_mode="Markdown")
+            schedule_message_deletion(chat_id, sent_msg.message_id, 300, bot)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return True
+    return False
+
+# 3. ТЕКСТОВЫЙ ПРОФИЛЬ (Бронебойная версия)
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!профиль', 'профиль', '/profile', '!profile'])
+def text_profile(message):
+    try:
+        target_user = message.reply_to_message.from_user if message.reply_to_message else message.from_user
+        uid = target_user.id
+        
+        user_data = paid_collection.find_one({"uid": uid}) or {}
+        msgs_data = db['chat_stats'].find_one({"chat_id": message.chat.id, "uid": uid}) or {}
+        msgs = msgs_data.get("msgs", 0)
+        
+        pts = user_data.get("bounty_points", 0)
+        rub = user_data.get("cashback_balance", 0)
+        karma = user_data.get("social_rating", 0)
+        partner_id = user_data.get("partner_id")
+        partner_text = f"В браке с ID {partner_id}" if partner_id else "Одинок(а)"
+        title = "👑 VIP-Персона" if user_data.get("is_vip") else "🔴 Гражданин Империи"
+        
+        # 🔥 АВТО-ТИТУЛЫ ПО КАРМЕ 🔥
+        if karma >= 100: title = "😇 Святой (Неприкасаемый)"
+        elif karma <= -100: title = "💀 Враг Народа (Опущенный)"
+        elif karma <= -50: title = "🗑 Изгой (Под надзором)"
+        
+        # Сборка ачивок
+        ach_map = {
+            "schizo": "🤡", "black_streak": "🎰", "gladiator": "⚔️", 
+            "santa": "🎅", "safecracker": "🏦", "patriarch": "👨‍👩‍👧‍👦",
+            "drought": "💩", "rat": "🔪", "cuckold": "🦌", "bankrupt": "📉"
+        }
+        achievements = user_data.get("achievements", [])
+        ach_text = " ".join([ach_map.get(a, "") for a in achievements if a in ach_map])
+        if not ach_text: ach_text = "Нет наград"
+        
+        gold_status = "⚜️ [ВЛАДЕЛЕЦ ЗОЛОТА]\n" if user_data.get("golden_frame") else ""
+        
+        text = (
+            f"👤 **ДОСЬЕ СКАЙНЕТА: {target_user.first_name}**\n"
+            f"{gold_status}🔑 **ID:** `{uid}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🎖 **Статус:** {title}\n"
+            f"💰 **Счет:** {pts} 💎 | {rub} ₽\n"
+            f"🎭 **Карма:** {karma}\n"
+            f"💬 **Написано тут:** {msgs} сообщений\n"
+            f"💍 **Семья:** {partner_text}\n"
+            f"🏆 **Зал Славы:** {ach_text}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🎮 _Полный инвентарь — в Web App_"
+        )
+        bot.reply_to(message, text, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Ошибка в !профиль: {e}")
+        bot.reply_to(message, "⚠️ Скайнет временно потерял базу данных профилей. Попробуйте еще раз.")
+
+# 5. КИБЕР-ДУЭЛИ (PvP на ставки)
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!дуэль', 'дуэль', '/duel')))
+def challenge_duel(message):
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.reply_to(message, "⚠️ **Формат:** `!дуэль [ставка]` в ответ на сообщение противника.\n_Пример:_ `!дуэль 100`")
+        return
+        
+    bet = int(parts[1])
+    if bet < 10:
+        bot.reply_to(message, "📉 Минимальная ставка: 10 💎")
+        return
+        
+    challenger_id = message.from_user.id
+    challenger_name = message.from_user.first_name
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if challenger_id == target_id:
+        bot.reply_to(message, "🤡 Вызывать на дуэль самого себя — признак шизофрении.")
+        return
+        
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 Терминаторы не играют в кости.")
+        return
+        
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(challenger_id) or is_newbie_without_status(target_id):
+        bot.reply_to(message, NEWBIE_MSG + "\n(Дуэль недоступна, если у одного из участников нет статуса.)")
+        return
+
+    # Проверяем баланс вызывающего
+    ch_data = paid_collection.find_one({"uid": challenger_id}) or {}
+    if ch_data.get("bounty_points", 0) < bet:
+        bot.reply_to(message, f"💸 У вас нет {bet} 💎 для такой ставки!")
+        return
+        
+    # Проверяем баланс цели (чтобы не спамили бедняков)
+    tg_data = paid_collection.find_one({"uid": target_id}) or {}
+    if tg_data.get("bounty_points", 0) < bet:
+        bot.reply_to(message, f"📉 У противника нет {bet} 💎. Ищите кого-то побогаче!")
+        return
+        
+    import time
+    duel_id = f"duel_{int(time.time())}_{challenger_id}_{target_id}"
+    
+    # Записываем дуэль в базу (ожидание)
+    db['active_duels'].insert_one({
+        "_id": duel_id,
+        "challenger_id": challenger_id,
+        "challenger_name": challenger_name,
+        "target_id": target_id,
+        "target_name": target_name,
+        "bet": bet,
+        "status": "pending"
+    })
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("⚔️ Принять вызов", callback_data=f"duel_accept_{duel_id}"),
+        InlineKeyboardButton("🏃‍♂️ Струсить", callback_data=f"duel_decline_{duel_id}")
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        f"⚔️ **ДУЭЛЬ!**\n\n[{challenger_name}](tg://user?id={challenger_id}) бросает вызов [{target_name}](tg://user?id={target_id})!\n💰 **Ставка:** {bet} 💎\n\n_Победитель забирает всё (комиссия арены 5%)._",
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('duel_'))
+def handle_duel_response(call):
+    parts = call.data.split('_')
+    action = parts[1]
+    
+    # 🔥 ИСПРАВЛЕННАЯ СТРОКА: Берем куски 2, 3, 4 и 5! 🔥
+    duel_id = f"{parts[2]}_{parts[3]}_{parts[4]}_{parts[5]}"
+    
+    duel = db['active_duels'].find_one({"_id": duel_id, "status": "pending"})
+    if not duel:
+        bot.answer_callback_query(call.id, "Дуэль уже завершена или отменена!", show_alert=True)
+        return
+        
+    target_id = duel['target_id']
+    challenger_id = duel['challenger_id']
+    
+    if call.from_user.id != target_id and call.from_user.id != challenger_id:
+        bot.answer_callback_query(call.id, "Это не ваша дуэль! Проходите мимо.", show_alert=True)
+        return
+        
+    if action == "decline":
+        if call.from_user.id == target_id:
+            db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "declined"}})
+            bot.edit_message_text(f"🏃‍♂️ [{duel['target_name']}](tg://user?id={target_id}) испугался(лась) и сбежал(а) с арены. Дуэль отменена.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        elif call.from_user.id == challenger_id:
+            db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "cancelled"}})
+            bot.edit_message_text(f"🏳️ [{duel['challenger_name']}](tg://user?id={challenger_id}) отозвал(а) свой вызов.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        return
+        
+    if action == "accept" and call.from_user.id != target_id:
+        bot.answer_callback_query(call.id, "Только вызванный игрок может принять дуэль!", show_alert=True)
+        return
+        
+    # === НАЧАЛО БОЯ ===
+    # Атомарно занимаем дуэль: двойной клик/параллельный запрос не запустит бой дважды
+    duel = db['active_duels'].find_one_and_update({"_id": duel_id, "status": "pending"}, {"$set": {"status": "fighting"}})
+    if not duel:
+        bot.answer_callback_query(call.id, "Дуэль уже идёт или завершена!", show_alert=True)
+        return
+    bet = duel['bet']
+    
+    # Финальная проверка балансов перед боем
+    ch_data = paid_collection.find_one({"uid": challenger_id}) or {}
+    tg_data = paid_collection.find_one({"uid": target_id}) or {}
+    
+    if ch_data.get("bounty_points", 0) < bet or tg_data.get("bounty_points", 0) < bet:
+        db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "error"}})
+        bot.edit_message_text("❌ У кого-то из участников не хватает очков для ставки! Дуэль аннулирована.", call.message.chat.id, call.message.message_id)
+        return
+        
+    # Бросаем кубики
+    import random
+    ch_roll = random.randint(1, 100)
+    tg_roll = random.randint(1, 100)
+    
+    # Если ничья - перебрасываем, чтобы был явный победитель
+    while ch_roll == tg_roll:
+        tg_roll = random.randint(1, 100)
+        
+    # Определяем победителя
+    if ch_roll > tg_roll:
+        winner_id, loser_id = challenger_id, target_id
+        winner_name, loser_name = duel['challenger_name'], duel['target_name']
+        win_roll, lose_roll = ch_roll, tg_roll
+    else:
+        winner_id, loser_id = target_id, challenger_id
+        winner_name, loser_name = duel['target_name'], duel['challenger_name']
+        win_roll, lose_roll = tg_roll, ch_roll
+        
+    # Расчет банка (комиссия 5% сгорает из экономики или уходит в синий сейф)
+    # Расчет банка (комиссия 5% сгорает из экономики или уходит в синий сейф)
+    commission = int((bet * 2) * 0.05)
+    if commission < 1: commission = 1
+    prize = (bet * 2) - commission
+    # ⬇ новое: до любых выплат
+    loser_paid = paid_collection.find_one_and_update(
+        {"uid": loser_id, "bounty_points": {"$gte": bet}},
+        {"$inc": {"bounty_points": -bet}}
+    )
+    if not loser_paid:
+        db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "error"}})
+        bot.edit_message_text("❌ У проигравшего не хватило очков. Дуэль аннулирована.", call.message.chat.id, call.message.message_id)
+        return
+    pay_casino_owner(int(bet * 0.10))
+    
+    # Транзакции и ТРЕКЕРЫ
+    import datetime, time
+    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    paid_collection.update_one({"uid": winner_id}, {
+        "$inc": {"bounty_points": (prize - bet), "duel_win_streak": 1},
+        "$set": {"daily_duel_date": now_date}
+    })
+    
+    l_data = paid_collection.find_one({"uid": loser_id}) or {}
+    if l_data.get("daily_duel_date") != now_date:
+        paid_collection.update_one({"uid": loser_id}, {"$set": {"daily_duel_losses": bet, "daily_duel_date": now_date, "duel_win_streak": 0}})
+    else:
+        paid_collection.update_one({"uid": loser_id}, {"$inc": {"daily_duel_losses": bet}, "$set": {"duel_win_streak": 0}})
+
+    w_data = paid_collection.find_one({"uid": winner_id})
+    if w_data.get("duel_win_streak", 0) == 10:
+        grant_achievement(winner_id, "gladiator", "Гладиатор", "⚔️", call.message.chat.id)
+        
+    l_data = paid_collection.find_one({"uid": loser_id})
+    if l_data.get("daily_duel_losses", 0) >= 10000:
+        grant_achievement(loser_id, "bankrupt", "Банкрот", "📉", call.message.chat.id)
+        paid_collection.update_one({"uid": loser_id}, {"$set": {"bankrupt_until": time.time() + 86400}})
+    
+    # Комиссию кидаем в Синий Сейф, чтобы он рос быстрее!
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": commission}})
+    db['active_duels'].update_one({"_id": duel_id}, {"$set": {"status": "completed"}})
+    
+    result_text = (
+        f"⚔️ **ДУЭЛЬ ЗАВЕРШЕНА!** ⚔️\n\n"
+        f"🎲 [{duel['challenger_name']}](tg://user?id={challenger_id}) выбросил(а): **{ch_roll}**\n"
+        f"🎲 [{duel['target_name']}](tg://user?id={target_id}) выбросил(а): **{tg_roll}**\n\n"
+        f"🏆 **ПОБЕДИТЕЛЬ:** [{winner_name}](tg://user?id={winner_id})!\n"
+        f"💰 Забрал(а) куш: **{prize} 💎** _(Комиссия: {commission} 💎)_"
+    )
+    
+    from core.scheduler import schedule_message_deletion
+    bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    schedule_message_deletion(call.message.chat.id, call.message.message_id, 300, bot)
+
+# 2. Пользовательские Аирдропы (Замена Мешкам Ириса)
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!раздача', '/раздача', 'раздача')))
+def handle_user_airdrop(message):
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "⚠️ **Формат:** `!раздача [сумма] [кол-во людей]`\n_Пример:_ `!раздача 1000 5` (1000 очков разделят 5 человек)", parse_mode="Markdown")
+        return
+        
+    try:
+        total_amount = int(parts[1])
+        max_users = int(parts[2])
+    except ValueError:
+        bot.reply_to(message, "⚠️️ Сумма и количество должны быть числами!")
+        return
+        
+    if total_amount < 50 or max_users < 2 or max_users > 50:
+        bot.reply_to(message, "⚠️ Минимум 50 💎, от 2 до 50 человек!")
+        return
+        
+    uid = message.from_user.id
+    user_name = message.from_user.first_name
+
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(uid):
+        bot.reply_to(message, NEWBIE_MSG)
+        return
+    
+    # 🔥 ИСПРАВЛЕННАЯ ПРОВЕРКА БАЛАНСА 🔥
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": total_amount}},
+        {"$inc": {"bounty_points": -total_amount}}
+    )
+    
+    if not updated_user:
+        bot.reply_to(message, "❌ У вас недостаточно Очков Бдительности для такой раздачи! Проверьте баланс в Кабинете.")
+        return
+        
+    # ТРЕКЕР: Санта-Клаус
+    paid_collection.update_one({"uid": uid}, {"$inc": {"total_airdrop_given": total_amount}})
+    new_data = paid_collection.find_one({"uid": uid})
+    if new_data.get("total_airdrop_given", 0) >= 50000:
+        grant_achievement(uid, "santa", "Санта-Клаус", "🎅", message.chat.id)
+        
+    import time
+    piece = total_amount // max_users
+    drop_id = f"userdrop_{int(time.time())}_{uid}"
+    
+    # 👇 ДОБАВЛЕНО ПОЛЕ created_at
+    db['active_airdrops'].insert_one({
+        "_id": drop_id,
+        "sponsor_id": uid,
+        "sponsor_name": user_name,
+        "total": total_amount,
+        "piece": piece,
+        "max_users": max_users,
+        "claimed_by": [],
+        "created_at": time.time() 
+    })
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    # 👇 ДОБАВЛЕН СЧЕТЧИК (0/max_users) В КНОПКУ
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"🎁 Забрать {piece} 💎 (0/{max_users})", callback_data=f"claim_udrop_{drop_id}"))
+    
+    bot.send_message(
+        message.chat.id, 
+        f"👑 **КИТ В ЧАТЕ!**\n\n[{user_name}](tg://user?id={uid}) скинул мешок с Очками!\n💰 **Фонд:** {total_amount} 💎\n👥 **Хватит на:** {max_users} чел.\n\n_Жми кнопку, пока не разобрали!_", 
+        parse_mode="Markdown", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('claim_udrop_'))
+def handle_claim_userdrop(call):
+    drop_id = call.data.replace('claim_udrop_', '')
+    uid = call.from_user.id
+    
+    # Блокируем доступ для Ириса и других ботов
+    if call.from_user.is_bot: return
+    
+    drop = db['active_airdrops'].find_one({"_id": drop_id})
+    if not drop:
+        bot.answer_callback_query(call.id, "Мешок уже пуст или исчез!", show_alert=True)
+        return
+        
+    claimed_by_list = drop.get('claimed_by', [])
+    if uid in claimed_by_list:
+        bot.answer_callback_query(call.id, "Вы уже взяли свою долю из этого мешка!", show_alert=True)
+        return
+        
+    current_claimed = len(claimed_by_list)
+    if current_claimed >= drop['max_users']:
+        bot.answer_callback_query(call.id, "Слишком поздно! Мешок уже расхватали.", show_alert=True)
+        return
+        
+    # Атомарно занимаем долю: один раз на человека и не больше max_users долей
+    taken_slot = db['active_airdrops'].find_one_and_update(
+        {"_id": drop_id, "claimed_by": {"$ne": uid}, f"claimed_by.{drop['max_users'] - 1}": {"$exists": False}},
+        {"$push": {"claimed_by": uid}}
+    )
+    if not taken_slot:
+        bot.answer_callback_query(call.id, "Слишком поздно или вы уже взяли долю!", show_alert=True)
+        return
+    
+    # Выдаем награду нажавшему
+    paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": drop['piece']}}, upsert=True)
+    
+    bot.answer_callback_query(call.id, f"✅ Вы урвали {drop['piece']} 💎!", show_alert=True)
+    
+    new_claimed_count = current_claimed + 1
+    
+    # Если мешок опустел - меняем сообщение в чате
+    if new_claimed_count >= drop['max_users']:
+        bot.edit_message_text(
+            f"🎒 **МЕШОК ПУСТ!**\n\n[{drop['sponsor_name']}](tg://user?id={drop['sponsor_id']}) раздал {drop['total']} 💎!\nВсе {drop['max_users']} долей успешно разобраны.",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown"
+        )
+        db['active_airdrops'].delete_one({"_id": drop_id})
+        # Хвост от деления (1000 на 3 -> по 333, хвост 1) возвращаем спонсору, раньше он сгорал
+        rest = drop['total'] - drop['piece'] * drop['max_users']
+        if rest > 0:
+            paid_collection.update_one({"uid": drop['sponsor_id']}, {"$inc": {"bounty_points": rest}})
+    else:
+        # 👇 НОВОЕ: ОБНОВЛЯЕМ ПРОГРЕСС В КНОПКЕ 👇
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        markup = InlineKeyboardMarkup().add(
+            InlineKeyboardButton(f"🎁 Забрать {drop['piece']} 💎 ({new_claimed_count}/{drop['max_users']})", callback_data=f"claim_udrop_{drop_id}")
+        )
+        try:
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        except Exception:
+            pass
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!донат', '!чаевые', '!перевести', '!pay', 'донат', 'чаевые', 'перевести', 'pay')))
+def p2p_transfer(message):
+    initiator_id = message.from_user.id
+    initiator_name = message.from_user.first_name
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if initiator_id == target_id:
+        return bot.reply_to(message, "🤡 Вы пытаетесь переложить деньги из одного кармана в другой.")
+    if message.reply_to_message.from_user.is_bot:
+        return bot.reply_to(message, "🤖 Скайнет не принимает чаевые. Мы принимаем только человеческие души.")
+
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(initiator_id):
+        return bot.reply_to(message, NEWBIE_MSG)
+        
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return bot.reply_to(message, "⚠️️ **Формат:** `!чаевые [сумма]` в ответ на сообщение.\n_Пример:_ `!чаевые 100`", parse_mode="Markdown")
+        
+    amount = int(parts[1])
+    if amount < 10:
+        return bot.reply_to(message, "📉 Минимальная сумма перевода: 10 💎")
+        
+    user_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    if user_data.get("bounty_points", 0) < amount:
+        return bot.reply_to(message, f"💸 У вас нет {amount} 💎 для перевода!")
+        
+    # Налог Скайнета (5%)
+    commission = int(amount * 0.05)
+    if commission < 1: commission = 1
+    final_amount = amount - commission
+    
+    # Атомарное списание (дополнительная защита)
+    updated_user = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "bounty_points": {"$gte": amount}},
+        {"$inc": {"bounty_points": -amount}}
+    )
+    if not updated_user:
+        return bot.reply_to(message, "❌ Транзакция отклонена. Недостаточно средств.")
+        
+    # Начисление получателю
+    paid_collection.update_one({"uid": target_id}, {"$inc": {"bounty_points": final_amount}}, upsert=True)
+    
+    # Комиссия улетает в Синий Сейф
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": commission}})
+    
+    # Рандомные атмосферные фразы
+    import random
+    phrases = [
+        f"💸 [{initiator_name}](tg://user?id={initiator_id}) щедро отблагодарил(а) [{target_name}](tg://user?id={target_id}) на **{amount} 💎**!",
+        f"👙 [{initiator_name}](tg://user?id={initiator_id}) игриво засунул(а) **{amount} 💎** в трусики [{target_name}](tg://user?id={target_id}).",
+        f"🤝 [{initiator_name}](tg://user?id={initiator_id}) жмет руку и переводит [{target_name}](tg://user?id={target_id}) **{amount} 💎**.",
+        f"🔥 [{initiator_name}](tg://user?id={initiator_id}) спонсирует [{target_name}](tg://user?id={target_id}) на **{amount} 💎**!"
+    ]
+    
+    msg_text = random.choice(phrases) + f"\n\n_Получено: {final_amount} 💎 (Комиссия Скайнета: {commission} 💎)_"
+    bot.send_message(message.chat.id, msg_text, parse_mode="Markdown")
+
+# ================= УБИЙЦА ИРИСА (МОДУЛЬ 4: СЕМЬИ И КЛАНЫ) =================
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!усыновить', '!удочерить')))
+def adopt_child(message):
+    parent_id = message.from_user.id
+    parent_name = message.from_user.first_name
+    child_id = message.reply_to_message.from_user.id
+    child_name = message.reply_to_message.from_user.first_name
+    
+    if parent_id == child_id: return bot.reply_to(message, "🤡 Вы не бактерия, чтобы размножаться делением.")
+    if message.reply_to_message.from_user.is_bot: return bot.reply_to(message, "🤖 Терминаторы не подлежат усыновлению.")
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(parent_id):
+        return bot.reply_to(message, NEWBIE_MSG)
+        
+    child_data = paid_collection.find_one({"uid": child_id}) or {}
+    if child_data.get("parent_id"):
+        return bot.reply_to(message, f"👶 [{child_name}](tg://user?id={child_id}) уже находится под опекой другого человека!", parse_mode="Markdown")
+        
+    parent_data = paid_collection.find_one({"uid": parent_id}) or {}
+    children = parent_data.get("children", [])
+    if len(children) >= 3:
+        return bot.reply_to(message, "🚫 Лимит: максимум 3 ребенка на одного опекуна! Частный детдом закрыт.")
+        
+    PRICE = 1000
+    if parent_data.get("bounty_points", 0) < PRICE:
+        return bot.reply_to(message, f"💸 Оформление документов стоит {PRICE} 💎! У вас нет денег на содержание ребенка.")
+        
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🍼 Войти в семью", callback_data=f"adopt_yes_{parent_id}_{child_id}"),
+        InlineKeyboardButton("🏃‍♂️ Убежать", callback_data=f"adopt_no_{parent_id}_{child_id}")
+    )
+    bot.send_message(message.chat.id, f"🍼 **ПРОЦЕДУРА УСЫНОВЛЕНИЯ!**\n\n[{parent_name}](tg://user?id={parent_id}) хочет официально усыновить [{child_name}](tg://user?id={child_id}).\n\n_Пошлина ({PRICE} 💎) будет списана с опекуна._\n\n[{child_name}](tg://user?id={child_id}), вы согласны?", parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('adopt_'))
+def handle_adopt_response(call):
+    parts = call.data.split('_')
+    action, parent_id, child_id = parts[1], int(parts[2]), int(parts[3])
+    
+    if call.from_user.id != child_id:
+        return bot.answer_callback_query(call.id, "Вас не пытаются усыновить! Отойдите.", show_alert=True)
+        
+    if action == 'no':
+        return bot.edit_message_text(f"🏃‍♂️ **ОТКАЗ!**\n[{call.from_user.first_name}](tg://user?id={child_id}) сбежал(а) из детдома. Усыновление отменено.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        
+    PRICE = 1000
+    parent_data = paid_collection.find_one({"uid": parent_id}) or {}
+    if parent_data.get("bounty_points", 0) < PRICE:
+        return bot.edit_message_text("❌ У опекуна кончились деньги! Усыновление отменено.", call.message.chat.id, call.message.message_id)
+        
+    # Проверяем, не усыновили ли ребенка пока он думал
+    if (paid_collection.find_one({"uid": child_id}) or {}).get("parent_id"):
+        return bot.edit_message_text("❌ Ребенка уже забрала другая семья!", call.message.chat.id, call.message.message_id)
+        
+    # Жесткая запись в базу: списываем деньги, ставим parent_id ребенку...
+    charged = paid_collection.find_one_and_update(
+        {"uid": parent_id, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}, "$push": {"children": child_id}}
+    )
+    if not charged:
+        return bot.edit_message_text("❌ У опекуна кончились деньги! Усыновление отменено.", call.message.chat.id, call.message.message_id)
+    paid_collection.update_one({"uid": child_id}, {"$set": {"parent_id": parent_id}})
+    
+    # ТРЕКЕР: Патриарх
+    p_data = paid_collection.find_one({"uid": parent_id}) or {}
+    if p_data.get("partner_id") and len(p_data.get("children", [])) >= 3:
+        grant_achievement(parent_id, "patriarch", "Патриарх семьи", "👨‍👩‍👧‍👦", call.message.chat.id)
+        grant_achievement(p_data["partner_id"], "patriarch", "Патриарх семьи", "👨‍👩‍‍👧‍👦", call.message.chat.id)
+
+    bot.edit_message_text(f"🎊 **НОВАЯ КИБЕР-СЕМЬЯ!** 🎊\n\nСкайнет официально поздравляет!\n[{call.from_user.first_name}](tg://user?id={child_id}) теперь является наследником.\n\n_Напишите `!семья`, чтобы посмотреть ваше древо._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+def compute_male_kinship_roles(uid, gd, partner_of, kids_of):
+    """Вычисляет строго мужские роли всех родственников относительно uid."""
+    roles = {uid: "вы"}
+    my_part = partner_of(uid)
+    if my_part:
+        roles[my_part] = "муж"
+
+    # 1. Предки вверх (отец / батя -> дед -> прадед -> пращур)
+    gen_up = {0: [uid] + ([my_part] if my_part else [])}
+    p1 = gd(uid).get("parent_id")
+    if p1:
+        p2 = partner_of(p1)
+        gen_up[1] = [p1] + ([p2] if p2 else [])
+        roles[p1] = "отец"
+        if p2 and p2 not in roles:
+            roles[p2] = "батя"
+    else:
+        gen_up[1] = []
+
+    # Если у мужа есть родители — подпишем их
+    if my_part:
+        mp1 = gd(my_part).get("parent_id")
+        if mp1 and mp1 not in roles:
+            roles[mp1] = "отец мужа"
+            mp2 = partner_of(mp1)
+            if mp2 and mp2 not in roles:
+                roles[mp2] = "батя мужа"
+            for bil in kids_of(mp1):
+                if bil not in roles:
+                    roles[bil] = "брат мужа"
+
+    for lvl in range(2, 7):
+        cur_anc = []
+        lbl = "дед" if lvl == 2 else ("прадед" if lvl == 3 else "пращур")
+        for node in gen_up.get(lvl - 1, []):
+            up = gd(node).get("parent_id")
+            if up and up not in roles:
+                roles[up] = lbl
+                cur_anc.append(up)
+                up_p = partner_of(up)
+                if up_p and up_p not in roles:
+                    roles[up_p] = lbl
+                    cur_anc.append(up_p)
+        gen_up[lvl] = cur_anc
+
+    # 2. Потомки вниз от uid (сын -> внук -> правнук)
+    gen_down = {0: [uid]}
+    for lvl in range(1, 6):
+        cur_desc = []
+        lbl = "сын" if lvl == 1 else ("внук" if lvl == 2 else ("правнук" if lvl == 3 else "потомок"))
+        sp_lbl = "зять" if lvl == 1 else f"муж {lbl}а"
+        for node in gen_down.get(lvl - 1, []):
+            for ch in kids_of(node):
+                if ch not in roles:
+                    roles[ch] = lbl
+                cur_desc.append(ch)
+                ch_p = partner_of(ch)
+                if ch_p and ch_p not in roles:
+                    roles[ch_p] = sp_lbl
+        gen_down[lvl] = cur_desc
+
+    # 3. Братья и племянники (дети отцов)
+    for par in gen_up.get(1, []):
+        for sib in kids_of(par):
+            if sib not in roles:
+                roles[sib] = "брат"
+                sib_p = partner_of(sib)
+                if sib_p and sib_p not in roles:
+                    roles[sib_p] = "муж брата"
+                for neph in kids_of(sib):
+                    if neph not in roles:
+                        roles[neph] = "племянник"
+                        neph_p = partner_of(neph)
+                        if neph_p and neph_p not in roles:
+                            roles[neph_p] = "муж племянника"
+                        for gneph in kids_of(neph):
+                            if gneph not in roles:
+                                roles[gneph] = "внуч. племянник"
+
+    # 4. Дяди и двоюродные братья (дети дедов)
+    for gp in gen_up.get(2, []):
+        for unc in kids_of(gp):
+            if unc not in roles:
+                roles[unc] = "дядя"
+                unc_p = partner_of(unc)
+                if unc_p and unc_p not in roles:
+                    roles[unc_p] = "муж дяди"
+                for cous in kids_of(unc):
+                    if cous not in roles:
+                        roles[cous] = "двоюр. брат"
+
+    return roles
+
+def build_family_tree_text(uid, get_data, get_name, max_nodes=45):
+    """Полное древо в чате со строго мужскими подписями родства (отец, батя, дед, брат, сын, внук, племянник)."""
+    import html
+    cache = {}
+    def gd(u):
+        if u not in cache: cache[u] = get_data(u) or {}
+        return cache[u]
+    def link(u): return f"<a href='tg://user?id={u}'>{html.escape(str(get_name(u)))}</a>"
+    def partner_of(u): return gd(u).get("partner_id")
+    def kids_of(u):
+        ids = list(gd(u).get("children", []))
+        p = partner_of(u)
+        if p:
+            for c in gd(p).get("children", []):
+                if c not in ids: ids.append(c)
+        return ids
+
+    roles = compute_male_kinship_roles(uid, gd, partner_of, kids_of)
+    def role_tag(u):
+        r = roles.get(u, "родня")
+        return f" <i>[{r}]</i>"
+
+    seen, cur = {uid}, uid
+    for _ in range(6):
+        p = gd(cur).get("parent_id")
+        if not p:
+            pt = partner_of(cur)
+            if pt: p = gd(pt).get("parent_id")
+        if not p or p in seen: break
+        seen.add(p); cur = p
+    root = cur
+
+    shown, lines, state = set(), [], {"n": 0, "cut": False}
+    def icon_for(u):
+        r = roles.get(u, "")
+        if u == uid: return "👉"
+        if u == root or r in ("дед", "прадед", "пращур"): return "👑"
+        if r in ("отец", "батя", "отец мужа", "батя мужа"): return "🧔‍♂️"
+        if r in ("сын", "внук", "правнук", "племянник"): return "👦"
+        return "🧑"
+
+    def label(u):
+        ic = icon_for(u)
+        if u == uid:
+            s = f"{ic} <b>{html.escape(str(get_name(u)))}</b> <i>[вы]</i>"
+        else:
+            s = f"{ic} {link(u)}{role_tag(u)}"
+        p = partner_of(u)
+        if p:
+            p_name = f"<b>{html.escape(str(get_name(p)))}</b> <i>[вы]</i>" if p == uid else f"{link(p)}{role_tag(p)}"
+            s += f" 💍 {p_name}"
+            pp = gd(p).get("parent_id")
+            if pp and pp not in shown and pp != u:
+                s += f" <i>(род. из семьи {link(pp)}{role_tag(pp)})</i>"
+        return s
+
+    def walk(u, prefix, is_last, depth):
+        if state["n"] >= max_nodes:
+            state["cut"] = True; return
+        state["n"] += 1
+        shown.add(u)
+        p = partner_of(u)
+        if p: shown.add(p)
+        branch = "" if depth == 0 else ("└─ " if is_last else "├─ ")
+        lines.append(f"{prefix}{branch}{label(u)}")
+        kids = [c for c in kids_of(u) if c not in shown]
+        cp = prefix + ("" if depth == 0 else ("   " if is_last else "│  "))
+        for i, c in enumerate(kids):
+            walk(c, cp, i == len(kids) - 1, depth + 1)
+    walk(root, "", True, 0)
+
+    if uid not in shown:
+        lines.append("")
+        walk(uid, "", True, 0)
+    text = "🌳 <b>ГЕНЕАЛОГИЧЕСКОЕ ДРЕВО</b> 🌳\n\n" + "\n".join(lines)
+    if state["cut"] or len(text) > 3900:
+        text = text[:3850].rsplit("\n", 1)[0] + "\n… <i>(показаны не все родственники)</i>"
+    return text
+
+def build_family_webapp_nodes(uid, max_nodes=35):
+    """Формирует список узлов родословной с мужскими ролями для карточки Синдиката в Мини-Аппе."""
+    cache, name_cache = {}, {}
+    def gd(u):
+        if u not in cache:
+            cache[u] = paid_collection.find_one({"uid": u}) or {}
+        return cache[u]
+    def gname(u):
+        if u not in name_cache:
+            st = db['chat_stats'].find_one({"uid": u}) or {}
+            us = db['users'].find_one({"_id": u}) or {}
+            name_cache[u] = st.get("name") or us.get("first_name") or f"ID {u}"
+        return name_cache[u]
+    def partner_of(u): return gd(u).get("partner_id")
+    def kids_of(u):
+        ids = list(gd(u).get("children", []))
+        p = partner_of(u)
+        if p:
+            for c in gd(p).get("children", []):
+                if c not in ids: ids.append(c)
+        return ids
+
+    u_doc = gd(uid)
+    if not u_doc.get("partner_id") and not u_doc.get("parent_id") and not u_doc.get("children"):
+        return []
+
+    roles = compute_male_kinship_roles(uid, gd, partner_of, kids_of)
+    seen, cur = {uid}, uid
+    for _ in range(6):
+        p = gd(cur).get("parent_id")
+        if not p:
+            pt = partner_of(cur)
+            if pt: p = gd(pt).get("parent_id")
+        if not p or p in seen: break
+        seen.add(p); cur = p
+    root = cur
+
+    shown, nodes = set(), []
+    def walk(u, depth):
+        if len(nodes) >= max_nodes: return
+        shown.add(u)
+        p = partner_of(u)
+        if p: shown.add(p)
+        r_u = roles.get(u, "родня")
+        node_item = {
+            "uid": u,
+            "name": gname(u),
+            "role": r_u,
+            "is_me": (u == uid),
+            "depth": depth,
+            "partner": None
+        }
+        if p:
+            node_item["partner"] = {
+                "uid": p,
+                "name": gname(p),
+                "role": roles.get(p, "муж"),
+                "is_me": (p == uid)
+            }
+        nodes.append(node_item)
+        for c in [k for k in kids_of(u) if k not in shown]:
+            walk(c, depth + 1)
+
+    walk(root, 0)
+    if uid not in shown:
+        walk(uid, 0)
+    return nodes
+
+def _family_bank_id(uid, user_data):
+    """ID общей копилки: у супругов общий, у детей - копилка родителей (если родитель в браке)."""
+    partner_id = user_data.get("partner_id")
+    if partner_id:
+        return f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
+    parent_id = user_data.get("parent_id")
+    if parent_id:
+        pp = (paid_collection.find_one({"uid": parent_id}) or {}).get("partner_id")
+        if pp:
+            return f"family_{min(parent_id, pp)}_{max(parent_id, pp)}"
+    return None
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!семья', 'моя семья', '/family'])
+def my_family_tree(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    partner_id = user_data.get("partner_id")
+    parent_id = user_data.get("parent_id")
+    children = user_data.get("children", [])
+    
+    if not partner_id and not parent_id and not children:
+        return bot.reply_to(message, "🕸 Вы сирота и одиночка. Ни мужа/жены, ни родителей, ни детей.\n\n_Напишите `!свадьба` в ответ кому-нибудь или `!усыновить`._", parse_mode="Markdown")
+        
+    def _data(u): return paid_collection.find_one({"uid": u}) or {}
+    def _name(u):
+        n = (db['chat_stats'].find_one({"uid": u}) or {}).get("name")
+        if not n and u == uid: n = message.from_user.first_name
+        return n or "Игрок"
+    bot.reply_to(message, build_family_tree_text(uid, _data, _name), parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!выгнать', '!отказаться', '!детдом')))
+def kick_child(message):
+    parent_id = message.from_user.id
+    child_id = message.reply_to_message.from_user.id
+    
+    p_data = paid_collection.find_one({"uid": parent_id}) or {}
+    children = p_data.get("children", [])
+    
+    if child_id not in children:
+        return bot.reply_to(message, "🤡 Этот пользователь не является вашим ребенком.")
+        
+    # Удаляем связи
+    paid_collection.update_one({"uid": parent_id}, {"$pull": {"children": child_id}})
+    paid_collection.update_one({"uid": child_id}, {"$unset": {"parent_id": ""}})
+    
+    bot.reply_to(message, f"💔 **СЕМЬЯ РАСПАЛАСЬ!**\n\n[{message.from_user.first_name}](tg://user?id={parent_id}) лишил(а) наследства [{message.reply_to_message.from_user.first_name}](tg://user?id={child_id}) и выгнал(а) на улицу.\n_Теперь он(а) снова сирота._", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!сбежать', 'сбежать'])
+def run_away_child(message):
+    child_id = message.from_user.id
+    child_name = message.from_user.first_name
+    
+    # 1. Проверяем, есть ли вообще семья
+    child_data = paid_collection.find_one({"uid": child_id}) or {}
+    parent_id = child_data.get("parent_id")
+    
+    if not parent_id:
+        return bot.reply_to(message, "🤡 Вы сирота! От кого сбегать-то?")
+        
+    parent_data = paid_collection.find_one({"uid": parent_id}) or {}
+    partner_id = parent_data.get("partner_id")
+    
+    # 2. Удаляем связи (побег)
+    paid_collection.update_one({"uid": parent_id}, {"$pull": {"children": child_id}})
+    paid_collection.update_one({"uid": child_id}, {"$unset": {"parent_id": ""}})
+    
+    stolen_amount = 0
+    # 3. Пытаемся обнести копилку (если родители в браке и есть общак)
+    if partner_id:
+        family_id = f"family_{min(parent_id, partner_id)}_{max(parent_id, partner_id)}"
+        fam_db = db['family_banks'].find_one({"_id": family_id}) or {"balance": 0}
+        current_bank = fam_db.get("balance", 0)
+        
+        if current_bank > 0:
+            import random
+            # Кубик от 10% до 50%
+            steal_pct = random.uniform(0.10, 0.50)
+            stolen_amount = int(current_bank * steal_pct)
+            if stolen_amount < 1: stolen_amount = 1
+            
+            # Списываем из копилки, зачисляем ребенку на карман
+            db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": -stolen_amount}})
+            paid_collection.update_one({"uid": child_id}, {"$inc": {"bounty_points": stolen_amount}})
+            
+    # 4. Объявляем на весь чат
+    if stolen_amount > 0:
+        msg = f"🏃‍♂️💨 **ПОБЕГ ИЗ ДОМА!**\n\nТрудный подросток [{child_name}](tg://user?id={child_id}) сбежал(а) из семьи!\nПеред уходом он(а) взломал(а) родительский сейф и украл(а) **{stolen_amount} 💎** из общего бюджета!\n\n_Родители в шоке, полиция разводит руками._"
+    else:
+        msg = f"🏃‍♂️💨 **ПОБЕГ ИЗ ДОМА!**\n\nПодросток [{child_name}](tg://user?id={child_id}) собрал(а) вещи и сбежал(а) из семьи.\nОн(а) хотел(а) обнести родительскую копилку, но там оказалось пусто...\n\n_Теперь он(а) снова на улицах._"
+        
+    bot.reply_to(message, msg, parse_mode="Markdown")
+    
+    # 5. Кидаем инфарктное уведомление родителю в ЛС
+    try:
+        bot.send_message(parent_id, f"🚨 **ВАШ РЕБЕНОК СБЕЖАЛ!**\n\n[{child_name}](tg://user?id={child_id}) покинул семью. Проверьте ваш Семейный Фонд, кажется, оттуда пропали сбережения...", parse_mode="Markdown")
+    except Exception:
+        pass
+
+# ================= ПРАВО ВЕТО (ДЛЯ СВЯТЫХ) =================
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!амнистия', 'амнистия')))
+def elite_amnesty(message):
+    uid = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = user_data.get("social_rating", 0)
+    
+    if karma < 100:
+        return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
+        
+    import time
+    if target_id == uid:
+        return bot.reply_to(message, "🕊 Амнистию нельзя применить к самому себе.")
+    # Атомарно списываем 20 кармы (только если у Святого всё ещё 100+)
+    paid_ok = paid_collection.find_one_and_update({"uid": uid, "social_rating": {"$gte": 100}}, {"$inc": {"social_rating": -20}})
+    if not paid_ok:
+        return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
+    # Снимаем все муты
+    db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
+    paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
+    
+    bot.reply_to(message, f"🕊 <b>ПРАВО ВЕТО ПРИМЕНЕНО!</b>\n\nСвятой гражданин пожертвовал 20 Кармы, чтобы очистить грехи <a href='tg://user?id={target_id}'>{message.reply_to_message.from_user.first_name}</a>!\n\n<i>Тюремные замки открыты. Все блокировки сняты.</i>", parse_mode="HTML")
+
+# ================= ИСКУПЛЕНИЕ ГРЕХОВ (ДЛЯ ИЗГОЕВ) =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!искупление', 'искупление'])
+def redeem_sins(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = user_data.get("social_rating", 0)
+    
+    if karma >= 0:
+        return bot.reply_to(message, "😇 Ваша душа и так чиста. Искупление доступно только грешникам с отрицательной Кармой.")
+        
+    shields = user_data.get("immunity", 0)
+    shards = user_data.get("jackpot_shards", 0)
+    
+    # Пытаемся забрать ресурсы за Карму
+    if shields >= 1 and paid_collection.find_one_and_update(
+            {"uid": uid, "immunity": {"$gte": 1}}, {"$inc": {"immunity": -1, "social_rating": 20}}):
+        cost_text = "1 🛡 Щит Иммунитета"
+    elif shards >= 5 and paid_collection.find_one_and_update(
+            {"uid": uid, "jackpot_shards": {"$gte": 5}}, {"$inc": {"jackpot_shards": -5, "social_rating": 20}}):
+        cost_text = "5 🧩 Осколков"
+    else:
+        return bot.reply_to(message, "⛓ <b>Вам нечем платить за свои грехи!</b>\nДля искупления требуется пожертвовать государству <b>1 🛡 Щит</b> или <b>5 🧩 Осколков</b>.", parse_mode="HTML")
+
+    # 🔥 ЕСЛИ ВЫШЕЛ ИЗ МИНУСА ПОСЛЕ ИСКУПЛЕНИЯ - ВОССТАНАВЛИВАЕМ ТЕГ 🔥
+    if karma <= -50 and (karma + 20) > -50:
+        u_info = db['users'].find_one({"_id": uid}) or {}
+        original_tag = u_info.get("custom_tag", "")
+        try:
+            safe_set_tag(message.chat.id, uid, original_tag)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        
+    bot.reply_to(message, f"⛪️ <b>ИСКУПЛЕНИЕ ПРОЙДЕНО!</b>\n\nВы пожертвовали {cost_text} на благо Империи.\nСкайнет списывает часть ваших грехов: <b>+20 к Карме</b>!", parse_mode="HTML")
+
+# ================= ГЛОБАЛЬНЫЙ ИВЕНТ: АНАРХИЯ =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!анархия')
+def trigger_anarchy(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    PRICE = 10000
+    if user_data.get("bounty_points", 0) < PRICE:
+        return bot.reply_to(message, f"💀 Обрушение серверов Скайнета стоит {PRICE} 💎! Копите деньги, мистер Хакер.")
+        
+    import time
+    active_anarchy = db['settings'].find_one({"_id": "anarchy_mode"})
+    if active_anarchy and active_anarchy.get("end_time", 0) > time.time():
+        return bot.reply_to(message, "🔥 Анархия УЖЕ идет! Хватайте вилы и бегите грабить!")
+        
+    # Списываем 10к, запускаем Анархию на 1 час
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": PRICE}},
+        {"$inc": {"bounty_points": -PRICE}}
+    )
+    if not charged:
+        return bot.reply_to(message, f"💀 Обрушение серверов Скайнета стоит {PRICE} 💎!")
+    db['settings'].update_one({"_id": "anarchy_mode"}, {"$set": {"active": True, "end_time": time.time() + 3600}}, upsert=True)
+    
+    # Оповещаем все чаты
+    def broadcast_anarchy():
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+        from core.scheduler import schedule_message_deletion # 👈 ДОБАВИЛИ ИМПОРТ
+        
+        all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
+        
+        msg_text = (
+            f"🏴‍☠️ <b>КРИТИЧЕСКИЙ СБОЙ МАТРИЦЫ! АНАРХИЯ!</b> 🏴‍☠️\n\n"
+            f"Хакер <a href='tg://user?id={uid}'>{message.from_user.first_name}</a> сжег 10 000 💎 и обрушил сервера Скайнета на 1 ЧАС!\n\n"
+            f"<b>ПРАВИЛА СУДНОЙ НОЧИ:</b>\n"
+            f"🩸 Шанс успешного Взлома — 80%, кулдаун — 15 минут!\n"
+            f"🩸 Защиты Кармы больше не существует!\n"
+            f"🩸 <b>Щиты Иммунитета дают сбой!</b> Шанс пробить щит насквозь — 50%!\n"
+            f"🩸 <b>ГРАБЕЖ КОПИЛОК!</b> При взломе женатых игроков вирус выкачивает деньги из Семейного Фонда!\n\n"
+            f"<i>Заходите в Web App (Рюкзак -> Взлом) и грабьте соседей, пока система не перезагрузится!</i>"
+        )
+        for cid in all_chats:
+            try: 
+                # 👇 ЛОВИМ СООБЩЕНИЕ И СТАВИМ ТАЙМЕР НА 3600 СЕКУНД (1 ЧАС)
+                sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML")
+                schedule_message_deletion(cid, sent_msg.message_id, 3600, bot)
+                time.sleep(0.3)
+            except Exception as e: 
+                logger.debug(f"Игнор ошибки: {e}")
+                
+    # 👇 ВОТ ЭТИ ДВЕ СТРОЧКИ Я ПОТЕРЯЛ В ПРОШЛЫЙ РАЗ 👇
+    import threading
+    threading.Thread(target=broadcast_anarchy, daemon=True).start()
+
+# ================= НАРОДНЫЙ СУД (СБОР НА КИЛЛЕРА) =================
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!суд', 'суд')))
+def public_court(message):
+    initiator_id = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if initiator_id == target_id:
+        return bot.reply_to(message, "🤡 Вызывать полицию на самого себя? Оригинально.")
+    if message.reply_to_message.from_user.is_bot:
+        return bot.reply_to(message, "🤖 Скайнет не подсуден человеческим законам.")
+        
+    user_data = paid_collection.find_one({"uid": initiator_id}) or {}
+    if user_data.get("bounty_points", 0) < 100:
+        return bot.reply_to(message, "💸 У вас нет стартовых 100 💎 для открытия дела!")
+        
+    # Списываем 100 💎 у инициатора
+    charged = paid_collection.find_one_and_update(
+        {"uid": initiator_id, "bounty_points": {"$gte": 100}},
+        {"$inc": {"bounty_points": -100}}
+    )
+    if not charged:
+        return bot.reply_to(message, "💸 У вас нет стартовых 100 💎 для открытия дела!")
+
+    # ТРЕКЕР: Крыса
+    paid_collection.update_one({"uid": initiator_id}, {"$addToSet": {"sued_users": target_id}})
+    u_data = paid_collection.find_one({"uid": initiator_id})
+    if len(u_data.get("sued_users", [])) >= 5:
+        grant_achievement(initiator_id, "rat", "Крыса", "🔪", message.chat.id)
+    
+    import time
+    court_id = f"court_{int(time.time())}_{target_id}"
+    target_data = paid_collection.find_one({"uid": target_id}) or {}
+    target_karma = target_data.get("social_rating", 0)
+    
+    GOAL = 1000
+    extra_msg = ""
+    if target_karma >= 50:
+        GOAL = 2000
+        extra_msg = "\n🌟 <i>Цель имеет безупречную репутацию! Подкупить Скайнет будет в 2 раза дороже.</i>"
+    elif target_karma <= -50:
+        GOAL = 500
+        extra_msg = "\n👿 <i>Обвиняемый — известная угроза обществу! Народ готов скинуться по дешевке.</i>"
+    
+    import time
+    court_id = f"court_{int(time.time())}_{target_id}"
+    
+    db['active_courts'].insert_one({
+        "_id": court_id,
+        "target_id": target_id,
+        "target_name": target_name,
+        "collected": 100,
+        "goal": GOAL,
+        "investors": [initiator_id]
+    })
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"⚖️ Докинуть 100 💎 (Собрано: 100/{GOAL})", callback_data=f"court_fund_{court_id}"))
+    
+    bot.send_message(
+        message.chat.id, 
+        f"🚨 <b>НАРОДНЫЙ СУД ОТКРЫТ!</b> 🚨\n\n<a href='tg://user?id={initiator_id}'>{message.from_user.first_name}</a> требует забанить <a href='tg://user?id={target_id}'>{target_name}</a> на 1 час!\n\n💰 Цель сбора: <b>{GOAL} 💎</b> для подкупа Скайнета.{extra_msg}\n<i>Жмите кнопку, чтобы пожертвовать 100 очков на правосудие.</i>", 
+        parse_mode="HTML", reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('court_fund_'))
+def handle_court_funding(call):
+    court_id = call.data.replace('court_fund_', '')
+    uid = call.from_user.id
+    
+    court = db['active_courts'].find_one({"_id": court_id})
+    if not court:
+        return bot.answer_callback_query(call.id, "Дело уже закрыто!", show_alert=True)
+        
+    if uid == court['target_id']:
+        return bot.answer_callback_query(call.id, "Подсудимый не имеет права финансировать свой арест!", show_alert=True)
+        
+    if uid in court['investors']:
+        return bot.answer_callback_query(call.id, "Вы уже внесли свою долю! Ждите других.", show_alert=True)
+        
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("bounty_points", 0) < 100:
+        return bot.answer_callback_query(call.id, "Не хватает 100 💎 на балансе!", show_alert=True)
+        
+    # Списываем бабки и плюсуем в котел
+    from pymongo import ReturnDocument
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": 100}},
+        {"$inc": {"bounty_points": -100}}
+    )
+    if not charged:
+        return bot.answer_callback_query(call.id, "Не хватает 100 💎 на балансе!", show_alert=True)
+    joined = db['active_courts'].find_one_and_update(
+        {"_id": court_id, "investors": {"$ne": uid}},
+        {"$inc": {"collected": 100}, "$push": {"investors": uid}},
+        return_document=ReturnDocument.AFTER
+    )
+    if not joined:   # уже в котле: возвращаем
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 100}})
+        return bot.answer_callback_query(call.id, "Вы уже внесли свою долю!", show_alert=True)
+    new_collected = joined["collected"]
+    
+    if new_collected >= court['goal']:
+        # ПРИГОВОР ИСПОЛНЕН! Выдаем мут на 1 час
+        db['active_courts'].delete_one({"_id": court_id})
+        
+        # Сжигаем собранную сумму в экономике (или кидаем в синий сейф)
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": new_collected}})
+        
+        bot.edit_message_text(f"⚖️ **СУД ВЕРШИЛСЯ!**\n\nНеобходимая сумма в **{court['goal']} 💎** собрана!\n[{court['target_name']}](tg://user?id={court['target_id']}) признан виновным народным голосованием и отправляется за решетку на 1 час.\n\n_Правосудие восторжествовало. Деньги переведены в Сейф Скайнета._", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        
+        # 👇 ВОТ ЭТУ СТРОКУ НУЖНО ДОБАВИТЬ СЮДА 👇
+        mute_user(call.message.chat.id, court['target_id'], 3600, "Осужден Народным Судом")
+        
+    else:
+        # Обновляем кнопку
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton(f"⚖️ Докинуть 100 💎 (Собрано: {new_collected}/{court['goal']})", callback_data=f"court_fund_{court_id}"))
+        try:
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, "Ваши 100 💎 приняты в фонд правосудия!", show_alert=True)
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!взятка', 'взятка')))
+def bribe_court(message):
+    uid = message.from_user.id
+    parts = message.text.split()
+    
+    if len(parts) < 2 or not parts[1].isdigit():
+        return bot.reply_to(message, "⚠️ **Формат:** `!взятка [сумма]`\n_Пример:_ `!взятка 1500`", parse_mode="Markdown")
+        
+    bribe_amount = int(parts[1])
+    
+    # Ищем, есть ли открытое дело на этого юзера
+    court = db['active_courts'].find_one({"target_id": uid})
+    if not court:
+        return bot.reply_to(message, "🤡 Против вас нет открытых судебных дел. Кому вы собрались платить?")
+        
+    collected = court.get("collected", 0)
+    if bribe_amount <= collected:
+        return bot.reply_to(message, f"📉 Маловато будет! Народ уже собрал **{collected} 💎**. Взятка должна перебить эту сумму!")
+        
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    if user_data.get("bounty_points", 0) < bribe_amount:
+        return bot.reply_to(message, f"💸 У вас нет {bribe_amount} 💎 для взятки! Вас посадят.")
+        
+    # Списываем взятку
+    charged = paid_collection.find_one_and_update(
+        {"uid": uid, "bounty_points": {"$gte": bribe_amount}},
+        {"$inc": {"bounty_points": -bribe_amount}}
+    )
+    if not charged:
+        return bot.reply_to(message, f"💸 У вас нет {bribe_amount} 💎 для взятки! Вас посадят.")
+    
+    # Удаляем суд
+    if db['active_courts'].delete_one({"_id": court["_id"]}).deleted_count == 0:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": bribe_amount}})
+        return bot.reply_to(message, "⚖️ Суд уже закрыт.")
+    
+    # Взятка + собранные народом деньги улетают в Синий Сейф Скайнета (коррупция!)
+    total_to_safe = bribe_amount + collected
+    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": total_to_safe}})
+    
+    bot.send_message(
+        message.chat.id,
+        f"💼 **ДЕЛО ЗАКРЫТО ЗА НЕДОСТАТКОМ УЛИК!**\n\n[{message.from_user.first_name}](tg://user?id={uid}) занес Скайнету чемодан с **{bribe_amount} 💎**.\nКоррумпированный судья ударил молотком, толпа негодует, обвиняемый свободен!\n\n_Взятка и собранные народом деньги ({total_to_safe} 💎) отправлены в Синий Сейф._",
+        parse_mode="Markdown"
+    )
+
+# ================= ТЕНЕВЫЕ АРТЕФАКТЫ (ХАОС) =================
+
+def resolve_target_uid(target_info):
+    """Секретный локатор: преобразует @username или ID в чистый UID"""
+    t_info = str(target_info).strip()
+    if t_info.isdigit(): return int(t_info)
+    if t_info.startswith('@'):
+        uname = t_info.replace('@', '').lower()
+        u = db['users'].find_one({"username": uname})
+        if u: return u['_id']
+        cs = db['chat_stats'].find_one({"username": uname})
+        if cs: return cs['uid']
+    return None
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == '!щелчок')
+def use_thanos_glove(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if "thanos_glove" not in user_data.get("elite_items", []):
+        return bot.reply_to(message, "🕸 У вас нет Перчатки Таноса! Добудьте её на Теневом Аукционе.")
+        
+    # Забираем перчатку
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "thanos_glove"}})
+    
+    active_users = list(db['chat_stats'].find({"chat_id": message.chat.id}).sort("msgs", -1).limit(30))
+    if len(active_users) < 4:
+        bot.reply_to(message, "🕸 В этом чате слишком мало людей для щелчка. Перчатка сгорела впустую.")
+        return
+        
+    def execute_snap():
+        import time, random
+        targets = random.sample(active_users, k=len(active_users)//2)
+        muted_names = []
+        until = int(time.time()) + (15 * 60)
+        
+        bot.send_message(message.chat.id, f"🧤 <b>{message.from_user.first_name} надевает Перчатку Бесконечности...</b>", parse_mode="HTML")
+        time.sleep(3)
+        bot.send_message(message.chat.id, "🫰 <i>*ЩЕЛК*</i>", parse_mode="HTML")
+        time.sleep(2)
+        
+        for t in targets:
+            # Защита от мута админов (Telegram API само выдаст ошибку, мы ее гасим)
+            if t['uid'] == uid: continue
+            
+            # 🔥 ИММУНИТЕТ ДЛЯ СВЯТЫХ 🔥
+            t_data = paid_collection.find_one({"uid": t['uid']}) or {}
+            if t_data.get("social_rating", 0) >= 100:
+                bot.send_message(message.chat.id, f"🛡 <b>Сбой матрицы!</b> Гражданин {t.get('name', 'Аноним')} имеет статус Святого (Карма 100+). Перчатка не смогла стереть его!", parse_mode="HTML")
+                continue
+                
+            success = mute_user(message.chat.id, t['uid'], 15 * 60, "Рассыпался от Щелчка Таноса")
+            if success:
+                muted_names.append(t.get('name', 'Аноним'))
+            
+        if muted_names:
+            bot.send_message(message.chat.id, "💨 <b>Половина активных участников рассыпалась в прах (Мут 15 минут):</b>\n" + ", ".join(muted_names), parse_mode="HTML")
+        else:
+            bot.send_message(message.chat.id, "🛡 У Скайнета слишком сильная защита в этом чате. Никто не рассыпался.")
+            
+    import threading
+    threading.Thread(target=execute_snap, daemon=True).start()
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!развести'))
+def homewrecker_action(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if "homewrecker" not in user_data.get("elite_items", []):
+        return bot.reply_to(message, "💔 У вас нет артефакта «Разлучник»! Загляните на Аукцион.")
+        
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Укажите цель: `!развести @username`", parse_mode="Markdown")
+        
+    target_info = parts[1]
+    target_id = resolve_target_uid(target_info)
+    
+    if not target_id:
+        return bot.reply_to(message, "❌ Пользователь не найден в базе!")
+        
+    target_data = paid_collection.find_one({"uid": target_id}) or {}
+    partner_id = target_data.get("partner_id")
+    
+    if not partner_id:
+        return bot.reply_to(message, "🤡 Этот пользователь и так одинок. Разводить некого.")
+        
+    # Забираем артефакт
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "homewrecker"}})
+    
+    # Принудительный развод
+    paid_collection.update_one({"uid": target_id}, {"$unset": {"partner_id": ""}})
+    paid_collection.update_one({"uid": partner_id}, {"$unset": {"partner_id": ""}})
+    
+    # Вешаем клеймо Рогоносца на 7 дней
+    import time
+    paid_collection.update_one({"uid": target_id}, {
+        "$set": {"cuckold_until": time.time() + (7 * 86400)},
+        "$push": {"achievements": "cuckold"}
+    })
+    
+    bot.send_message(message.chat.id, f"💔 <b>АРТЕФАКТ ПРИМЕНЕН!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) использовал <b>«Разлучник»</b> на {target_info}!\n\nСиндикат разрушен. Брак аннулирован без согласия сторон.\n🦌 <i>Жертве выдан позорный статус «Рогоносец» на 7 дней.</i>", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!рейд'))
+def raider_takeover(message):
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    
+    if "raider" not in user_data.get("elite_items", []):
+        return bot.reply_to(message, "🧲 У вас нет лицензии Рейдера! Ищите её на Теневом Аукционе.")
+        
+    parts = message.text.split()
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ Укажите цель: `!рейд @username`", parse_mode="Markdown")
+        
+    target_id = resolve_target_uid(parts[1])
+    if not target_id:
+        return bot.reply_to(message, "❌ Цель не найдена!")
+        
+    if target_id == uid:
+        return bot.reply_to(message, "🤡 Вы не можете ограбить самого себя.")
+        
+    ready_plots = list(db['farm_plots'].find({"uid": target_id, "status": "ready"}))
+    if not ready_plots:
+        # Сжигаем артефакт впустую
+        paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "raider"}})
+        return bot.reply_to(message, "🪹 <b>ПРОВАЛ!</b> У жертвы нет созревшего урожая. Рейдеры ушли ни с чем, а артефакт сгорел.", parse_mode="HTML")
+        
+    # Собираем урожай
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "raider"}})
+    total_pts = 0
+    
+    for plot in ready_plots:
+        seed = plot['seed_type']
+        # Пропускаем декор (каштаны, кактусы), воруем только то, что приносит очки!
+        if seed in CROPS and not CROPS[seed].get('is_decor'):
+            import random
+            pts = random.randint(CROPS[seed]['reward_pts'][0], CROPS[seed]['reward_pts'][1])
+            total_pts += pts
+        
+        db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "empty", "seed_type": None, "fertilized": False}})
+        
+    if total_pts > 0:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": total_pts}})
+        bot.send_message(message.chat.id, f"🧲 <b>РЕЙДЕРСКИЙ ЗАХВАТ!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) ворвался на ферму {parts[1]} пока тот спал!\n🚜 <b>Украдено грядок:</b> {len(ready_plots)}\n💰 <b>Награбленное:</b> {total_pts} 💎", parse_mode="HTML")
+    else:
+        bot.send_message(message.chat.id, f"🧲 <b>РЕЙДЕРСКИЙ ЗАХВАТ!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) ворвался на ферму {parts[1]}, но там росли только кактусы да каштаны. Очков не заработано, но грядки разорены!", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!глас '))
+def gods_voice(message):
+    uid = message.from_user.id
+    if "gods_voice" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): 
+        return bot.reply_to(message, "📢 У вас нет артефакта «Глас Бога»!")
+    text = message.text[6:].strip()
+    if not text: return
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "gods_voice"}})
+    
+    def broadcast():
+        from config import chat_ids_mk, chat_ids_parni, chat_ids_ns, chat_ids_gayznak, chat_ids_rainbow
+        import time
+        all_chats = list(set(list(chat_ids_mk.values()) + list(chat_ids_parni.values()) + list(chat_ids_ns.values()) + list(chat_ids_gayznak.values()) + list(chat_ids_rainbow.values())))
+        msg_text = f"👑 <b>Глобальное послание от {message.from_user.first_name}:</b>\n\n{html.escape(text)}"
+        for cid in all_chats:
+            try: bot.send_message(cid, msg_text, parse_mode="HTML"); time.sleep(0.3)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        bot.send_message(message.chat.id, "✅ Глас Бога услышан во всех чатах!")
+    import threading
+    threading.Thread(target=broadcast, daemon=True).start()
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!гуантанамо'))
+def guantanamo_order(message):
+    uid = message.from_user.id
+    if "guantanamo" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): 
+        return bot.reply_to(message, "🚷 У вас нет Ордера Гуантанамо!")
+    parts = message.text.split()
+    if len(parts) < 2: return bot.reply_to(message, "Укажите цель: !гуантанамо @username")
+    target_id = resolve_target_uid(parts[1])
+    if not target_id: return bot.reply_to(message, "❌ Пользователь не найден!")
+    
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "guantanamo"}})
+    import time
+    until = int(time.time()) + 86400
+    # Флаг, блокирующий снятие Ангелом
+    paid_collection.update_one({"uid": target_id}, {"$set": {"guantanamo_until": until}})
+    mute_user(message.chat.id, target_id, 86400, "Ордер Гуантанамо")
+    bot.send_message(message.chat.id, f"🚷 <b>Ордер Гуантанамо применен!</b>\n\n{parts[1]} отправлен в изолятор на 24 часа. Ангелы и Индульгенции бессильны.", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!вскрыть'))
+def master_key_safe(message):
+    uid = message.from_user.id
+    if "master_key" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): 
+        return bot.reply_to(message, "🗝 У вас нет Мастер-Ключа!")
+    parts = message.text.lower().split()
+    if len(parts) < 2 or parts[1] not in ["синий", "красный"]:
+        return bot.reply_to(message, "Формат: !вскрыть синий (или красный)")
+    
+    safe_color = "blue" if parts[1] == "синий" else "red"
+    safe_id = f"safe_{safe_color}"
+    safe = db['safes_state'].find_one({"_id": safe_id})
+    prize = safe['balance']
+    
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "master_key"}})
+    
+    if safe_color == 'blue':
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": prize}})
+        currency = "💎"
+    else:
+        paid_collection.update_one({"uid": uid}, {"$inc": {"cashback_balance": prize}})
+        currency = "₽"
+        
+    import random
+    pin_len = 4 if safe_color == 'blue' else 6 # Было 3 и 4
+    new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
+    db['safes_state'].update_one({"_id": safe_id}, {"$set": {"pin_code": new_pin, "balance": 10000 if safe_color == 'blue' else 500, "logs": []}})
+    
+    bot.send_message(message.chat.id, f"🗝 <b>Мастер-Ключ провернулся... ЩЕЛК!</b>\n\n[{message.from_user.first_name}](tg://user?id={uid}) вскрыл {parts[1]} сейф без пин-кода и забрал <b>{prize} {currency}</b>!", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('!создать_нпс'))
+def create_personal_npc(message):
+    uid = message.from_user.id
+    if "personal_npc" not in (paid_collection.find_one({"uid": uid}) or {}).get("elite_items", []): return
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3: return bot.reply_to(message, "Формат: !создать_нпс [слово] [текст]\nПример: !создать_нпс леха [{name1}] позвал Леху, и тот налил [{name2}] пива")
+    
+    paid_collection.update_one({"uid": uid}, {"$pull": {"elite_items": "personal_npc"}})
+    db['custom_rp'].insert_one({"uid": uid, "cmd": parts[1].lower(), "text": parts[2]})
+    bot.reply_to(message, f"🤖 Ваш личный NPC создан! Теперь вы можете писать `!{parts[1].lower()}` в ответ на сообщения.")
+
+# 6. ГЛАВНОЕ МЕНЮ КОМАНД СКАЙНЕТА
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!команды', '/help', 'помощь', 'команды', '!help'])
+def help_commands(message):
+    text = (
+        "🤖 **БАЗА ДАННЫХ СКАЙНЕТА (КОМАНДЫ)** 🤖\n\n"
+        "💍 **КИБЕР-СЕМЬЯ:**\n"
+        "• `!свадьба` *(в ответ)* — сделать предложение\n"
+        "• `!развод` — расторгнуть брак (штраф 1000 💎)\n"
+        "• `!усыновить` *(в ответ)* — взять ребенка в семью\n"
+        "• `!выгнать` *(в ответ)* — лишить наследства и выгнать\n"
+        "• `!сбежать` — покинуть семью (с шансом обнести копилку)\n"
+        "• `!семья` — генеалогическое древо\n"
+        "• `!копилка [сумма]` — положить Очки в семейный фонд\n"
+        "• `!копилка снять [сумма]` — взять из фонда\n\n"
+        "🎲 **АЗАРТ И ФИНАНСЫ:**\n"
+        "• `!дуэль [ставка]` *(в ответ)* — битва на Очки\n"
+        "• `!раздача [сумма] [кол-во]` — скинуть мешок с 💎 в чат\n"
+        "• `!чаевые [сумма]` *(в ответ)* — подарить Очки юзеру\n"
+        "• `!рулетка` — выжить или словить мут (награда 5-15 💎)\n"
+        "• `!ограбление` — собрать банду для налета на Фин. Сейф\n"
+        "• `!в деле` — присоединиться к банде (нужно 3 чел)\n"
+        "• `!погасить` — досрочно оплатить кредит МФО\n\n"
+        "⚖️ **ПРАВОСУДИЕ И ХАОС:**\n"
+        "• `!суд` *(в ответ)* — начать сбор на арест юзера\n"
+        "• `!взятка [сумма]` — откупиться от суда, перебив фонд\n"
+        "• `!побег @user` — вытащить друга из мута/тюрьмы\n"
+        "• `!кальмар` — запустить игру на выживание (1000 💎)\n"
+        "• `!играю` — вступить в Игру в Кальмара\n"
+        "• `+`, `-`, `лайк`, `дизлайк` *(в ответ)* — Карму\n"
+        "• `!амнистия` *(в ответ)* — снять наказание с друга (Только для Святых)\n"
+        "• `!искупление` — отмыть грехи и карму (за 1 Щит / 5 Осколков)\n"
+        "• `!анархия` — запустить Судную Ночь во всех чатах (10 000 💎)\n\n"
+        "🔮 **ТЕНЕВЫЕ АРТЕФАКТЫ (АУКЦИОН):**\n"
+        "• `!щелчок` — замутить половину чата на 15 мин\n"
+        "• `!развести @user` — расторгнуть чужой брак\n"
+        "• `!рейд @user` — украсть урожай с чужой фермы\n"
+        "• `!глас [текст]` — послание во все чаты сети\n"
+        "• `!гуантанамо @user` — неснимаемый мут на 24ч\n"
+        "• `!вскрыть [синий/красный]` — вскрыть сейф без пин-кода\n"
+        "• `!создать_нпс [слово] [текст]` — создать личную RP-команду\n\n"
+        "👤 **ПРОФИЛЬ И ОБЩЕНИЕ:**\n"
+        "• `!профиль` *(можно в ответ)* — досье и балансы\n"
+        "• `!топ` — топ болтунов чата\n"
+        "• `!рп` — список интерактивных действий\n\n"
+        "🎮 **ИГРОВОЙ КАБИНЕТ:**\n"
+        "Напишите `/start` в личку боту, чтобы открыть Web App!"
+    )
+    
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🎮 Открыть Кабинет", url=f"https://t.me/{bot.get_me().username}?start=app_profile")
+    )
+    
+    bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+
+# ================= СОЦИАЛЬНЫЙ КРЕДИТ И КАРМА =================
+# ================= СОЦИАЛЬНЫЙ КРЕДИТ И КАРМА =================
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.strip().lower() in ['+', '-', '👍', '👎', 'лайк', 'дизлайк'])
+def handle_karma_vote(message):
+    vote = message.text.strip().lower()
+    voter_id = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    
+    if voter_id == target_id:
+        return bot.reply_to(message, "🚫 Скайнет запрещает накручивать рейтинг самому себе!")
+    if message.reply_to_message.from_user.is_bot:
+        return bot.reply_to(message, "🤖 У программного кода нет социальных прав!")
+        
+    import time
+    now = time.time()
+    vote_key = f"karma_{voter_id}_{target_id}"
+    last_vote = db['settings'].find_one({"_id": vote_key})
+    
+    KARMA_COOLDOWN = 120  # секунд (было 3600)
+    if last_vote and (now - last_vote.get('time', 0) < KARMA_COOLDOWN):
+        left_sec = int(KARMA_COOLDOWN - (now - last_vote['time']))
+        return bot.reply_to(message, f"⏳ Вы уже оценивали этого гражданина! Система примет ваш следующий голос через {left_sec // 60} мин {left_sec % 60} сек.")
+        
+    db['settings'].update_one({"_id": vote_key}, {"$set": {"time": now}}, upsert=True)
+    
+    if vote in ['+', '👍', 'лайк']:
+        paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": 1}}, upsert=True)
+        new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
+        
+        # 🔥 ВОССТАНАВЛИВАЕМ ОБЫЧНЫЙ ТЕГ (ИЛИ ПУСТОТУ), ЕСЛИ КАРМА ВЫШЛА ИЗ МИНУСА 🔥
+        if new_karma == -49:
+            u_info = db['users'].find_one({"_id": target_id}) or {}
+            original_tag = u_info.get("custom_tag", "")
+            try:
+                safe_set_tag(message.chat.id, target_id, original_tag)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        bot.reply_to(message, f"📈 **Социальный Кредит повышен!**\nГражданин [{target_name}](tg://user?id={target_id}) получает +1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
+    else:
+        paid_collection.update_one({"uid": target_id}, {"$inc": {"social_rating": -1}}, upsert=True)
+        new_karma = (paid_collection.find_one({"uid": target_id}) or {}).get("social_rating", 0)
+        
+        # 🔥 ВЕШАЕМ НАСТОЯЩЕЕ СИСТЕМНОЕ КЛЕЙМО В ТЕЛЕГРАМЕ 🔥
+        if new_karma <= -50:
+            bad_title = "Опущенный" if new_karma <= -100 else "Изгой"
+            try:
+                safe_set_tag(message.chat.id, target_id, bad_title)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            
+        bot.reply_to(message, f"📉 **Внимание, нарушение!**\nГражданин [{target_name}](tg://user?id={target_id}) получает -1 к карме.\n_Текущий рейтинг: {new_karma}_", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(('!копилка', 'копилка')))
+def family_piggy_bank(message):
+    uid = message.from_user.id
+    from utils.validators import is_newbie_without_status, NEWBIE_MSG
+    if is_newbie_without_status(uid):
+        return bot.reply_to(message, NEWBIE_MSG)
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    # ⬇ копилкой пользуются супруги и дети семьи (ребёнок: через родителя, который в браке)
+    family_id = _family_bank_id(uid, user_data)
+    
+    if not family_id:
+        return bot.reply_to(message, "🕸 У вас нет Синдиката! Общий счет доступен в браке, а детям - если их родитель состоит в браке.")
+    fam_db = db['family_banks'].find_one({"_id": family_id}) or {"balance": 0}
+    current_bank = fam_db.get("balance", 0)
+    
+    parts = message.text.lower().split()
+    
+    # ПРОСТО "!КОПИЛКА" - Баланс
+    if len(parts) == 1:
+        return bot.reply_to(message, f"💍 **СЕМЕЙНЫЙ ФОНД**\n\nТекущий баланс: **{current_bank} 💎**\n\n_Пополнить:_ `!копилка 100`\n_Снять:_ `!копилка снять 100`", parse_mode="Markdown")
+        
+    # СНЯТИЕ ДЕНЕГ
+    if parts[1] == "снять":
+        if len(parts) < 3 or not parts[2].isdigit():
+            return bot.reply_to(message, "⚠️ Укажите сумму: `!копилка снять 500`")
+            
+        amount = int(parts[2])
+        # ⬇ было: if amount > current_bank + два отдельных update_one
+        taken = db['family_banks'].find_one_and_update(
+            {"_id": family_id, "balance": {"$gte": amount}},
+            {"$inc": {"balance": -amount}}
+        )
+        if not taken:
+            return bot.reply_to(message, f"📉 В копилке нет столько денег! Там всего {current_bank} 💎.")
+        paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": amount}})
+        bot.reply_to(message, f"💸 Вы забрали **{amount} 💎** из семейного фонда!\n_Остаток: {current_bank - amount} 💎_", parse_mode="Markdown")
+        
+    # ПОПОЛНЕНИЕ КОПИЛКИ
+    elif parts[1].isdigit():
+        amount = int(parts[1])
+        if amount < 10:
+            return bot.reply_to(message, "📉 Минимальный вклад: 10 💎")
+            
+        # ⬇ было: precheck + update_one(-amount)
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": amount}},
+            {"$inc": {"bounty_points": -amount}}
+        )
+        if not charged:
+            return bot.reply_to(message, "❌ У вас нет столько Очков на руках!")
+        db['family_banks'].update_one({"_id": family_id}, {"$inc": {"balance": amount}}, upsert=True)
+        bot.reply_to(message, f"🏦 Вы положили **{amount} 💎** в семейный фонд!\n_Всего накоплено: {current_bank + amount} 💎_", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!погасить', 'погасить'])
+def pay_debt_chat(message):
+    uid = message.from_user.id
+    user_db = paid_collection.find_one({"uid": uid}) or {}
+    debt = user_db.get("debt", 0)
+    
+    if debt <= 0:
+        return bot.reply_to(message, "У вас нет активных кредитов. Спите спокойно.")
+        
+    if user_db.get("bounty_points", 0) < debt:
+        return bot.reply_to(message, f"❌ У вас недостаточно Очков! Для погашения кредита требуется **{debt} 💎**.")
+        
+        # ⬇ было: precheck + update_one без условия
+    paid = paid_collection.find_one_and_update(
+        {"uid": uid, "debt": debt, "bounty_points": {"$gte": debt}},
+        {"$inc": {"bounty_points": -debt}, "$unset": {"debt": "", "debt_deadline": "", "debt_notified": ""}}
+    )
+    if not paid:
+        return bot.reply_to(message, "❌ Не удалось погасить кредит. Проверьте баланс и попробуйте ещё раз.")
+    db['skynet_tasks'].insert_one({"uid": uid, "action": "global_unmute", "timestamp": time.time()})
+    
+    bot.reply_to(message, f"✅ **КРЕДИТ ПОГАШЕН!**\n\nВы выплатили МФО **{debt} 💎**.\nДолгов нет, арест со счетов снят, коллекторы отозваны.", parse_mode="Markdown")
+
+# ================= АДМИНСКОЕ: КИБЕР-ПРИСТАВ (ОЧИСТКА БАЗЫ) =================
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() == '!пристав')
+def cyber_bailiff(message):
+    try:
+        from config import ADMIN_CHAT_IDS, OWNER_ID
+        if str(message.from_user.id) not in [str(x) for x in ADMIN_CHAT_IDS] and str(message.from_user.id) != str(OWNER_ID):
+            return bot.reply_to(message, "❌ У вас нет лицензии Судебного Пристава Скайнета.")
+
+        bot.send_message(message.chat.id, "👨‍⚖️ <i>Кибер-Пристав начал проверку архивов МФО...</i>", parse_mode="HTML")
+        
+        # Ищем всех должников
+        debtors = list(paid_collection.find({"debt": {"$gt": 0}}))
+        wiped_count = 0
+        freed_money = 0
+        
+        for d in debtors:
+            uid = d["uid"]
+            debt = d.get("debt", 0)
+            
+            # Проверяем количество сообщений юзера в чатах
+            chat_stat = db['chat_stats'].find_one({"uid": uid})
+            msgs = chat_stat.get("msgs", 0) if chat_stat else 0
+            
+            # Если сообщений меньше 50 — это твинк. Уничтожаем!
+            if msgs < 50:
+                # Полностью удаляем финансовый профиль мошенника
+                paid_collection.delete_one({"uid": uid})
+                
+                # Дополнительно вычищаем его билеты из лотерей, чтобы он не выиграл
+                db['tickets_history'].delete_many({"uid": uid})
+                
+                wiped_count += 1
+                freed_money += debt
+                
+        bot.send_message(
+            message.chat.id, 
+            f"👨‍⚖️ <b>ОТЧЕТ ПРИСТАВА:</b>\n\n"
+            f"🗑 Дела безнадежных должников (твинков) уничтожены: <b>{wiped_count} шт.</b>\n"
+            f"💸 Списано фиктивных долгов: <b>{freed_money} 💎</b>.\n"
+            f"🎟 Аннулированы все их лотерейные билеты.\n\n"
+            f"<i>Экономика очищена от мусора.</i>", 
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        bot.reply_to(message, f"Системный сбой: {e}")
+
+# ================= АДМИНСКОЕ: СПИСОК ДОЛЖНИКОВ =================
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() == '!должники')
+def show_debtors(message):
+    try:
+        from config import ADMIN_CHAT_IDS, OWNER_ID
+        # Бронебойная проверка админов
+        if str(message.from_user.id) not in [str(x) for x in ADMIN_CHAT_IDS] and str(message.from_user.id) != str(OWNER_ID):
+            return bot.reply_to(message, "❌ У вас нет доступа к базе данных МФО.")
+
+        debtors = list(paid_collection.find({"debt": {"$gt": 0}}).sort("debt", -1))
+        
+        if not debtors:
+            return bot.reply_to(message, "📜 Должников нет. МФО работает в плюс, все кристально чисты.")
+
+        text = "🚨 <b>СПИСОК ДОЛЖНИКОВ МФО</b> 🚨\n\n"
+        import time, html
+        now = time.time()
+        
+        for i, d in enumerate(debtors, 1):
+            uid = d['uid']
+            debt = d.get('debt', 0)
+            deadline = d.get('debt_deadline', 0)
+            
+            u_info = db['users'].find_one({"_id": uid}) or {}
+            c_info = db['chat_stats'].find_one({"uid": uid}) or {}
+            name = u_info.get("first_name") or c_info.get("name") or f"ID {uid}"
+            safe_name = html.escape(name) # Спасает от краша Markdown!
+
+            if deadline > now:
+                left_hrs = int((deadline - now) / 3600)
+                status = f"🟢 До коллекторов: {left_hrs} ч."
+            else:
+                status = "🔴 ПРОСРОЧКА (В МУТЕ)"
+                
+            text += f"{i}. <a href='tg://user?id={uid}'>{safe_name}</a> — <b>{debt} 💎</b>\n└ {status}\n\n"
+
+        bot.reply_to(message, text, parse_mode="HTML")
+    except Exception as e:
+        bot.reply_to(message, f"Системный сбой: {e}")
+
+# ================= КРИМИНАЛ: ПОБЕГ ИЗ ТЮРЬМЫ =================
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower().startswith(('!побег', 'побег')))
+def prison_break(message):
+    def _say(*a, **k):
+        m = bot.send_message(*a, **k)
+        try:
+            from core.scheduler import schedule_message_deletion
+            schedule_message_deletion(m.chat.id, m.message_id, 330, bot)   # промежуточные сообщения игры тоже чистим
+        except Exception: pass
+        return m
+    try:
+        parts = message.text.strip().split()
+        if len(parts) < 2:
+            return bot.reply_to(message, "⚠️ Укажите цель для спасения: <code>!побег @username</code>", parse_mode="HTML")
+
+        target_id = resolve_target_uid(parts[1])
+        if not target_id:
+            return bot.reply_to(message, "❌ Заключенный не найден!")
+
+        uid = message.from_user.id
+        if target_id == uid:
+            return bot.reply_to(message, "🤡 Вытащить самого себя за волосы из тюрьмы мог только барон Мюнхгаузен. Ждите помощи от друзей!")
+
+        # спасать можно только игровую тюрьму/арест/карцер: админские муты и баны побегом не снимаются
+        from utils.validators import escape_check
+        _ok, _why = escape_check(target_id)
+        if not _ok:
+            return bot.reply_to(message, _why)
+
+        import html
+        safe_name = html.escape(message.from_user.first_name)
+        safe_target = html.escape(parts[1])
+        
+        _say(message.chat.id, f"🚁 <a href='tg://user?id={uid}'>{safe_name}</a> подгоняет вертолет к стенам изолятора и кидает трос для {safe_target}...", parse_mode="HTML")
+        
+        import time, random
+        time.sleep(3)
+
+        if random.randint(1, 100) <= 40:
+            # УСПЕХ: Снимаем мут и гуантанамо
+            db['skynet_tasks'].insert_one({"uid": target_id, "action": "global_unmute", "source": "escape", "timestamp": time.time()})
+            paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": "", "game_mute_until": "", "game_mute_reason": ""}})
+            paid_collection.update_one({"uid": uid}, {"$inc": {"social_rating": 2}})
+            _say(message.chat.id, f"✅ <b>ПОБЕГ УДАЛСЯ!</b>\nОхрана не успела среагировать. {safe_target} на свободе!\n\n<i>Спасатель получает +2 к Карме за преданность братве.</i>", parse_mode="HTML")
+        else:
+            # ПРОВАЛ: Полиция вяжет спасателя
+            _say(message.chat.id, f"🚨 <b>ПРОВАЛ! СНАЙПЕРЫ НА ВЫШКАХ!</b>\nВертолет сбит из РПГ. <a href='tg://user?id={uid}'>{safe_name}</a> арестован за пособничество и отправляется в карцер на 2 часа!", parse_mode="HTML")
+            mute_user(message.chat.id, uid, 7200, "Провал попытки побега из тюрьмы")
+    except Exception as e:
+        bot.reply_to(message, f"Системный сбой: {e}")
+
+# ================= СМЕРТЕЛЬНЫЙ ИВЕНТ: ИГРА В КАЛЬМАРА =================
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!кальмар', 'кальмар'])
+def start_squid_game(message):
+    try:
+        chat_id = message.chat.id
+        uid = message.from_user.id
+        import html
+        user_name = html.escape(message.from_user.first_name)
+
+        game = db['active_squid_games'].find_one({"_id": chat_id})
+        if game:
+            if game['status'] == 'playing':
+                return bot.reply_to(message, "🦑 Игра уже идет! Ждите окончания, чтобы собрать трупы.")
+            elif len(game['players']) >= 10:
+                return bot.reply_to(message, "🦑 Мест нет! Набрано 10/10. Игра вот-вот начнется.")
+            else:
+                return bot.reply_to(message, f"🦑 Набор уже открыт! Пишите <code>!играю</code> (Собрано {len(game['players'])}/10)", parse_mode="HTML")
+
+                # ⬇ было: precheck + update_one(-1000)
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 1000}},
+            {"$inc": {"bounty_points": -1000}}
+        )
+        if not charged:
+            return bot.reply_to(message, "💸 Участнику нужно 1000 💎 для входа в Игру в Кальмара!")
+
+        import time
+        try:
+            db['active_squid_games'].insert_one({
+                "_id": chat_id,
+                "status": "recruiting",
+                "players": [{"id": uid, "name": message.from_user.first_name}], # Сохраняем сырое имя
+                "start_time": time.time()
+            })
+        except Exception:
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}})   # возврат ставки
+            return bot.reply_to(message, "🦑 Игра уже идёт или произошёл сбой. Ставка возвращена.")
+
+        bot.send_message(message.chat.id, f"🦑 <b>ИГРА В КАЛЬМАРА НАЧАЛАСЬ!</b> 🦑\n\n<a href='tg://user?id={uid}'>{user_name}</a> открыл(а) набор смертников.\nВход: <b>1000 💎</b>.\nПризовой фонд: <b>10 000 💎</b> (Выживший забирает всё).\n\nНапишите <code>!играю</code>, чтобы вступить. Нужно ровно 10 человек. Кто готов рискнуть голосом?", parse_mode="HTML")
+    except Exception as e:
+        bot.reply_to(message, f"Системный сбой: {e}")
+
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!играю', 'играю'])
+def join_squid_game(message):
+    try:
+        chat_id = message.chat.id
+        uid = message.from_user.id
+        import html
+        user_name = html.escape(message.from_user.first_name)
+
+        game = db['active_squid_games'].find_one({"_id": chat_id, "status": "recruiting"})
+        if not game: return
+
+        if any(p['id'] == uid for p in game['players']):
+            return bot.reply_to(message, "🦑 Ты уже в игре. Назад дороги нет.")
+
+        charged = paid_collection.find_one_and_update(
+            {"uid": uid, "bounty_points": {"$gte": 1000}},
+            {"$inc": {"bounty_points": -1000}}
+        )
+        if not charged:
+            return bot.reply_to(message, "💸 У тебя нет 1000 💎. Ты не подходишь для Игры.")
+        joined = db['active_squid_games'].update_one(
+            {"_id": chat_id, "status": "recruiting", "players.id": {"$ne": uid}, "players.9": {"$exists": False}},
+            {"$push": {"players": {"id": uid, "name": message.from_user.first_name}}}
+        )
+        if joined.modified_count == 0:   # дубль, мест нет или набор закрыт
+            paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": 1000}})
+            return bot.reply_to(message, "🦑 Ты уже в игре или набор закрыт.")
+
+        current_players = len(game['players']) + 1
+
+        if current_players < 10:
+            bot.send_message(chat_id, f"👤 Игрок <a href='tg://user?id={uid}'>{user_name}</a> подписал контракт!\nСобрано: {current_players}/10", parse_mode="HTML")
+        else:
+            bot.send_message(chat_id, "🦑 <b>ИГРОКИ СОБРАНЫ! ИГРА НАЧИНАЕТСЯ!</b>\n\nПравила просты: каждые 30 секунд Скайнет будет случайным образом убивать одного участника.\nПобедитель только один.", parse_mode="HTML")
+            db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"status": "playing"}})
+            
+            import threading
+            threading.Thread(target=run_squid_game, args=(chat_id,), daemon=True).start()
+    except Exception as e:
+        bot.reply_to(message, f"Системный сбой: {e}")
+
+def run_squid_game(chat_id):
+    import time, random, html
+    from core.bot import bot
+    time.sleep(5)
+
+    game = db['active_squid_games'].find_one({"_id": chat_id})
+    if not game: return
+    
+    players = game['players']
+    pot = len(players) * 1000
+
+    while len(players) > 1:
+        time.sleep(30) 
+        loser = random.choice(players)
+        players.remove(loser)
+        
+        db['active_squid_games'].update_one({"_id": chat_id}, {"$set": {"players": players}})
+        mute_user(chat_id, loser['id'], 10800, "Устранен в Игре в Кальмара")
+
+        # 👇 ВОТ ЭТА СТРОКА ВЕРНЕТ ШОУ В ЧАТ 👇
+        try:
+            bot.send_message(chat_id, f"🔫 <b>Игрок <a href='tg://user?id={loser['id']}'>{html.escape(loser['name'])}</a> устранен.</b> (Мут на 3 часа).\nОсталось игроков: {len(players)}", parse_mode="HTML")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+    winner = players[0]
+    paid_collection.update_one({"uid": winner['id']}, {"$inc": {"bounty_points": pot}})
+    db['active_squid_games'].delete_one({"_id": chat_id})
+
+    try:
+        from core.scheduler import schedule_message_deletion
+        sent_msg = bot.send_message(chat_id, f"🏆 <b>ИГРА В КАЛЬМАРА ЗАВЕРШЕНА!</b> 🏆\n\nВыживший: <a href='tg://user?id={winner['id']}'>{html.escape(winner['name'])}</a>!\nОн забирает весь куш: <b>{pot} 💎</b>!\n\n<i>Поздравляем. Остальные отправлены в морг.</i>", parse_mode="HTML")
+        schedule_message_deletion(chat_id, sent_msg.message_id, 600, bot)
+    except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+
+# ================= КРИМИНАЛ: ОГРАБЛЕНИЕ КАЗИНО =================
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!ограбление', 'ограбление'])
+def start_heist(message):
+    def _say(*a, **k):
+        m = bot.send_message(*a, **k)
+        try:
+            from core.scheduler import schedule_message_deletion
+            schedule_message_deletion(m.chat.id, m.message_id, 330, bot)   # промежуточные сообщения игры тоже чистим
+        except Exception: pass
+        return m
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    import time
+    
+    # Проверяем, не идет ли уже сбор банды в этом чате
+    heist = db['active_heists'].find_one({"_id": chat_id})
+    if heist:
+        if time.time() - heist['start_time'] > 300: # 5 минут на сбор
+            db['active_heists'].delete_one({"_id": chat_id})
+        else:
+            left = 3 - len(heist['members'])
+            return bot.reply_to(message, f"🔫 Сбор банды уже идет! Не хватает еще **{left}** чел.\nПишите `!в деле`, чтобы присоединиться.", parse_mode="Markdown")
+            
+    # Запускаем новый сбор
+    db['active_heists'].insert_one({
+        "_id": chat_id,
+        "members": [{"id": uid, "name": message.from_user.first_name}],
+        "start_time": time.time()
+    })
+    
+    _say(message.chat.id, f"🏴‍☠️ **ПЛАНИРУЕТСЯ ОГРАБЛЕНИЕ ФИНАНСОВОГО СЕЙФА!**\n\n[{message.from_user.first_name}](tg://user?id={uid}) собирает банду.\nДля налета нужно ровно **3 человека**. На сбор есть 5 минут!\n\n_Награда: 20% от всех рублей в Красном Сейфе._\n_Риск: Мут на 2 часа и штраф 500 💎 каждому._\n\nПишите `!в деле`, если готовы рискнуть!", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!в деле', 'в деле'])
+def join_heist(message):
+    def _say(*a, **k):
+        m = bot.send_message(*a, **k)
+        try:
+            from core.scheduler import schedule_message_deletion
+            schedule_message_deletion(m.chat.id, m.message_id, 330, bot)   # промежуточные сообщения игры тоже чистим
+        except Exception: pass
+        return m
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    user_name = message.from_user.first_name
+    import time, random
+    
+    heist = db['active_heists'].find_one({"_id": chat_id})
+    if not heist:
+        return # Нет активного сбора
+        
+    if time.time() - heist['start_time'] > 300:
+        db['active_heists'].delete_one({"_id": chat_id})
+        return bot.reply_to(message, "⏳ Время вышло. Полиция оцепила район, банда не собралась.")
+        
+    if any(m['id'] == uid for m in heist['members']):
+        return bot.reply_to(message, "🔫 Ты и так уже в банде, держи пушку крепче!")
+        
+    # Добавляем юзера в банду (атомарно: не дважды и не больше 3 человек)
+    from pymongo import ReturnDocument
+    heist = db['active_heists'].find_one_and_update(
+        {"_id": chat_id, "members.id": {"$ne": uid}, "members.2": {"$exists": False}},
+        {"$push": {"members": {"id": uid, "name": user_name}}},
+        return_document=ReturnDocument.AFTER
+    )
+    if not heist:
+        return bot.reply_to(message, "🔫 Ты уже в банде, либо банда уже в сборе!")
+    
+    if len(heist['members']) < 3:
+        left = 3 - len(heist['members'])
+        return _say(message.chat.id, f"🤝 [{user_name}](tg://user?id={uid}) надел(а) маску и присоединился(лась) к банде!\nОсталось найти еще **{left}** чел.", parse_mode="Markdown")
+        
+    # === БАНДА СОБРАНА. НАЧИНАЕМ НАЛЕТ! ===
+    if db['active_heists'].delete_one({"_id": chat_id}).deleted_count == 0:
+        return   # налёт уже запущен параллельным запросом
+    _say(message.chat.id, "🚐 **БАНДА В СБОРЕ! Налет начался...**\n_Стрельба, взломы серверов, визги сирен..._", parse_mode="Markdown")
+    time.sleep(3)
+    
+    # 30% на успех
+    success = random.randint(1, 100) <= 30
+    names_str = ", ".join([f"[{m['name']}](tg://user?id={m['id']})" for m in heist['members']])
+    
+    if success:
+        # УСПЕХ! Взламываем Красный Сейф
+        red_safe = db['safes_state'].find_one({"_id": "safe_red"}) or {"balance": 500}
+        total_loot = int(red_safe.get("balance", 0) * 0.20)
+        if total_loot < 3: total_loot = 300
+        
+        # Списываем из сейфа атомарно: нельзя унести больше, чем там лежит (раньше сейф уходил в минус)
+        taken_safe = db['safes_state'].find_one_and_update(
+            {"_id": "safe_red", "balance": {"$gte": total_loot}},
+            {"$inc": {"balance": -total_loot}}
+        )
+        if not taken_safe: total_loot = 0
+        share = total_loot // 3
+        
+        # Раздаем рубли (кэшбэк) грабителям
+        for m in heist['members']:
+            if share <= 0: break
+            paid_collection.update_one({"uid": m['id']}, {"$inc": {"cashback_balance": share}})
+            db['ruble_ledger'].insert_one({"uid": m['id'], "amount": share, "reason": "Успешное ограбление", "timestamp": time.time()})
+            
+        from core.scheduler import schedule_message_deletion
+        sent_msg = bot.send_message(message.chat.id, f"💰 **ОГРАБЛЕНИЕ УДАЛОСЬ!**\n\nСигнализация отключена, Сейф вскрыт болгаркой!\nБанда вынесла **{total_loot} ₽** наличными!\n\nГерои дня: {names_str}\n_Каждый получает свою долю: {share} ₽._", parse_mode="Markdown")
+        schedule_message_deletion(message.chat.id, sent_msg.message_id, 300, bot)
+        
+    else:
+        # ПРОВАЛ! Полиция вяжет всех.
+        for m in heist['members']:
+            take_points_capped(m['id'], 500)   # было: update_one(-500)
+            mute_user(chat_id, m['id'], 7200, "Пойман полицией на ограблении")
+            
+        from core.scheduler import schedule_message_deletion
+        sent_msg = bot.send_message(message.chat.id, f"🚨 **ПРОВАЛ! СПЕЦНАЗ НА МЕСТЕ!**\n\nКто-то нажал тревожную кнопку. Полиция повязала всю банду прямо в хранилище!\n\nАрестованы: {names_str}\n\n_Суд был скорым: конфискация 500 💎 у каждого и 2 часа тюрьмы (Мут)._", parse_mode="Markdown")
+        schedule_message_deletion(message.chat.id, sent_msg.message_id, 300, bot)
+
+
+# ==============================================================================
+@bot.message_handler(commands=['spawn_lot'])
+def spawn_auction_lot(message):
+    from config import STAFF_GROUP_ID, OWNER_ID
+    if str(message.chat.id) != str(STAFF_GROUP_ID) and message.from_user.id != OWNER_ID: return
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "Формат: /spawn_lot [thanos|homewrecker|raider]")
+        return
+        
+    lot_type = parts[1].strip()
+    import time
+    end_time = int(time.time()) + (24 * 3600) # Аукцион на 24 часа
+    
+    if lot_type == "thanos": name, desc, icon = "Перчатка Таноса", "Замутить половину чата на 15 мин (!щелчок).", "🧤"
+    elif lot_type == "homewrecker": name, desc, icon = "Разлучник", "Расторгнуть чужой брак (!развести @user).", "💔"
+    elif lot_type == "raider": name, desc, icon = "Рейдерский Захват", "Украсть урожай с чужой фермы (!рейд @user).", "🧲"
+    elif lot_type == "gods_voice": name, desc, icon = "Глас Бога", "Сообщение во все чаты сети (!глас текст).", "📢"
+    elif lot_type == "guantanamo": name, desc, icon = "Ордер Гуантанамо", "Неснимаемый мут на 24ч (!гуантанамо @user).", "🚷"
+    elif lot_type == "casino_owner": name, desc, icon = "Владелец Казино", "3 дня: 10% с рулетки и дуэлей идут вам.", "🎰"
+    elif lot_type == "offshore": name, desc, icon = "Офшорный Счет", "Неделя без комиссий на Черном Рынке.", "🏦"
+    elif lot_type == "master_key": name, desc, icon = "Мастер-Ключ", "100% вскрытие сейфа (!вскрыть синий/красный).", "🗝"
+    elif lot_type == "golden_frame": name, desc, icon = "Золотая Рамка", "Элитный статус в профиле навсегда.", "⚜️"
+    elif lot_type == "personal_npc": name, desc, icon = "Личный NPC", "Создать свою RP-команду (!создать_нпс).", "🤖"
+    else:
+        bot.reply_to(message, "Неизвестный тип лота.")
+        return
+        
+    db['auction_lots'].insert_one({
+        "type_id": lot_type,
+        "name": name,
+        "desc": desc,
+        "icon": icon,
+        "current_bid": 1000, # Стартовая цена
+        "leader_uid": None,
+        "end_time": end_time,
+        "status": "active"
+    })
+    bot.reply_to(message, f"✅ Лот «{name}» выставлен на Теневой Аукцион на 24 часа! Стартовая цена: 1000 💎")
+
+# 4. НЕВИДИМЫЙ СБОРЩИК АКТИВНОСТИ И СОЦИАЛЬНЫЙ РЕЙТИНГ
+@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
+def track_global_activity(message):
+    if message.text and message.text.startswith(('!', '/')): return
+    
+    from core.scheduler import schedule_message_deletion
+    uid = message.from_user.id
+    user_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = user_data.get("social_rating", 0)
+    import time, random
+
+    # 💀 1. ЦИФРОВОЙ ГУЛАГ (Карма <= -100)
+    if karma <= -100:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        mute_user(message.chat.id, uid, 172800, "Цифровой ГУЛАГ (Карма <= -100)")
+        paid_collection.update_one({"uid": uid}, {"$set": {"social_rating": -50}}) # Сброс до -50
+        try:
+            sent_msg = bot.send_message(message.chat.id, f"🚨 <b>ВРАГ НАРОДА УСТРАНЕН!</b>\nГражданин {message.from_user.first_name} лишен голоса на 48 часов за достижение Кармы -100. Рейтинг принудительно сброшен до -50.", parse_mode="HTML")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+
+    # 👻 2. ТЕНЕВОЙ БАН (Карма <= -90)
+    if karma <= -90 and random.randint(1, 100) <= 25:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            bot.send_message(message.chat.id, f"🗑 <i>Пакет данных утерян. Социальный рейтинг отправителя слишком низок для стабильной маршрутизации.</i>", parse_mode="HTML")
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+
+    # 💸 3. НАЛОГ НА СЛОВА (Карма <= -75)
+    if karma <= -75:
+        pts = user_data.get("bounty_points", 0)
+        if pts < 5:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            mute_user(message.chat.id, uid, 43200, "Налог на слова: исчерпан баланс")
+            try:
+                sent_msg = bot.send_message(message.chat.id, f"🔇 <b>БАЛАНС СЛОВ ИСЧЕРПАН.</b>\nУ гражданина нет 5 💎 на оплату сообщения. Выдан мут на 12 часов. Молчание — золото.", parse_mode="HTML")
+                schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
+            except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+            return
+        else:
+            taken = take_points_capped(uid, 5)   # было: update_one(-5) и безусловные +5 в сейф
+            if taken:
+                db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": taken}})
+
+    # 📵 4. ПЕЙДЖЕР-РЕЖИМ (Карма <= -50, запрет медиа)
+    if karma <= -50 and message.content_type != 'text':
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            sent_msg = bot.send_message(message.chat.id, f"📵 <b>ПЕЙДЖЕР-РЕЖИМ!</b>\nГражданину {message.from_user.first_name} запрещено отправлять фото, стикеры и войсы (Карма ниже -50). Только текст!", parse_mode="HTML")
+            schedule_message_deletion(message.chat.id, sent_msg.message_id, 180, bot)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        return
+
+    # Стандартный сбор статистики (если прошел цензуру)
+    set_fields = {"name": message.from_user.first_name}
+    if message.from_user.username:
+        set_fields["username"] = message.from_user.username.lower()
+        db['users'].update_one({"_id": uid}, {"$set": {"username": message.from_user.username.lower()}}, upsert=True)
+        
+    db['chat_stats'].update_one({"chat_id": message.chat.id, "uid": uid}, {"$inc": {"msgs": 1}, "$set": set_fields}, upsert=True)
+
+    # Трекер заданий ЕКБ
+    import datetime
+    tz_ekb = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(tz_ekb).strftime("%Y-%m-%d")
+    db['tasks_progress'].update_one({"uid": uid, "date": today_str}, {"$inc": {"messages": 1}}, upsert=True)
+
+# === ДАТЧИК ПУЛЬСА СЕКРЕТАРЯ ===
+def heartbeat_sec():
+    from database.mongo import db
+    while True:
+        try:
+            db['settings'].update_one({"_id": "bot_status"}, {"$set": {"sec_last_seen": time.time()}}, upsert=True)
+        except Exception as e: logger.debug(f"Игнор ошибки: {e}")
+        time.sleep(60)
+
+threading.Thread(target=heartbeat_sec, daemon=True).start()
+
+def cleanup_daemon():
+    from telebot.apihelper import ApiTelegramException
+    col = db['sec_cleanup']
+    try: col.create_index("delete_at")
+    except Exception: pass
+    while True:
+        try:
+            for task in col.find({"delete_at": {"$lte": time.time()}}).limit(200):
+                try:
+                    bot.delete_message(task["chat_id"], task["msg_id"])
+                    col.delete_one({"_id": task["_id"]})
+                except ApiTelegramException as e:
+                    if e.error_code == 429:
+                        time.sleep(5); continue
+                    tries = task.get("tries", 0) + 1
+                    if "not found" in str(e).lower() or tries >= 5:
+                        print(f"🧹 Не удалил {task['chat_id']}/{task['msg_id']}: {e}")
+                        col.delete_one({"_id": task["_id"]})
+                    else:
+                        col.update_one({"_id": task["_id"]},
+                                       {"$set": {"tries": tries, "delete_at": time.time() + 300}})
+                except Exception as e:
+                    print(f"🧹 Сбой удаления: {e}")
+                time.sleep(0.05)
+        except Exception as e:
+            print(f"🧹 Ошибка уборщика: {e}")
+        time.sleep(20)
+
+threading.Thread(target=cleanup_daemon, daemon=True).start()
+
+def pay_casino_owner(amount):
+    """Пассивный доход Владельца Казино (10% от слива)"""
+    import time
+    owner = paid_collection.find_one({"casino_owner_until": {"$gt": int(time.time())}})
+    if owner:
+        paid_collection.update_one({"uid": owner["uid"]}, {"$inc": {"bounty_points": amount}})
+
+if not is_setup_done:
+    threading.Thread(target=setup, daemon=True).start()
+    is_setup_done = True
+# ===============================
+
+if __name__ == '__main__':
+    # Получаем порт напрямую от серверов Render (если его нет - берем 5000 для локальных тестов)
+    render_port = int(os.environ.get("PORT", 5000))
+    
+    # Запускаем Flask строго на порту Render'а
+    app.run(host="0.0.0.0", port=render_port)
