@@ -2336,7 +2336,7 @@ _PTS_LABELS = {
     "main.api_inventory_action": "Инвентарь/Взлом", "main.api_farm_action": "Ферма (грядки)",
     "main.api_potato_action": "Картофельное поле", "main.handle_user_airdrop": "Мешок: бросили",
     "main.handle_claim_userdrop": "Мешок: забрали", "main.p2p_transfer": "Переводы игрокам",
-    "main.handle_marriage_response": "Свадьба", "main.join_squid_game": "Игра в кальмара",
+    "main.handle_marriage_response": "Свадьба", "main.resolve_and_sync_marriage_info": "Годовщина свадьбы", "main.join_squid_game": "Игра в кальмара",
     "main.join_heist": "Ограбление", "main._auto_grant_achievements": "Награда за достижение",
     "scheduler.refund_expired_user_airdrops": "Возврат мешков", "scheduler.stray_cat_tax": "Кот-налог",
 }

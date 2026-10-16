@@ -401,6 +401,77 @@
             box-shadow: 0 0 18px rgba(56, 189, 248, 0.2);
         }
 
+    
+        /* ================= 🔥 ГАЛАКТИЧЕСКИЕ АУРЫ И КРИСТАЛЛЫ АВТОРИТЕТА ================= */
+        @keyframes gxFlamePulse {
+            0%, 100% { transform: scale(1) translateY(0); filter: brightness(1); }
+            50%      { transform: scale(1.06) translateY(-2px); filter: brightness(1.18); }
+        }
+        .gx-gems-bar {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+            min-height: 22px; margin-top: 6px;
+        }
+        .gx-gem-ic {
+            width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.65));
+            transition: transform 0.2s;
+        }
+        .gx-rank-card {
+            position: relative; overflow: hidden; border-radius: 1.35rem; padding: 1.1rem;
+            background: #181c26; border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+        }
+        .gx-rank-card.unlocked {
+            border-color: rgba(74, 222, 128, 0.55);
+            box-shadow: 0 0 24px rgba(34, 197, 94, 0.14);
+        }
+        .gx-rank-card.current {
+            border-color: rgba(56, 189, 248, 0.85);
+            box-shadow: 0 0 28px rgba(56, 189, 248, 0.28);
+        }
+        .gx-aura-preview {
+            position: relative; width: 88px; height: 88px; margin: 0 auto 0.6rem;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .gx-aura-flame {
+            position: absolute; inset: -6px; border-radius: 50%;
+            background: radial-gradient(circle, var(--aura-c1, #38bdf8) 0%, var(--aura-c2, transparent) 72%);
+            filter: blur(6px); opacity: 0.85;
+            animation: gxFlamePulse 2.8s ease-in-out infinite;
+        }
+        .gx-aura-ring {
+            position: absolute; inset: 2px; border-radius: 50%;
+            border: 2.5px dashed var(--aura-c1, #38bdf8);
+            box-shadow: 0 0 16px var(--aura-c1, #38bdf8), inset 0 0 12px var(--aura-c1, #38bdf8);
+            animation: kwBrokenSpin 16s linear infinite;
+        }
+        .gx-aura-avatar {
+            position: relative; z-index: 2; width: 66px; height: 66px; border-radius: 50%;
+            background: radial-gradient(circle at 50% 30%, #3b3355, #14121d);
+            border: 2px solid rgba(255,255,255,0.25);
+            display: flex; align-items: center; justify-content: center; font-size: 2rem;
+        }
+        .kw-card[data-world="archon"] {
+            background: radial-gradient(125% 120% at 22% 22%, rgba(168, 85, 247, 0.28) 0%, rgba(28, 17, 45, 0.95) 58%, #110c1c 100%);
+            border-color: rgba(192, 132, 252, 0.65);
+            box-shadow: 0 0 36px rgba(168, 85, 247, 0.26);
+        }
+        .kw-card[data-world="almighty"] {
+            background: radial-gradient(125% 120% at 22% 22%, rgba(249, 115, 22, 0.28) 0%, rgba(43, 20, 14, 0.95) 58%, #170d0a 100%);
+            border-color: rgba(251, 146, 60, 0.65);
+            box-shadow: 0 0 36px rgba(249, 115, 22, 0.28);
+        }
+        .kw-card[data-world="immortal"] {
+            background: radial-gradient(125% 120% at 22% 22%, rgba(45, 212, 191, 0.30) 0%, rgba(13, 38, 38, 0.96) 58%, #091718 100%);
+            border-color: rgba(94, 234, 212, 0.7);
+            box-shadow: 0 0 40px rgba(20, 184, 166, 0.3);
+        }
+        .kw-card[data-world="supreme"] {
+            background: radial-gradient(125% 120% at 22% 22%, rgba(236, 72, 153, 0.28) 0%, rgba(88, 28, 135, 0.45) 45%, #120b1d 100%);
+            border-color: rgba(244, 114, 182, 0.75);
+            box-shadow: 0 0 42px rgba(217, 70, 239, 0.32), inset 0 0 24px rgba(250, 204, 21, 0.12);
+        }
+
     </style>
 </head>
 <body class="p-4">
@@ -431,6 +502,7 @@
                             <div id="kwTierKicker" class="kw-kicker text-sky-400">ПРАВЕДНИК</div>
                             <h1 id="userName" class="kw-name truncate">Скайнет</h1>
                             <p id="userId" class="text-xs text-gray-400 mt-0.5">ID ...</p>
+                            <div id="kwGemsBar" onclick="openKarmaRanksModal()" class="gx-gems-bar cursor-pointer active:scale-95 transition-transform"></div>
                             <span id="karmaBadge" class="hidden">Карма: 0</span>
                         </div>
                         <button id="adminNavBtn" onclick="switchTab('admin', this)" class="hidden bg-red-900/30 text-red-400 border border-red-500/50 px-3 py-1.5 rounded-xl text-xs font-black shadow-md active:scale-95 transition-transform shrink-0 items-center gap-1">
@@ -445,15 +517,18 @@
                     <div id="karmaPointer" class="kw-pointer" style="left: 50%"></div>
                 </div>
                 <div class="flex justify-between items-center text-[11px] text-gray-400 mt-1.5">
-                    <span>−100</span>
+                    <span id="kwScaleMin">−100</span>
                     <span id="karmaStatusText" class="text-center font-medium">
                         <b class="text-sky-400">Карма 0</b> · нейтралитет
                     </span>
-                    <span>+100</span>
+                    <span id="kwScaleMax">+100</span>
                 </div>
             </div>
 
-            <div id="medalsContainer" class="flex flex-wrap gap-1.5 mt-2 relative z-10 min-h-[31px]"></div>
+            <div class="flex justify-between items-center gap-2 mt-2 pt-2 border-t border-white/10 relative z-10">
+                <div id="medalsContainer" class="flex flex-wrap gap-1.5 min-h-[31px] flex-1"></div>
+                <button onclick="openKarmaRanksModal()" class="shrink-0 text-[10px] font-extrabold text-sky-300 bg-sky-500/15 border border-sky-400/40 px-2.5 py-1.5 rounded-xl active:scale-95 whitespace-nowrap">⚡ Ауры и звания ›</button>
+            </div>
         </div>
 
         <div class="py-3 mb-5">
@@ -1487,6 +1562,11 @@
                 </div>
             </div>
 
+            <div class="bg-black/45 p-2.5 rounded-2xl border border-yellow-500/30 mb-2.5 text-center">
+                <div class="text-[9px] text-yellow-400/80 uppercase font-bold">Текущая годовщина</div>
+                <div id="mcAnniversary" class="font-black text-sm text-white mt-0.5">🌿 Зелёная свадьба</div>
+                <div id="mcNextAnniv" class="text-[10px] text-gray-400 mt-0.5"></div>
+            </div>
             <div class="grid grid-cols-2 gap-2 mb-4 text-center">
                 <div class="bg-black/40 p-2 rounded-xl border border-white/10">
                     <div class="text-[9px] text-gray-400 uppercase">Дата регистрации</div>
@@ -1514,6 +1594,28 @@
                 Положить в нагрудный карман
             </button>
         </div>
+    </div>
+
+        <!-- 9. ПОЛНОЭКРАННОЕ ОКНО «АУРЫ, ЗВЁЗДЫ, ЗВАНИЯ» (КАК В ГАЛАКТИКЕ) -->
+    <div id="karmaRanksModal" class="hidden fixed inset-0 bg-[#11131a] z-[680] flex flex-col p-4 overflow-hidden">
+        <div class="flex justify-between items-center pb-3 border-b border-white/10 shrink-0">
+            <button onclick="document.getElementById('karmaRanksModal').classList.add('hidden')" class="text-gray-300 hover:text-white text-2xl px-2 active:scale-90">←</button>
+            <h2 class="font-black text-lg text-white">Ауры, звёзды, звания</h2>
+            <button onclick="document.getElementById('karmaFormulaBox').classList.toggle('hidden')" class="text-[11px] font-bold text-sky-400 bg-sky-500/10 border border-sky-400/30 px-2.5 py-1 rounded-full active:scale-95">
+                Как считается ⓘ
+            </button>
+        </div>
+
+        <div id="karmaFormulaBox" class="hidden surface rounded-2xl p-3.5 my-2.5 border border-sky-500/40 text-xs shrink-0 max-h-60 overflow-y-auto custom-scrollbar">
+            <div class="flex justify-between items-center mb-2">
+                <span class="font-extrabold text-sky-300 uppercase tracking-wider text-[11px]">💎 Таблица слияния кристаллов</span>
+                <button onclick="document.getElementById('karmaFormulaBox').classList.add('hidden')" class="text-gray-400 text-sm">✕</button>
+            </div>
+            <p class="text-[11px] text-gray-300 mb-2">Каждые очки Кармы складываются в звёзды, а звёзды автоматически сливаются в драгоценные кристаллы. Все бонусы званий суммируются с Кактусом, Каштаном, Рододендроном и Сыновьями!</p>
+            <div id="karmaFormulaRows" class="space-y-1.5 text-[11px]"></div>
+        </div>
+
+        <div id="karmaRanksList" class="flex-1 overflow-y-auto space-y-3 py-3 pr-1 custom-scrollbar"></div>
     </div>
 
     <!-- ================= НИЖНЕЕ МЕНЮ НАВИГАЦИИ ================= -->
@@ -1731,9 +1833,152 @@
             switchTab('market', btn);
         }
 
+                // ================= 💎 ГАЛАКТИЧЕСКАЯ СИСТЕМА КРИСТАЛЛОВ И 16 ЗВАНИЙ =================
+        function gxGemSvg(kind) {
+            const palettes = {
+                b_star: ['#fb923c', '#9a3412', 'star'],
+                s_star: ['#e2e8f0', '#64748b', 'star'],
+                g_star: ['#fde047', '#ca8a04', 'star'],
+                ruby:   ['#f87171', '#991b1b', 'gem'],
+                sapph:  ['#60a5fa', '#1e40af', 'gem'],
+                emer:   ['#4ade80', '#166534', 'gem'],
+                cyan:   ['#22d3ee', '#155e75', 'gem'],
+                ameth:  ['#c084fc', '#581c87', 'gem'],
+                topaz:  ['#facc15', '#854d0e', 'gem'],
+                black:  ['#52525b', '#09090b', 'gem'],
+                brill:  ['#ffffff', '#94a3b8', 'gem']
+            };
+            const [c1, c2, shape] = palettes[kind] || palettes.g_star;
+            if (shape === 'star') {
+                return `<span class="gx-gem-ic"><svg viewBox="0 0 24 24" class="w-4 h-4"><polygon points="12,2 15,9 22,9.5 16.5,14.5 18.2,22 12,18 5.8,22 7.5,14.5 2,9.5 9,9" fill="${c1}" stroke="${c2}" stroke-width="1.5"/></svg></span>`;
+            }
+            return `<span class="gx-gem-ic"><svg viewBox="0 0 24 24" class="w-4 h-4"><polygon points="6,3 18,3 22,9 12,21 2,9" fill="${c1}" stroke="${c2}" stroke-width="1.4"/><polyline points="2,9 22,9" stroke="${c2}" stroke-width="1" opacity="0.7"/><polyline points="6,3 12,9 18,3" fill="none" stroke="#fff" stroke-width="0.9" opacity="0.6"/><polyline points="12,9 12,21" stroke="${c2}" stroke-width="0.9" opacity="0.6"/></svg></span>`;
+        }
+
+        function buildGalaxyGemBarHtml(karma) {
+            let v = Math.max(0, Math.floor(Number(karma) || 0));
+            if (v <= 0) return '<span class="text-[10px] text-gray-400">☆ 0 · зарабатывайте лайки в чатах</span>';
+            const units = [
+                { val: 21600, id: 'brill' },
+                { val: 10800, id: 'black' },
+                { val: 5400,  id: 'topaz' },
+                { val: 2700,  id: 'ameth' },
+                { val: 1350,  id: 'cyan'  },
+                { val: 675,   id: 'emer'  },
+                { val: 225,   id: 'sapph' },
+                { val: 75,    id: 'ruby'  },
+                { val: 15,    id: 'g_star'},
+                { val: 5,     id: 's_star'},
+                { val: 1,     id: 'b_star'}
+            ];
+            let icons = [];
+            for (const u of units) {
+                while (v >= u.val && icons.length < 14) {
+                    icons.push(gxGemSvg(u.id));
+                    v -= u.val;
+                }
+            }
+            return icons.join('');
+        }
+
+        const KARMA_GALAXY_RANKS = [
+            { rank: 1,  min: 10,    name: 'Новичок',          world: 'neutral',   c1: '#fb923c', c2: 'rgba(251,146,60,0.1)', icon: '🔸', perks: ['Первые бронзовые звёзды Авторитета в профиле', 'Доступ к голосованию за карму участников (+ / -)'] },
+            { rank: 2,  min: 25,    name: 'Профессионал',     world: 'neutral',   c1: '#facc15', c2: 'rgba(250,204,21,0.15)', icon: '⭐', perks: ['Займы в МФО без порога в 100 сообщений в чате', 'Скидка 5% на Чёрном Рынке (до −8% с Рододендроном)'] },
+            { rank: 3,  min: 50,    name: 'Добряк · Папа',    world: 'good',      c1: '#34d399', c2: 'rgba(52,211,153,0.2)', icon: '✨', perks: ['×2 награда за выживание в Русской Рулетке (!рулетка)', 'Скидка 10% на Чёрном Рынке и льготный процент в МФО', '+5% к шансу найти Ключ от сейфа на грядках', 'Защита вашего сервера от Взлома увеличена до 6 часов'] },
+            { rank: 4,  min: 75,    name: 'Праведник',        world: 'righteous', c1: '#38bdf8', c2: 'rgba(56,189,248,0.25)', icon: '🕊', perks: ['Живая голубая аура Праведника вокруг аватара', 'Авто-уход за фермой: грядки не сохнут 36 часов', 'Защита от Кота в Сундуке (шанс снижен до 5%)'] },
+            { rank: 5,  min: 100,   name: 'Святой · Ангел',   world: 'saint',     c1: '#fde047', c2: 'rgba(250,204,21,0.28)', icon: '😇', perks: ['Золотой 3D-нимб, солнечные лучи и золотые искры', 'Право Вето (!амнистия) — снятие игровых мутов с друзей', 'Полный иммунитет к Перчатке Таноса (!щелчок)', 'Открытие Народного Суда (!суд) против вас в 2 раза дороже'] },
+            { rank: 6,  min: 200,   name: 'Архонт · Бог',     world: 'archon',    c1: '#c084fc', c2: 'rgba(192,132,252,0.28)', icon: '💜', perks: ['Фиолетовая пламенная аура Архонта в профиле', '+1 попытка взлома Сейфа в сутки (суммируется с Каштанами!)', '+20% Очков к Ежедневному бонусу в Кабинете'] },
+            { rank: 7,  min: 350,   name: 'Всемогущий',       world: 'almighty',  c1: '#fb923c', c2: 'rgba(249,115,22,0.28)', icon: '⚡', perks: ['Огненно-золотая аура Всемогущего', 'Налог в Рулетке снижен до 20% (а с Кактусом — до 7%!)', 'Расширенная витрина Обменника: +10 🧩 и +1 🛡 к суточному лимиту'] },
+            { rank: 8,  min: 550,   name: 'Мистер Вселенная', world: 'almighty',  c1: '#f43f5e', c2: 'rgba(244,63,94,0.28)', icon: '❤️‍🔥', perks: ['Алая пламенная аура Мистера Вселенная', 'Авто-уход за фермой: грядки не сохнут 48 часов', 'Шанс успешного спасения друга в !побег повышен до 55%'] },
+            { rank: 9,  min: 800,   name: 'Легенда',          world: 'righteous', c1: '#3b82f6', c2: 'rgba(59,130,246,0.32)', icon: '💙', perks: ['Синее пламя Легенды', '1 бесплатная !амнистия в сутки (без списания 20 кармы!)', '+35% Очков к Ежедневному бонусу в Кабинете'] },
+            { rank: 10, min: 1200,  name: 'Премьер',          world: 'archon',    c1: '#e11d48', c2: 'rgba(225,29,72,0.28)', icon: '♦️', perks: ['Тёмно-рубиновая пламенная аура Премьера', 'Команда !карцер раз в сутки (посадить хулигана на 10 мин бесплатно)', 'Скидка 15% на Чёрном Рынке (с Рододендроном — 18%!)'] },
+            { rank: 11, min: 1800,  name: 'Страж',            world: 'saint',     c1: '#f8fafc', c2: 'rgba(248,250,252,0.28)', icon: '🤍', perks: ['Ослепительное белое пламя Стража', '+2 попытки взлома Сейфа в сутки (суммируется с Каштанами)', 'Урожай созревает на 10% быстрее (с 5 сыновьями — на 25% быстрее!)'] },
+            { rank: 12, min: 2700,  name: 'Император',        world: 'archon',    c1: '#a855f7', c2: 'rgba(168,85,247,0.35)', icon: '🔮', perks: ['Неоново-фиолетовое пламя Императора', 'Полный иммунитет к Народному Суду (!суд не может вас посадить)', 'Витрина Обменника: +20 🧩 и +2 🛡 к суточному лимиту'] },
+            { rank: 13, min: 4000,  name: 'Повелитель',       world: 'righteous', c1: '#06b6d4', c2: 'rgba(6,182,212,0.35)', icon: '💠', perks: ['Лазурное звёздное пламя Повелителя', '+50% Очков к Ежедневному бонусу и 65% шанс в !побег', 'Налог в Рулетке снижен до 10% (а с Кактусом — всего 5%!)'] },
+            { rank: 14, min: 6500,  name: 'Хранитель',        world: 'almighty',  c1: '#f97316', c2: 'rgba(249,115,22,0.38)', icon: '🔥', perks: ['Багрово-золотое пламя Хранителя', '2 бесплатные !амнистия в сутки и !карцер на 20 минут', '+10% к шансу найти Ключ от сейфа на грядках'] },
+            { rank: 15, min: 10000, name: 'Бессмертный',      world: 'immortal',  c1: '#14b8a6', c2: 'rgba(20,184,166,0.38)', icon: '💚', perks: ['Изумрудно-бирюзовое пламя Бессмертного', '0% комиссии Скайнета при переводах !чаевые', 'Защита вашего сервера от Взлома увеличена до 12 часов'] },
+            { rank: 16, min: 15000, name: 'Великий',          world: 'supreme',   c1: '#ec4899', c2: 'rgba(236,72,153,0.40)', icon: '🌌', perks: ['Космическое фиолетово-золотое пламя Великого', '×2 Очков за Ежедневный бонус и +3 попытки взлома Сейфа в сутки', 'Вечный титул Верховного Арбитра Матрицы'] }
+        ];
+
+        window._lastUserKarma = 0;
+
+        function openKarmaRanksModal() {
+            safeHaptic('impact', 'light');
+            const kv = Number(window._lastUserKarma) || 0;
+            const fBox = document.getElementById('karmaFormulaRows');
+            if (fBox && !fBox.innerHTML) {
+                const rules = [
+                    [gxGemSvg('b_star').repeat(5), gxGemSvg('s_star'), '5 кармы'],
+                    [gxGemSvg('s_star').repeat(3), gxGemSvg('g_star'), '15 кармы'],
+                    [gxGemSvg('g_star').repeat(5), gxGemSvg('ruby'),   '75 кармы (Рубин)'],
+                    [gxGemSvg('ruby').repeat(3),   gxGemSvg('sapph'),  '225 кармы (Сапфир)'],
+                    [gxGemSvg('sapph').repeat(3),  gxGemSvg('emer'),   '675 кармы (Изумруд)'],
+                    [gxGemSvg('emer').repeat(2),   gxGemSvg('cyan'),   '1 350 кармы (Аквамарин)'],
+                    [gxGemSvg('cyan').repeat(2),   gxGemSvg('ameth'),  '2 700 кармы (Аметист)'],
+                    [gxGemSvg('ameth').repeat(2),  gxGemSvg('topaz'),  '5 400 кармы (Топаз)'],
+                    [gxGemSvg('topaz').repeat(2),  gxGemSvg('black'),  '10 800 кармы (Чёрный алмаз)'],
+                    [gxGemSvg('black').repeat(2),  gxGemSvg('brill'),  '21 600 кармы (Бриллиант)']
+                ];
+                fBox.innerHTML = rules.map(r =>
+                    `<div class="flex items-center justify-between bg-black/35 px-2.5 py-1.5 rounded-xl border border-white/5">
+                        <div class="flex items-center gap-0.5">${r[0]} <span class="mx-1.5 text-gray-400">➔</span> ${r[1]}</div>
+                        <span class="text-gray-400 font-mono text-[10px]">${r[2]}</span>
+                    </div>`
+                ).join('');
+            }
+
+            let curRankIdx = -1;
+            KARMA_GALAXY_RANKS.forEach((r, idx) => { if (kv >= r.min) curRankIdx = idx; });
+
+            const listEl = document.getElementById('karmaRanksList');
+            listEl.innerHTML = KARMA_GALAXY_RANKS.map((r, idx) => {
+                const isUnlocked = kv >= r.min;
+                const isCurrent = idx === curRankIdx;
+                const nextMin = KARMA_GALAXY_RANKS[idx + 1] ? KARMA_GALAXY_RANKS[idx + 1].min : r.min * 1.5;
+                const progPct = isCurrent ? Math.min(100, Math.max(5, Math.round(((kv - r.min) / (nextMin - r.min)) * 100))) : (isUnlocked ? 100 : 0);
+
+                const perksHtml = r.perks.map(p =>
+                    `<div class="flex items-start gap-2 text-xs leading-snug">
+                        <span class="font-black ${isUnlocked ? 'text-emerald-400' : 'text-teal-400'}">${isUnlocked ? '✓' : '+'}</span>
+                        <span class="${isUnlocked ? 'text-gray-200' : 'text-gray-400'}">${p}</span>
+                    </div>`
+                ).join('');
+
+                return `<div class="gx-rank-card ${isCurrent ? 'current' : (isUnlocked ? 'unlocked' : '')}">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/45 text-gray-300 border border-white/10">
+                            Звание ${r.rank} из ${KARMA_GALAXY_RANKS.length} · от ${fmtNum(r.min)} кармы
+                        </span>
+                        ${isCurrent ? '<span class="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/50">Ваше звание</span>' : (isUnlocked ? '<span class="text-emerald-400 font-black text-sm">✓</span>' : '')}
+                    </div>
+
+                    <div class="gx-aura-preview" style="--aura-c1:${r.c1};--aura-c2:${r.c2}">
+                        <div class="gx-aura-flame"></div>
+                        <div class="gx-aura-ring"></div>
+                        <div class="gx-aura-avatar">${r.icon}</div>
+                    </div>
+
+                    <div class="text-center mb-2">
+                        <h3 class="font-black text-lg text-white">${r.name}</h3>
+                        <div class="flex justify-center items-center gap-0.5 mt-1">${buildGalaxyGemBarHtml(r.min)}</div>
+                    </div>
+
+                    ${isCurrent ? `<div class="w-full h-2.5 bg-black/50 rounded-full overflow-hidden my-2.5 relative border border-white/10">
+                        <div class="h-full bg-gradient-to-r from-emerald-400 to-sky-400 rounded-full" style="width:${progPct}%"></div>
+                        <span class="absolute inset-0 flex items-center justify-center text-[9px] font-black text-white">${progPct}% до следующего звания</span>
+                    </div>` : ''}
+
+                    <div class="space-y-1.5 mt-3 pt-2.5 border-t border-white/10">${perksHtml}</div>
+                </div>`;
+            }).join('');
+
+            document.getElementById('karmaRanksModal').classList.remove('hidden');
+        }
+
         function applyKarmaWorld(karmaVal, goldenFrame) {
             const urlK = new URLSearchParams(location.search).get('karma');
             const kv = urlK !== null ? Number(urlK) : (Number(karmaVal) || 0);
+            window._lastUserKarma = kv;
 
             const card = document.getElementById('karmaWorldCard');
             const kicker = document.getElementById('kwTierKicker');
@@ -1742,17 +1987,39 @@
             const statusTxt = document.getElementById('karmaStatusText');
             const ptBox = document.getElementById('kwParticles');
             const userNameEl = document.getElementById('userName');
+            const gemsBar = document.getElementById('kwGemsBar');
+            const minLbl = document.getElementById('kwScaleMin');
+            const maxLbl = document.getElementById('kwScaleMax');
+
+            if (gemsBar) {
+                gemsBar.innerHTML = kv > 0
+                    ? buildGalaxyGemBarHtml(kv)
+                    : '<span class="text-[10px] text-gray-400">☆ Нажмите, чтобы посмотреть 16 званий и аур ›</span>';
+            }
 
             let world = 'neutral', title = 'ГРАЖДАНИН', kickerCls = 'text-gray-400', corner = '⚖️', nextInfo = '';
-            if (kv >= 100) {
-                world = 'saint'; title = '✦ СВЯТОЙ'; kickerCls = 'text-yellow-400'; corner = '😇';
-                nextInfo = `<b class="text-yellow-400">Карма ${kv}</b> · высшая ступень`;
-            } else if (kv >= 75) {
-                world = 'righteous'; title = 'ПРАВЕДНИК'; kickerCls = 'text-sky-400'; corner = '🕊';
-                nextInfo = `<b class="text-sky-400">Карма ${kv}</b> · до [Святой] ещё ${100 - kv}`;
-            } else if (kv >= 50) {
-                world = 'good'; title = 'ДОБРЯК'; kickerCls = 'text-emerald-400'; corner = '✨';
-                nextInfo = `<b class="text-emerald-400">Карма ${kv}</b> · до [Праведник] ещё ${75 - kv}`;
+            let scaleMin = -100, scaleMax = 100;
+
+            if (kv >= 10) {
+                let curR = KARMA_GALAXY_RANKS[0];
+                let nextR = null;
+                for (let i = 0; i < KARMA_GALAXY_RANKS.length; i++) {
+                    if (kv >= KARMA_GALAXY_RANKS[i].min) {
+                        curR = KARMA_GALAXY_RANKS[i];
+                        nextR = KARMA_GALAXY_RANKS[i + 1] || null;
+                    }
+                }
+                world = curR.world;
+                title = `✦ ${curR.name.toUpperCase()} (${curR.rank}/16)`;
+                corner = curR.icon;
+                kickerCls = kv >= 10000 ? 'text-teal-300' : (kv >= 200 ? 'text-purple-300' : (kv >= 100 ? 'text-yellow-400' : (kv >= 75 ? 'text-sky-400' : 'text-emerald-400')));
+                if (nextR) {
+                    if (kv >= 100) { scaleMin = curR.min; scaleMax = nextR.min; }
+                    nextInfo = `<b class="text-sky-300">Карма ${fmtNum(kv)}</b> · до [${nextR.name}] ещё ${fmtNum(nextR.min - kv)}`;
+                } else {
+                    scaleMin = 10000; scaleMax = 15000;
+                    nextInfo = `<b class="text-yellow-400">Карма ${fmtNum(kv)}</b> · высшее 16-е звание Матрицы`;
+                }
             } else if (kv <= -100) {
                 world = 'outcast'; title = '☠ ИЗГОЙ'; kickerCls = 'text-red-400'; corner = '☠️';
                 nextInfo = `<b class="text-red-400">Карма ${kv}</b> · налог 50%, ГУЛАГ`;
@@ -1764,7 +2031,7 @@
                 nextInfo = `<b class="text-amber-400">Карма ${kv}</b> · пейджер-режим, налог 50%`;
             } else {
                 world = 'neutral'; title = 'ГРАЖДАНИН'; kickerCls = 'text-gray-400'; corner = '👤';
-                nextInfo = `<b class="text-gray-200">Карма ${kv}</b> · до [Добряк] ещё ${50 - kv}`;
+                nextInfo = `<b class="text-gray-200">Карма ${kv}</b> · до [Новичок] ещё ${10 - kv}`;
             }
 
             if (card) {
@@ -1779,12 +2046,14 @@
             if (badge) badge.innerText = corner;
             if (userNameEl && user) userNameEl.innerText = user.first_name;
 
-            const pct = Math.max(2, Math.min(98, ((kv + 100) / 200) * 100));
+            if (minLbl) minLbl.innerText = scaleMin < 0 ? '−100' : fmtNum(scaleMin);
+            if (maxLbl) maxLbl.innerText = scaleMax === 100 ? '+100' : fmtNum(scaleMax);
+            const pct = Math.max(3, Math.min(97, ((kv - scaleMin) / Math.max(1, scaleMax - scaleMin)) * 100));
             if (pointer) pointer.style.left = pct + '%';
             if (statusTxt) statusTxt.innerHTML = nextInfo;
 
             if (ptBox) {
-                if (world === 'saint') {
+                if (['saint', 'archon', 'almighty', 'immortal', 'supreme'].includes(world)) {
                     ptBox.innerHTML = [18, 34, 52, 68, 82, 91].map((left, i) =>
                         `<i class="kw-pt gold" style="left:${left}%;bottom:${8 + (i%3)*14}px;--dx:${(i%2?1:-1)*14}px;animation-delay:-${i*0.8}s"></i>`
                     ).join('');
@@ -1798,7 +2067,7 @@
             }
         }
 
-                window._currentMarriageCert = null;
+        window._currentMarriageCert = null;
 
         function openMarriageCertModal() {
             const c = window._currentMarriageCert;
@@ -1809,6 +2078,10 @@
             document.getElementById('mcSpouse2').innerText = c.spouse2;
             document.getElementById('mcDate').innerText = c.date;
             document.getElementById('mcDays').innerText = c.days ? (c.days + " дн. вместе") : "Почётный союз";
+            const annEl = document.getElementById('mcAnniversary');
+            if (annEl) annEl.innerText = c.anniversary || '🌿 Зелёная свадьба';
+            const nextAnnEl = document.getElementById('mcNextAnniv');
+            if (nextAnnEl) nextAnnEl.innerText = c.next_anniversary || '';
             const regEl = document.getElementById('mcRegistrar');
             if (regEl) regEl.innerText = c.registrar || 'Регистраторша Зинаида Павловна v4.0';
             document.getElementById('marriageCertModal').classList.remove('hidden');

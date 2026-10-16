@@ -318,8 +318,10 @@ def personal_farm_notifications():
                     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
                 continue # Прерываем цикл, так как напали
 
-        # --- 3. ОБЫЧНЫЕ ПРОВЕРКИ ВОДЫ И СОЗРЕВАНИЯ ---
-        if crop["water_req"] and (now - last_watered > 86400):
+        # --- 3. ОБЫЧНЫЕ ПРОВЕРКИ ВОДЫ И СОЗРЕВАНИЯ (С УЧЁТОМ АВТО-УХОДА 75+ / 550+) ---
+        _u_karma = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
+        _wither_lim = 172800 if _u_karma >= 550 else (129600 if _u_karma >= 75 else 86400)
+        if crop["water_req"] and (now - last_watered > _wither_lim):
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
             
             # ТРЕКЕР: Засуха
@@ -334,7 +336,7 @@ def personal_farm_notifications():
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
             continue
             
-        if crop["water_req"] and (now - last_watered > 72000) and not plot.get("water_warning"):
+        if crop["water_req"] and (now - last_watered > (_wither_lim - 14400)) and not plot.get("water_warning"):
             db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"water_warning": True}})
             try: bot.send_message(uid, f"⚠️ <b>ТРЕВОГА НА УЧАСТКЕ!</b>\nВаш {crop['name']} скоро засохнет! (Осталось <4 часов)", parse_mode="HTML", reply_markup=markup)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")

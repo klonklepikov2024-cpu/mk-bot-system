@@ -42,6 +42,8 @@ def _anarchy_active(now):
 
 def _immunity_seconds(karma):
     """Сколько жертва неприкосновенна после прошлого взлома (вне анархии)."""
+    if karma >= 10000:
+        return 43200   # 12 часов (Бессмертный и выше)
     if karma >= 50:
         return 21600   # 6 часов
     if karma <= -50:

@@ -328,33 +328,45 @@ def process_spin_result(chat_id, username, dice_msg_id, val, uid):
         pm_markup = InlineKeyboardMarkup().add(InlineKeyboardButton("♻️ Разобрать щит (+5 Осколков)", callback_data="trade_shield_shards_5"))
 
     elif val in [10, 20, 40, 50]:
-        # 🔥 ВЛИЯНИЕ КАРМЫ: ШТРАФ 50% ДЛЯ ИЗГОЕВ 🔥
-        tax_pct = (cfg("casino_tax_outcast_pct") if user_data.get("social_rating", 0) <= -50 else cfg("casino_tax_pct")) / 100
-        
-        lost_points = int(points * tax_pct)
+        # 🔥 СЛОЖЕНИЕ: ЗВАНИЕ КАРМЫ + КАКТУС В НАЛОГОВОЙ (/spin в ЛС) 🔥
+        u_karma = user_data.get("social_rating", 0)
+        if u_karma <= -50:
+            tax_pct = cfg("casino_tax_outcast_pct") / 100.0
+        elif u_karma >= 4000:
+            tax_pct = 0.10
+        elif u_karma >= 350:
+            tax_pct = 0.20
+        else:
+            tax_pct = cfg("casino_tax_pct") / 100.0
+
         has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
         if has_cactus:
-            lost_points = int(points * 0.1)
-            
-        # 🔥 ИСПРАВЛЕНИЕ МАТЕМАТИКИ: Отменяем жесткий лимит для Кактуса!
-        if lost_points < 10 and not has_cactus: 
-            lost_points = 10
-        elif has_cactus and lost_points < 1:
-            lost_points = 1 # Минимум 1 очко, если есть кактус
+            if u_karma >= 4000: tax_pct = 0.05
+            elif u_karma >= 350: tax_pct = 0.07
+            else: tax_pct = 0.10
 
-        # ⬇ было: update_one(-lost_points) и безусловный +lost_points в синий сейф
+        lost_points = int(points * tax_pct)
+        if lost_points < 10 and not has_cactus and u_karma < 350:
+            lost_points = 10
+        elif lost_points < 1:
+            lost_points = 1
+
         from utils.validators import take_points_capped
-        lost_points = take_points_capped(uid, lost_points)  # не глубже 0
+        lost_points = take_points_capped(uid, lost_points)
         if lost_points > 0:
             db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
-        
+
+        pct_disp = int(round(tax_pct * 100))
         if has_cactus:
-            msg = f"🌵 **НАЛОГОВАЯ ПРОВЕРКА!**\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
+            rank_note = " и высокое Звание" if u_karma >= 350 else ""
+            msg = f"🌵 **НАЛОГОВАЯ ПРОВЕРКА!**\nКактус{rank_note} отпугнул инспектора! Списано лишь {pct_disp}% (-{lost_points} очков)."
         else:
-            if tax_pct != cfg("casino_tax_pct") / 100:
-                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
+            if u_karma <= -50:
+                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано {pct_disp}% баланса (-{lost_points} очков)."
+            elif u_karma >= 350:
+                msg = f"🛡 **НАЛОГОВАЯ ПРОВЕРКА!**\nВаше высокое Звание снизило налог до {pct_disp}% (-{lost_points} очков)."
             else:
-                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nСписано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
+                msg = f"💀 **НАЛОГОВАЯ ПРОВЕРКА!**\nСписано {pct_disp}% баланса (-{lost_points} очков)."
 
     # 6. 🚓 ОРДЕР НА АРЕСТ (Социальный артефакт — val: 5, 17, 29)
     elif val in [5, 17, 29]:

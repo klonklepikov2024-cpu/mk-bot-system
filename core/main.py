@@ -273,6 +273,119 @@ def _person_card(pid):
             "name": u.get("first_name") or c.get("name") or f"ID {pid}",
             "username": str(u.get("username") or c.get("username") or "").lstrip("@")}
 
+
+# ================= 💍 ГОДОВЩИНЫ СВАДЕБ И АВТО-ДАТА СТАРИЧКОВ =================
+MARRIAGE_ANNIVERSARIES = [
+    (0,   "🌿 Зелёная свадьба",      0,     0, 0),
+    (7,   "🌸 Ситцевая свадьба",     150,   0, 0),
+    (14,  "📄 Бумажная свадьба",     300,   0, 0),
+    (30,  "🪵 Деревянная свадьба",   500,   1, 0),
+    (60,  "🌹 Розовая свадьба",      1000,  0, 5),
+    (90,  "🔮 Хрустальная свадьба",  1500,  2, 0),
+    (180, "🥈 Серебряная свадьба",   3000,  0, 10),
+    (365, "🥇 Золотая свадьба",      10000, 5, 0),
+    (500, "💎 Бриллиантовая свадьба", 25000, 10, 25),
+]
+
+def resolve_and_sync_marriage_info(uid, user_db):
+    """Восстанавливает дату свадьбы для старичков (по копилке), считает годовщину и выдаёт награды в общак."""
+    import time, datetime
+    partner_id = user_db.get("partner_id")
+    if not partner_id:
+        return None
+    p_db = paid_collection.find_one({"uid": partner_id}) or {}
+    u1, u2 = min(uid, partner_id), max(uid, partner_id)
+    fam_id = _family_bank_id(uid, user_db) or f"family_{u1}_{u2}"
+    fam_doc = db['family_banks'].find_one({"_id": fam_id}) or {}
+
+    m_ts = user_db.get("married_at") or p_db.get("married_at") or fam_doc.get("created_at")
+    if not m_ts:
+        fam_bal = fam_doc.get("balance", 0)
+        back_days = min(45, max(15, 14 + fam_bal // 5000)) if fam_bal > 0 else 10
+        offset_sec = ((u1 ^ u2) % 43200)
+        m_ts = time.time() - (back_days * 86400) - offset_sec
+        paid_collection.update_one({"uid": uid}, {"$set": {"married_at": m_ts}})
+        paid_collection.update_one({"uid": partner_id}, {"$set": {"married_at": m_ts}})
+        db['family_banks'].update_one({"_id": fam_id}, {"$set": {"created_at": m_ts}}, upsert=True)
+    else:
+        if not user_db.get("married_at"):
+            paid_collection.update_one({"uid": uid}, {"$set": {"married_at": m_ts}})
+        if not p_db.get("married_at"):
+            paid_collection.update_one({"uid": partner_id}, {"$set": {"married_at": m_ts}})
+
+    days_cnt = max(1, int((time.time() - m_ts) // 86400) + 1)
+    dt_str = datetime.datetime.fromtimestamp(m_ts).strftime("%d.%m.%Y")
+
+    cur_anniv = MARRIAGE_ANNIVERSARIES[0][1]
+    next_anniv_str = "Высшая ступень союза"
+    claimed = set(fam_doc.get("anniversaries_claimed", []))
+    newly_rewarded = []
+
+    for req_days, title, r_pts, r_sh, r_shards in MARRIAGE_ANNIVERSARIES:
+        if days_cnt >= req_days:
+            cur_anniv = title
+            if req_days > 0 and req_days not in claimed:
+                res = db['family_banks'].update_one(
+                    {"_id": fam_id, "anniversaries_claimed": {"$ne": req_days}},
+                    {"$addToSet": {"anniversaries_claimed": req_days}, "$inc": {"balance": r_pts}},
+                    upsert=True
+                )
+                if res.modified_count or res.upserted_id:
+                    if r_sh > 0 or r_shards > 0:
+                        inc_q = {}
+                        if r_sh > 0: inc_q["immunity"] = r_sh
+                        if r_shards > 0: inc_q["jackpot_shards"] = r_shards
+                        paid_collection.update_one({"uid": u1}, {"$inc": inc_q})
+                        paid_collection.update_one({"uid": u2}, {"$inc": inc_q})
+                    newly_rewarded.append(f"{title} (+{r_pts} 💎 в общак)")
+        else:
+            left_d = req_days - days_cnt
+            short_t = title.split(" ", 1)[1] if " " in title else title
+            next_anniv_str = f"до «{short_t}»: {left_d} дн."
+            break
+
+    my_card = _person_card(uid)
+    p_card = _person_card(partner_id)
+    cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
+    reg_name = user_db.get("married_by") or p_db.get("married_by") or "Регистраторша Зинаида Павловна v4.0"
+
+    return {
+        "number": cert_num,
+        "spouse1": my_card["name"],
+        "spouse1_id": uid,
+        "spouse2": p_card["name"],
+        "spouse2_id": partner_id,
+        "date": dt_str,
+        "days": days_cnt,
+        "anniversary": cur_anniv,
+        "next_anniversary": next_anniv_str,
+        "new_rewards": newly_rewarded,
+        "registrar": reg_name
+    }
+
+def karma_rank_title(karma):
+    """Возвращает титул игрока по расширенной 16-ступенчатой шкале Кармы."""
+    if karma >= 15000: return "🌌 Великий (Звание 16)"
+    if karma >= 10000: return "💚 Бессмертный (Звание 15)"
+    if karma >= 6500:  return "🔥 Хранитель (Звание 14)"
+    if karma >= 4000:  return "💠 Повелитель (Звание 13)"
+    if karma >= 2700:  return "🔮 Император (Звание 12)"
+    if karma >= 1800:  return "🤍 Страж (Звание 11)"
+    if karma >= 1200:  return "♦️ Премьер (Звание 10)"
+    if karma >= 800:   return "💙 Легенда (Звание 9)"
+    if karma >= 550:   return "❤️‍🔥 Мистер Вселенная (Звание 8)"
+    if karma >= 350:   return "⚡ Всемогущий (Звание 7)"
+    if karma >= 200:   return "💜 Архонт (Звание 6)"
+    if karma >= 100:   return "😇 Святой (Звание 5)"
+    if karma >= 75:    return "🕊 Праведник (Звание 4)"
+    if karma >= 50:    return "✨ Добряк (Звание 3)"
+    if karma >= 25:    return "⭐ Профессионал (Звание 2)"
+    if karma >= 10:    return "🔸 Новичок (Звание 1)"
+    if karma <= -100:  return "💀 Враг Народа (Изгой)"
+    if karma <= -75:   return "😈 Злодей"
+    if karma <= -50:   return "🗑 Хулиган"
+    return "👤 Гражданин"
+
 @app.route('/api/profile', methods=['POST'])
 def get_profile():
     data = request.json
@@ -296,29 +409,8 @@ def get_profile():
     family_balance = 0
     marriage_cert = None
     if partner_id:
-        p_card = _person_card(partner_id)
-        partner_name = p_card["name"]
-        my_card = _person_card(uid)
-        p_db = paid_collection.find_one({"uid": partner_id}) or {}
-        m_ts = user_db.get("married_at") or p_db.get("married_at")
-        if m_ts:
-            dt_str = datetime.datetime.fromtimestamp(m_ts).strftime("%d.%m.%Y")
-            days_cnt = max(1, int((time.time() - m_ts) // 86400) + 1)
-        else:
-            dt_str = "Старая гвардия"
-            days_cnt = None
-        u1, u2 = min(uid, partner_id), max(uid, partner_id)
-        cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
-        marriage_cert = {
-            "number": cert_num,
-            "spouse1": my_card["name"],
-            "spouse1_id": uid,
-            "spouse2": partner_name,
-            "spouse2_id": partner_id,
-            "date": dt_str,
-            "days": days_cnt,
-            "registrar": user_db.get("married_by") or p_db.get("married_by") or "Регистраторша Зинаида Павловна v4.0"
-        }
+        marriage_cert = resolve_and_sync_marriage_info(uid, user_db)
+        partner_name = marriage_cert["spouse2"]
         
     _fam_id = _family_bank_id(uid, user_db)
     if _fam_id:
@@ -385,13 +477,7 @@ def api_player_card():
     t = paid_collection.find_one({"uid": target}) or {}
     u_doc = db['users'].find_one({"_id": target}) or {}
     karma = t.get("social_rating", 0)
-    if karma >= 100: title = "😇 Святой"
-    elif karma >= 75: title = "🕊 Праведник"
-    elif karma >= 50: title = "✨ Добряк"
-    elif karma <= -100: title = "💀 Изгой"
-    elif karma <= -75: title = "😈 Злодей"
-    elif karma <= -50: title = "🔥 Хулиган"
-    else: title = "👑 VIP-Персона" if (t.get("is_vip") or u_doc.get("is_vip")) else "👤 Гражданин"
+    title = karma_rank_title(karma)
 
     have = set(t.get("achievements", []))
     card = _person_card(target)
@@ -652,13 +738,20 @@ def api_buy_market():
         
     buyer_price_pts = int(buyer_price_rub * points_per_rub())
 
-    # 🔥 ВЛИЯНИЕ КАРМЫ: СКИДКА 10% ДЛЯ ХОРОШИХ ГРАЖДАН 🔥
-    is_good_citizen = user_db.get("social_rating", 0) >= 50
-    if is_good_citizen:
-        buyer_price_rub = int(buyer_price_rub * 0.9)
-        buyer_price_pts = int(buyer_price_pts * 0.9)
-        if buyer_price_rub < 1: buyer_price_rub = 1
-        if buyer_price_pts < 1: buyer_price_pts = 1
+    # 🔥 СЛОЖЕНИЕ СКИДОК: ЗВАНИЕ КАРМЫ (25+ / 50+ / 1200+) + РОДОДЕНДРОН ПОКУПАТЕЛЯ 🔥
+    buyer_karma = user_db.get("social_rating", 0)
+    disc_mult = 1.0
+    if buyer_karma >= 1200: disc_mult -= 0.15
+    elif buyer_karma >= 50: disc_mult -= 0.10
+    elif buyer_karma >= 25: disc_mult -= 0.05
+
+    buyer_has_rhodo = db['farm_plots'].find_one({"uid": uid, "seed_type": "rhododendron", "status": "ready"})
+    if buyer_has_rhodo:
+        disc_mult -= 0.03
+
+    if disc_mult < 1.0:
+        buyer_price_rub = max(1, int(buyer_price_rub * disc_mult))
+        buyer_price_pts = max(1, int(buyer_price_pts * disc_mult))
     
     # === 1. СПИСАНИЕ С ПОКУПАТЕЛЯ ===
     if currency == "rub":
@@ -863,35 +956,47 @@ def api_spin_roulette():
         prize_id, prize_name = "shield", "Щит Иммунитета"
 
     elif val in [10, 20, 40, 50]:
-        # 🔥 ВЛИЯНИЕ КАРМЫ: ШТРАФ 50% ДЛЯ ИЗГОЕВ 🔥
-        tax_pct = (cfg("casino_tax_outcast_pct") if updated_user.get("social_rating", 0) <= -50 else cfg("casino_tax_pct")) / 100
-        
-        lost_points = int(updated_user.get("bounty_points", 0) * tax_pct)
+        # 🔥 СЛОЖЕНИЕ: ЗВАНИЕ КАРМЫ + КАКТУС В НАЛОГОВОЙ ГАЧА-РУЛЕТКИ 🔥
+        u_karma = updated_user.get("social_rating", 0)
+        if u_karma <= -50:
+            tax_pct = cfg("casino_tax_outcast_pct") / 100.0
+        elif u_karma >= 4000:
+            tax_pct = 0.10
+        elif u_karma >= 350:
+            tax_pct = 0.20
+        else:
+            tax_pct = cfg("casino_tax_pct") / 100.0
+
         has_cactus = db['farm_plots'].find_one({"uid": uid, "seed_type": "cactus", "status": "ready"})
         if has_cactus:
-            lost_points = int(updated_user.get("bounty_points", 0) * 0.1) 
-            
-        # 🔥 ИСПРАВЛЕНИЕ МАТЕМАТИКИ: Отменяем жесткий лимит для Кактуса!
-        if lost_points < 10 and not has_cactus: 
-            lost_points = 10
-        elif has_cactus and lost_points < 1:
-            lost_points = 1 # Минимум 1 очко, если есть кактус
+            if u_karma >= 4000: tax_pct = 0.05
+            elif u_karma >= 350: tax_pct = 0.07
+            else: tax_pct = 0.10
 
-        # ⬇ было: update_one(-lost_points) и безусловный +lost_points в синий сейф
+        lost_points = int(updated_user.get("bounty_points", 0) * tax_pct)
+        if lost_points < 10 and not has_cactus and u_karma < 350:
+            lost_points = 10
+        elif lost_points < 1:
+            lost_points = 1
+
         from utils.validators import take_points_capped
-        lost_points = take_points_capped(uid, lost_points)  # не глубже 0
+        lost_points = take_points_capped(uid, lost_points)
         if lost_points > 0:
             db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": lost_points}})
-        
+
+        pct_disp = int(round(tax_pct * 100))
         if has_cactus:
-            prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус отпугнул инспектора! Списано лишь 10% (-{lost_points} очков)."
-            prize_id, prize_name = "tax_cactus", "Спас Кактус"
+            rank_note = " + бонус Звания" if u_karma >= 350 else ""
+            prize_msg = f"🌵 НАЛОГОВАЯ ПРОВЕРКА!\nКактус{rank_note} отпугнул инспектора! Списано лишь {pct_disp}% (-{lost_points} очков)."
+            prize_id, prize_name = "tax_cactus", f"Кактус -{pct_disp}%"
         else:
-            if tax_pct != cfg("casino_tax_pct") / 100:
-                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nУ вас КРИТИЧЕСКИ низкий социальный рейтинг! Штраф увеличен: списано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
+            if u_karma <= -50:
+                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nНизкий социальный рейтинг! Штраф увеличен: списано {pct_disp}% баланса (-{lost_points} очков)."
+            elif u_karma >= 350:
+                prize_msg = f"🛡 НАЛОГОВАЯ ПРОВЕРКА!\nВаше высокое Звание снизило налог до {pct_disp}% (-{lost_points} очков)."
             else:
-                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано {round(tax_pct * 100)}% баланса (-{lost_points} очков)."
-            prize_id, prize_name = "tax", f"Налог -{int(tax_pct*100)}%"
+                prize_msg = f"💀 НАЛОГОВАЯ ПРОВЕРКА!\nСписано {pct_disp}% баланса (-{lost_points} очков)."
+            prize_id, prize_name = "tax", f"Налог -{pct_disp}%"
 
     elif val in [5, 17, 29]:
         code = f"ARREST-{random.randint(100, 999)}"
@@ -998,6 +1103,11 @@ def api_claim_bonus():
         current_streak = 0 # Сброс после мега-приза
     else:
         points_reward = streak_tbl[current_streak - 1]
+    _k_val = user_data.get("social_rating", 0)
+    if _k_val >= 15000: points_reward = int(points_reward * 2.0)
+    elif _k_val >= 4000: points_reward = int(points_reward * 1.5)
+    elif _k_val >= 800: points_reward = int(points_reward * 1.35)
+    elif _k_val >= 200: points_reward = int(points_reward * 1.2)
 
     update_data = {
         "$inc": {"bounty_points": points_reward, "jackpot_shards": shards_reward},
@@ -1056,11 +1166,11 @@ def api_get_inventory():
         "ex": {
             "shard_buy": _c("ex_shard_buy", 150),
             "shard_sell": _c("ex_shard_sell", 100),
-            "shard_limit": _c("ex_shard_limit", 30),
+            "shard_limit": _c("ex_shard_limit", 30) + (20 if user_data.get("social_rating", 0) >= 2700 else (10 if user_data.get("social_rating", 0) >= 350 else 0)),
             "shard_used": used_shards,
             "shield_buy": _c("ex_shield_buy", 1500),
             "shield_sell": _c("ex_shield_sell", 1000),
-            "shield_limit": _c("ex_shield_limit", 3),
+            "shield_limit": _c("ex_shield_limit", 3) + (2 if user_data.get("social_rating", 0) >= 2700 else (1 if user_data.get("social_rating", 0) >= 350 else 0)),
             "shield_used": used_shields,
             "forge_cost": _c("forge_shield_cost", 10),
             "forge_limit": _c("forge_shield_limit", 8)
@@ -1097,13 +1207,17 @@ def api_item_exchange():
     if item == 'shard':
         db_field = "jackpot_shards"
         limit_key = f"{uid}_ex_shard_{d_str}"
-        daily_max = _c("ex_shard_limit", 30)
+        _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
+        _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
+        daily_max = _c("ex_shard_limit", 30) + (20 if _uk >= 2700 else (10 if _uk >= 350 else 0)) + (20 if _uk >= 2700 else (10 if _uk >= 350 else 0))
         unit_price = _c("ex_shard_buy", 150) if mode == 'buy' else _c("ex_shard_sell", 100)
         item_label = "🧩"
     elif item == 'shield':
         db_field = "immunity"
         limit_key = f"{uid}_ex_shield_{d_str}"
-        daily_max = _c("ex_shield_limit", 3)
+        _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
+        _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
+        daily_max = _c("ex_shield_limit", 3) + (2 if _uk >= 2700 else (1 if _uk >= 350 else 0)) + (2 if _uk >= 2700 else (1 if _uk >= 350 else 0))
         unit_price = _c("ex_shield_buy", 1500) if mode == 'buy' else _c("ex_shield_sell", 1000)
         item_label = "🛡"
     else:
@@ -1508,7 +1622,7 @@ def api_loan():
             return jsonify({"error": "ВРАГ НАРОДА! Скайнет не спонсирует криминал. Выдача запрещена."}), 400
 
         chat_stat = db['chat_stats'].find_one({"uid": uid, "msgs": {"$gte": 100}})
-        if not chat_stat and karma <= 0:
+        if not chat_stat and karma < 25:
             return jsonify({"error": "МФО не дает деньги незнакомцам! Напишите хотя бы 100 сообщений в наших чатах."}), 400
             
         amount = int(data.get('amount', 0))
@@ -2333,6 +2447,7 @@ def api_get_farm():
     import time
     now = int(time.time())
     
+    user_karma_val = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
     def process_plot_list(plot_list):
         res = []
         for plot in plot_list:
@@ -2344,7 +2459,8 @@ def api_get_farm():
                 planted_at = plot.get("planted_at", now)
                 last_watered = plot.get("last_watered", now)
                 
-                if crop.get("water_req", False) and (now - last_watered > 86400):
+                wither_limit = 172800 if user_karma_val >= 550 else (129600 if user_karma_val >= 75 else 86400)
+                if crop.get("water_req", False) and (now - last_watered > wither_limit):
                     db['farm_plots'].update_one({"_id": plot["_id"]}, {"$set": {"status": "withered"}})
                     status = "withered"
                 elif now >= planted_at + crop["grow_time"]:
@@ -2476,8 +2592,17 @@ def api_farm_action():
             if not user_db: return jsonify({"error": "Недостаточно очков!"}), 400
         
         grow_time = crop['grow_time']
-        if "patriarch" in (paid_collection.find_one({"uid": uid}) or {}).get("achievements", []):
-            now -= int(grow_time * 0.1)
+        u_farm_doc = paid_collection.find_one({"uid": uid}) or {}
+        u_achs = set(u_farm_doc.get("achievements", []))
+        speed_bonus = 0.0
+        if "patriarch" in u_achs:
+            speed_bonus += 0.10
+        if "many_kids" in u_achs:
+            speed_bonus += 0.05
+        if u_farm_doc.get("social_rating", 0) >= 1800:
+            speed_bonus += 0.10
+        if speed_bonus > 0:
+            now -= int(grow_time * speed_bonus)
             
         db['farm_plots'].update_one({"_id": plot["_id"]}, {
             "$set": {"status": "growing", "seed_type": seed_type, "planted_at": now, "last_watered": now, "fertilized": False}
@@ -2637,7 +2762,9 @@ def api_farm_action():
             
         key_type = crop.get('key')
         key_chance = crop.get('key_chance', 0)
-        if karma >= 50: key_chance += 5 
+        if karma >= 6500: key_chance += 10
+        elif karma >= 6500: key_chance += 10
+        elif karma >= 50: key_chance += 5 
         
         if key_type and random.randint(1, 100) <= key_chance:
             update_query["$inc"][f"key_{key_type}"] = 1
@@ -2922,7 +3049,8 @@ def api_crack_safe():
         
     # === ИЗМЕНИТЬ ВОТ ТАК ===
     chestnuts_count = db['farm_plots'].count_documents({"uid": uid, "seed_type": "chestnut", "status": "ready"})
-    max_cracks = 3 + chestnuts_count
+    karma_cracks = 3 if user_db.get("social_rating", 0) >= 15000 else (2 if user_db.get("social_rating", 0) >= 1800 else (1 if user_db.get("social_rating", 0) >= 200 else 0))
+    max_cracks = 3 + chestnuts_count + karma_cracks
     
     # БАФФ МЕДВЕЖАТНИКА
     if "safecracker" in user_db.get("achievements", []):
@@ -3932,7 +4060,7 @@ RP_COMMANDS = {
 }
 
 # Ловим команды, но СТРОГО игнорируем системные
-@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!свидетельство', 'свидетельство', '!загс', 'загс', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники', '!амнистия', 'амнистия')))
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and not m.text.strip().lower().startswith(('!дуэль', 'дуэль', '/duel', '!свадьба', '!брак', '!свидетельство', 'свидетельство', '!загс', 'загс', '!дата брака', 'дата брака', '!суд', 'суд', '!усыновить', '!удочерить', '!выгнать', '!отказаться', '!детдом', '!сбежать', '!копилка', '!погасить', 'погасить', '!развести', '!рейд', '!щелчок', '!глас', '!гуантанамо', '!вскрыть', '!создать_нпс', '!профиль', 'профиль', '/profile', '+', '-', '👍', '👎', 'лайк', 'дизлайк', '!донат', 'донат', '!чаевые', 'чаевые', '!перевести', 'перевести', '!pay', 'pay', '!взятка', 'взятка', '!ограбление', 'ограбление', '!в деле', 'в деле', '!побег', 'побег', '!кальмар', 'кальмар', '!играю', 'играю', '!должники', 'должники', '!амнистия', 'амнистия')))
 def handle_rp_commands(message):
     # ЗАБЛОКИРОВАТЬ АНОНИМОВ СРАЗУ
     if message.sender_chat:
@@ -4138,7 +4266,7 @@ def handle_marriage_response(call):
 
 @bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ['!свидетельство', 'свидетельство', '!загс', 'загс'])
 def show_marriage_certificate_chat(message):
-    import time, datetime, html
+    import html
     uid = message.from_user.id
     u_db = paid_collection.find_one({"uid": uid}) or {}
     partner_id = u_db.get("partner_id")
@@ -4153,41 +4281,60 @@ def show_marriage_certificate_chat(message):
             )
         return bot.reply_to(message, "🧥 Вы похлопали себя по нагрудному карману пиджака, но там пусто. Вы пока холосты! Напишите <code>!свадьба</code> в ответ избраннику.", parse_mode="HTML")
 
+    cert = resolve_and_sync_marriage_info(uid, u_db)
     p_db = paid_collection.find_one({"uid": partner_id}) or {}
-    my_card = _person_card(uid)
-    p_card = _person_card(partner_id)
-    n1 = html.escape(my_card["name"])
-    n2 = html.escape(p_card["name"])
-
-    u1, u2 = min(uid, partner_id), max(uid, partner_id)
-    cert_num = f"МК-69 № {(u1 ^ u2) % 900000 + 100000}"
-    m_ts = u_db.get("married_at") or p_db.get("married_at")
-    if m_ts:
-        dt_str = datetime.datetime.fromtimestamp(m_ts).strftime("%d.%m.%Y")
-        days_str = f"{max(1, int((time.time() - m_ts) // 86400) + 1)} дн. вместе"
-    else:
-        dt_str = "Старая гвардия"
-        days_str = "Почётный союз"
-
-    reg_name = html.escape(u_db.get("married_by") or p_db.get("married_by") or "Регистраторша Зинаида Павловна v4.0")
+    n1 = html.escape(cert["spouse1"])
+    n2 = html.escape(cert["spouse2"])
+    reg_name = html.escape(cert["registrar"])
     all_kids = list(set(list(u_db.get("children", [])) + list(p_db.get("children", []))))
     fam_id = _family_bank_id(uid, u_db)
     fam_bal = (db['family_banks'].find_one({"_id": fam_id}) or {}).get("balance", 0) if fam_id else 0
 
+    bonus_line = ""
+    if cert.get("new_rewards"):
+        bonus_line = "\n🎁 <b>Награда за годовщину:</b> " + ", ".join(cert["new_rewards"]) + "!"
+
     text = (
         f"🧥 <b>{n1}</b> расстёгивает пиджак и достаёт из нагрудного кармана ламинированный бланк Госзнака:\n\n"
         f"📜 <b>СВИДЕТЕЛЬСТВО О БРАКЕ</b>\n"
-        f"<code>СЕРИЯ {cert_num}</code>\n"
+        f"<code>СЕРИЯ {cert['number']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💍 <b>Супруг I:</b> <a href='tg://user?id={uid}'>{n1}</a>\n"
         f"💍 <b>Супруг II:</b> <a href='tg://user?id={partner_id}'>{n2}</a>\n"
-        f"📅 <b>Регистрация:</b> {dt_str} ({days_str})\n"
+        f"📅 <b>Дата свадьбы:</b> {cert['date']} ({cert['days']} дн. вместе)\n"
+        f"🎊 <b>Статус союза:</b> {cert['anniversary']} <i>({cert['next_anniversary']})</i>\n"
         f"👦 <b>Сыновей в семье:</b> {len(all_kids)} / 5\n"
         f"🏦 <b>Семейный общак:</b> {fam_bal} 💎\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"👩‍⚖️ <i>Штамп ЗАГСа: {reg_name}</i>"
+        f"👩‍⚖️ <i>Штамп ЗАГСа: {reg_name}</i>{bonus_line}"
     )
     bot.reply_to(message, text, parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower().startswith(('!дата брака', 'дата брака')))
+def set_custom_marriage_date_cmd(message):
+    import datetime, time
+    uid = message.from_user.id
+    u_db = paid_collection.find_one({"uid": uid}) or {}
+    partner_id = u_db.get("partner_id")
+    if not partner_id:
+        return bot.reply_to(message, "💍 Вы не состоите в браке!")
+    if u_db.get("marriage_date_locked"):
+        return bot.reply_to(message, "📜 Историческая дата вашего брака уже зафиксирована в архиве ЗАГСа!")
+    parts = message.text.strip().split()
+    if len(parts) < 3:
+        return bot.reply_to(message, "📅 Формат для старой гвардии (1 раз): <code>!дата брака ДД.ММ.ГГГГ</code>", parse_mode="HTML")
+    try:
+        dt = datetime.datetime.strptime(parts[2], "%d.%m.%Y")
+        ts = dt.timestamp()
+    except Exception:
+        return bot.reply_to(message, "❌ Неверный формат даты! Пример: <code>!дата брака 15.08.2026</code>", parse_mode="HTML")
+    now = time.time()
+    if ts > now or ts < now - 366 * 86400:
+        return bot.reply_to(message, "⚠️ Дата должна быть реальной (в пределах последнего года и не в будущем)!")
+    paid_collection.update_one({"uid": uid}, {"$set": {"married_at": ts, "marriage_date_locked": True}})
+    paid_collection.update_one({"uid": partner_id}, {"$set": {"married_at": ts, "marriage_date_locked": True}})
+    cert = resolve_and_sync_marriage_info(uid, paid_collection.find_one({"uid": uid}) or {})
+    bot.reply_to(message, f"✅ <b>Архив ЗАГСа обновлён!</b>\nДата вашей свадьбы: <b>{cert['date']}</b> ({cert['days']} дн. вместе).\nТекущая годовщина: <b>{cert['anniversary']}</b>!", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == '!развод')
 def divorce(message):
@@ -4324,9 +4471,8 @@ def text_profile(message):
         title = "👑 VIP-Персона" if user_data.get("is_vip") else "🔴 Гражданин Империи"
         
         # 🔥 АВТО-ТИТУЛЫ ПО КАРМЕ 🔥
-        if karma >= 100: title = "😇 Святой (Неприкасаемый)"
-        elif karma <= -100: title = "💀 Враг Народа (Опущенный)"
-        elif karma <= -50: title = "🗑 Изгой (Под надзором)"
+        if karma >= 10 or karma <= -50:
+            title = karma_rank_title(karma)
         
         # Сборка ачивок
         ach_map = {a["id"]: a["icon"] for a in ACHIEVEMENT_CATALOG}
@@ -4708,8 +4854,7 @@ def p2p_transfer(message):
         return bot.reply_to(message, f"💸 У вас нет {amount} 💎 для перевода!")
         
     # Налог Скайнета (5%)
-    commission = int(amount * 0.05)
-    if commission < 1: commission = 1
+    commission = 0 if user_data.get('social_rating', 0) >= 10000 else max(1, int(amount * 0.05))
     final_amount = amount - commission
     
     # Атомарное списание (дополнительная защита)
@@ -5143,30 +5288,67 @@ def run_away_child(message):
     except Exception:
         pass
 
-# ================= ПРАВО ВЕТО (ДЛЯ СВЯТЫХ) =================
+# ================= ПРАВО ВЕТО (ДЛЯ СВЯТЫХ И ЛЕГЕНД) И !КАРЦЕР =================
+def _free_amnesty_available(uid, karma):
+    max_free = 2 if karma >= 6500 else (1 if karma >= 800 else 0)
+    if max_free <= 0:
+        return False
+    return craft_slot(uid, "free_amnesty", max_free)
+
 @bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!амнистия', 'амнистия')))
 def elite_amnesty(message):
     uid = message.from_user.id
     target_id = message.reply_to_message.from_user.id
-    
     user_data = paid_collection.find_one({"uid": uid}) or {}
     karma = user_data.get("social_rating", 0)
-    
+
     if karma < 100:
-        return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
-        
-    import time
+        return bot.reply_to(message, "⚖️ Право Вето доступно со звания Святой (Карма 100+). Очистите свою душу!")
     if target_id == uid:
         return bot.reply_to(message, "🕊 Амнистию нельзя применить к самому себе.")
-    # Атомарно списываем 20 кармы (только если у Святого всё ещё 100+)
-    paid_ok = paid_collection.find_one_and_update({"uid": uid, "social_rating": {"$gte": 100}}, {"$inc": {"social_rating": -20}})
-    if not paid_ok:
-        return bot.reply_to(message, "⚖️ Право Вето доступно только Святым (Карма 100+). Очистите свою душу!")
-    # Снимаем все муты
-    db['skynet_tasks'].insert_one({"uid": target_id, "action": "full_unban", "timestamp": time.time()})
-    paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": ""}})
-    
-    bot.reply_to(message, f"🕊 <b>ПРАВО ВЕТО ПРИМЕНЕНО!</b>\n\nСвятой гражданин пожертвовал 20 Кармы, чтобы очистить грехи <a href='tg://user?id={target_id}'>{message.reply_to_message.from_user.first_name}</a>!\n\n<i>Тюремные замки открыты. Все блокировки сняты.</i>", parse_mode="HTML")
+
+    from utils.validators import angel_check
+    ok, why = angel_check(uid, target_id)
+    if not ok:
+        return bot.reply_to(message, why)
+
+    import time, html
+    used_free = _free_amnesty_available(uid, karma)
+    if not used_free:
+        paid_ok = paid_collection.find_one_and_update({"uid": uid, "social_rating": {"$gte": 100}}, {"$inc": {"social_rating": -20}})
+        if not paid_ok:
+            return bot.reply_to(message, "⚖️ Недостаточно Кармы для Права Вето!")
+        cost_note = "пожертвовал 20 Кармы"
+    else:
+        cost_note = "использовал привилегию высокого звания (БЕСПЛАТНО раз в сутки)"
+
+    db['skynet_tasks'].insert_one({"uid": target_id, "action": "global_unmute", "source": "angel", "timestamp": time.time()})
+    paid_collection.update_one({"uid": target_id}, {"$unset": {"game_mute_until": "", "game_mute_reason": ""}})
+    t_name = html.escape(message.reply_to_message.from_user.first_name)
+    bot.reply_to(message, f"🕊 <b>ПРАВО ВЕТО ПРИМЕНЕНО!</b>\n\nГражданин {cost_note}, чтобы освободить <a href='tg://user?id={target_id}'>{t_name}</a>!\n<i>Игровой мут снят.</i>", parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.reply_to_message and m.text and m.text.lower().startswith(('!карцер', 'карцер')))
+def premier_karcer_cmd(message):
+    uid = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    if uid == target_id or message.reply_to_message.from_user.is_bot:
+        return
+    u_data = paid_collection.find_one({"uid": uid}) or {}
+    karma = u_data.get("social_rating", 0)
+    if karma < 1200:
+        return bot.reply_to(message, "🔒 Сажать в Карцер могут только граждане со званием <b>Премьер (Карма 1200+)</b> и выше!", parse_mode="HTML")
+    t_data = paid_collection.find_one({"uid": target_id}) or {}
+    if t_data.get("social_rating", 0) >= 50:
+        return bot.reply_to(message, "🛡 Почётных граждан (Карма 50+) нельзя отправить в Карцер без Народного Суда!")
+    if not craft_slot(uid, "premier_karcer", 1):
+        return bot.reply_to(message, "⏳ Привилегия «Карцер» доступна 1 раз в сутки. Приходите завтра!")
+    mins = 20 if karma >= 6500 else 10
+    if mute_user(message.chat.id, target_id, mins * 60, "Посажен в Карцер высшим званием"):
+        import html
+        bot.reply_to(message, f"⛓ <b>В КАРЦЕР!</b>\nПо приказу высшего звания <a href='tg://user?id={target_id}'>{html.escape(message.reply_to_message.from_user.first_name)}</a> отправлен в Карцер на {mins} минут!", parse_mode="HTML")
+    else:
+        craft_release(uid, "premier_karcer")
+        bot.reply_to(message, "🛡 Не удалось применить Карцер (возможно, это администратор чата).")
 
 # ================= ИСКУПЛЕНИЕ ГРЕХОВ (ДЛЯ ИЗГОЕВ) =================
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['!искупление', 'искупление'])
@@ -5292,6 +5474,9 @@ def public_court(message):
     
     GOAL = 1000
     extra_msg = ""
+    if target_karma >= 2700:
+        paid_collection.update_one({"uid": initiator_id}, {"$inc": {"bounty_points": 100}})
+        return bot.reply_to(message, "🔮 <b>ИММУНИТЕТ ИМПЕРАТОРА!</b> Граждане со званием Император (Карма 2700+) и выше неподсудны Народному Суду! Ваши 100 💎 возвращены.", parse_mode="HTML")
     if target_karma >= 50:
         GOAL = 2000
         extra_msg = "\n🌟 <i>Цель имеет безупречную репутацию! Подкупить Скайнет будет в 2 раза дороже.</i>"
@@ -5962,7 +6147,9 @@ def prison_break(message):
         import time, random
         time.sleep(3)
 
-        if random.randint(1, 100) <= 40:
+        _savior_k = (paid_collection.find_one({'uid': uid}) or {}).get('social_rating', 0)
+        _esc_chance = 65 if _savior_k >= 4000 else (55 if _savior_k >= 550 else 40)
+        if random.randint(1, 100) <= _esc_chance:
             # УСПЕХ: Снимаем мут и гуантанамо
             db['skynet_tasks'].insert_one({"uid": target_id, "action": "global_unmute", "source": "escape", "timestamp": time.time()})
             paid_collection.update_one({"uid": target_id}, {"$unset": {"guantanamo_until": "", "game_mute_until": "", "game_mute_reason": ""}})
