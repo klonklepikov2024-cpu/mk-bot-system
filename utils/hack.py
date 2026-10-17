@@ -98,7 +98,9 @@ def run_hack(uid, target_uid):
     # 2. Есть ли что красть (копилка жертвы грабится только в Судную ночь)
     family_id = target_fam if is_anarchy else None
     family_bal = (db['family_banks'].find_one({"_id": family_id}) or {}).get("balance", 0) if family_id else 0
-    if target_data.get("bounty_points", 0) < MIN_WALLET and family_bal <= 0:
+    from utils import vault as _vault
+    vault_exposed = _vault.exposed_of(target_uid) if is_anarchy else 0   # незащищённая часть банковской ячейки
+    if target_data.get("bounty_points", 0) < MIN_WALLET and family_bal <= 0 and vault_exposed <= 0:
         return True, "Жертва слишком бедна, нечего красть!"
 
     # 3. Иммунитет жертвы после прошлого взлома (в Судную ночь не действует)
@@ -175,10 +177,17 @@ def run_hack(uid, target_uid):
                 f"🚨 <b>СЕМЕЙНЫЙ СЧЁТ ВЗЛОМАН!</b>\nВ рамках Судной Ночи хакер атаковал вашу семью и украл "
                 f"<b>{family_stolen} 💎</b> из вашей общей копилки!")
 
+    # 9. Успех: незащищённая часть банковской ячейки (только Судная ночь)
+    vault_stolen = _vault.steal(target_uid, uid) if is_anarchy else 0
+    if vault_stolen > 0:
+        extra.append(f"🏦 ВСКРЫТА ЯЧЕЙКА! Незащищённая часть банковской ячейки жертвы — ещё {vault_stolen} 💎!")
+        victim_msg += (f"\n\n🏦 Из незащищённой части вашей банковской ячейки украдено <b>{vault_stolen} 💎</b>. "
+                       f"Тариф «Кэшбэк» защищает ячейку на 100 %.")
+
     victim_msg += "\n<i>Срочно покупайте Щиты на Ферме или в Рюкзаке.</i>"
     _notify(target_uid, victim_msg)
 
-    total = stolen + family_stolen
+    total = stolen + family_stolen + vault_stolen
     head = (f"💻 ВЗЛОМ УСПЕШЕН!\nВы обошли защиту и украли {total} 💎 у жертвы!" if total > 0
             else "💻 Вирус прошёл, но красть оказалось нечего.")
     return False, "\n".join([head] + extra)

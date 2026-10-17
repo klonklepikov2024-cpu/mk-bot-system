@@ -428,6 +428,11 @@ def process_payout_details(message, cb_balance, method):
     if not details or cb_balance < withdraw_min(method):
         bot.send_message(message.chat.id, "❌ Некорректная заявка. Начните заново.")
         return
+    from utils.validators import month_cap_error
+    _cap_err = month_cap_error(uid, cb_balance)
+    if _cap_err:
+        bot.send_message(message.chat.id, f"⛔️ Вывод через бота — весь баланс сразу, а действует {_cap_err}\nЧасть суммы можно вывести в Мини-приложении → Финансы.")
+        return
 
     # ⬇ было: find_one + проверка + $set current_balance - cb_balance
     charged = paid_collection.find_one_and_update(

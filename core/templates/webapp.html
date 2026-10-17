@@ -679,6 +679,30 @@
             </div>
         </div>
 
+        <!-- 🏦 БАНКОВСКАЯ ЯЧЕЙКА: защита от грабежа в Судную ночь -->
+        <div id="vaultCard" class="surface rounded-3xl p-4 mb-4 shadow-xl border border-amber-500/25 hidden">
+            <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center gap-2"><span class="text-lg">🏦</span><h3 class="font-extrabold text-base">Банковская ячейка</h3></div>
+                <button onclick="vaultHelp()" class="text-[11px] text-amber-300/90 font-bold">как работает ›</button>
+            </div>
+            <div class="flex items-end justify-between mb-2">
+                <div><div class="text-[10px] text-gray-400 uppercase tracking-wider">В ячейке</div><div class="font-black text-2xl" id="vBal">0 💎</div></div>
+                <div class="text-right"><div class="text-[10px] text-gray-400 uppercase tracking-wider">Под защитой</div><div class="font-black text-lg text-emerald-400" id="vSafe">0</div></div>
+            </div>
+            <div class="h-2 bg-black/50 rounded-full overflow-hidden mb-1.5"><div id="vBar" class="h-2 bg-gradient-to-r from-emerald-500 to-teal-400 transition-all" style="width:0%"></div></div>
+            <div class="text-[11px] text-gray-400 mb-3 leading-snug" id="vNote"></div>
+            <div class="grid grid-cols-2 bg-black/40 p-1 rounded-2xl border border-white/10 mb-2">
+                <button id="vModePts" onclick="vaultMode('points')" class="py-2 rounded-xl font-bold text-xs text-gray-400 transition-all">💎 Очки · защита <span id="vPtsPct">70</span>%</button>
+                <button id="vModeRub" onclick="vaultMode('rub')" class="py-2 rounded-xl font-bold text-xs text-gray-400 transition-all">💳 Кэшбэк · защита 100%</button>
+            </div>
+            <div class="text-[11px] text-gray-300 mb-3 leading-snug" id="vFee"></div>
+            <div class="flex gap-2">
+                <input id="vAmount" type="number" inputmode="numeric" min="1" placeholder="Сумма 💎" class="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-amber-400/60">
+                <button onclick="vaultAct('deposit')" class="px-3 py-2 rounded-xl font-bold text-xs bg-gradient-to-b from-amber-400 to-amber-500 text-black active:scale-95 transition-transform">Положить</button>
+                <button onclick="vaultAct('withdraw')" class="px-3 py-2 rounded-xl font-bold text-xs surface border border-white/15 active:scale-95 transition-transform">Снять</button>
+            </div>
+        </div>
+
         <div class="surface rounded-3xl p-4 mb-6 shadow-xl border border-white/10">
             <div class="flex justify-between items-center mb-3">
                 <div class="flex items-center gap-2">
@@ -1804,7 +1828,7 @@
             if(tabId === 'profile') loadProfile();
             if(tabId === 'giveaways') loadGiveaways();
             if(tabId === 'market') loadMarket(); 
-            if(tabId === 'inventory') loadInventory();
+            if(tabId === 'inventory') { loadInventory(); loadVault(); }
             if(tabId === 'tasks') loadTasks();
             if(tabId === 'auction') loadAuction(); 
             if(tabId === 'finance') { loadProfile(); loadCpa(); }
@@ -1900,6 +1924,16 @@
             { rank: 16, min: 15000, name: 'Великий',          world: 'supreme',   c1: '#ec4899', c2: 'rgba(236,72,153,0.40)', icon: '🌌', perks: ['Космическое фиолетово-золотое пламя Великого', '×2 Очков за Ежедневный бонус и +3 попытки взлома Сейфа в сутки', 'Вечный титул Верховного Арбитра Матрицы'] }
         ];
 
+        // ⛓ Тёмная сторона: ограничения при минусе в карме (совпадают с сервером)
+        const KARMA_DARK_RANKS = [
+            { max: -10,  name: 'Подозрительный', icon: '🫥', perks: ['Ежедневный бонус −10%'] },
+            { max: -25,  name: 'Хулиган',        icon: '🗑', perks: ['Ежедневный бонус −20%'] },
+            { max: -50,  name: 'Изгой',          icon: '⛓', perks: ['Пейджер-режим: в чатах только текст (фото, стикеры, войсы удаляются)', 'Добрые RP-действия запрещены', 'Налог в Рулетке 50%, Кот в Сундуке злее', 'МФО под 40–140%', 'Хакеры крадут вдвое больше, защита после взлома всего 2 ч', 'Нельзя ставить минусы другим', 'Ежедневный бонус −30%, клеймо «Изгой»'] },
+            { max: -75,  name: 'Злодей',         icon: '😈', perks: ['Налог на слова: 5 💎 за каждое сообщение (нет очков — мут 12 ч)'] },
+            { max: -90,  name: 'Тень',           icon: '👻', perks: ['Каждое 4-е сообщение теряется'] },
+            { max: -100, name: 'Враг народа',    icon: '💀', perks: ['Мут 48 ч, карма сбрасывается до −50', 'МФО закрыто, клеймо «Опущенный»'] }
+        ];
+
         window._lastUserKarma = 0;
 
         function openKarmaRanksModal() {
@@ -1931,6 +1965,18 @@
             KARMA_GALAXY_RANKS.forEach((r, idx) => { if (kv >= r.min) curRankIdx = idx; });
 
             const listEl = document.getElementById('karmaRanksList');
+            const darkHtml = '<div class="pt-3 mt-1 text-center"><div class="text-[11px] font-black uppercase tracking-widest text-red-400">⛓ Тёмная сторона</div>' +
+                '<div class="text-[11px] text-gray-400 mt-1 leading-snug">Ограничения при минусе в карме. Выход: <b class="text-gray-200">!искупление</b> (1 🛡 или 5 🧩 = +20) и +1 в день за спокойное общение (10+ сообщений без мута).</div></div>' +
+                KARMA_DARK_RANKS.map(r => {
+                    const here = kv <= r.max;
+                    return `<div class="rounded-2xl p-3 border ${here ? 'border-red-500/60 bg-red-950/30' : 'border-white/10 bg-black/30'}">
+                        <div class="flex justify-between items-center mb-1.5">
+                            <span class="font-black text-sm ${here ? 'text-red-300' : 'text-gray-200'}">${r.icon} ${r.name}</span>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/45 text-gray-300 border border-white/10">от ${r.max} кармы</span>
+                        </div>
+                        ${r.perks.map(p => `<div class="flex items-start gap-2 text-xs leading-snug"><span class="font-black text-red-400">−</span><span class="text-gray-300">${p}</span></div>`).join('')}
+                    </div>`;
+                }).join('');
             listEl.innerHTML = KARMA_GALAXY_RANKS.map((r, idx) => {
                 const isUnlocked = kv >= r.min;
                 const isCurrent = idx === curRankIdx;
@@ -1970,7 +2016,7 @@
 
                     <div class="space-y-1.5 mt-3 pt-2.5 border-t border-white/10">${perksHtml}</div>
                 </div>`;
-            }).join('');
+            }).join('') + darkHtml;
 
             document.getElementById('karmaRanksModal').classList.remove('hidden');
         }
@@ -2690,6 +2736,66 @@
                     loadInventory(); loadProfile();
                 }
             });
+        }
+
+        // ================= 🏦 БАНКОВСКАЯ ЯЧЕЙКА =================
+        function loadVault() {
+            apiCall('/api/vault').then(d => {
+                const card = document.getElementById('vaultCard');
+                if (!card || !d || d.error) return;
+                window._vault = d;
+                if (!d.on) { card.classList.add('hidden'); return; }
+                card.classList.remove('hidden');
+                document.getElementById('vBal').innerText = fmtNum(d.balance) + ' 💎';
+                document.getElementById('vSafe').innerText = fmtNum(d.safe) + ' 💎';
+                document.getElementById('vBar').style.width = (d.balance > 0 ? Math.round(d.safe / d.balance * 100) : 0) + '%';
+                document.getElementById('vPtsPct').innerText = d.points_pct;
+                let note;
+                if (d.anarchy) note = '🔥 Идёт Судная ночь — банк закрыт до утра.';
+                else if (d.fresh > 0) note = `🚚 ${fmtNum(d.fresh)} 💎 в пути — под защитой через ${Math.max(1, Math.ceil(d.fresh_left / 3600))} ч.`;
+                else if (d.balance > 0) note = d.exposed > 0 ? `В Судную ночь хакеры могут вынести только незащищённую часть: ${fmtNum(d.exposed)} 💎.` : 'Ячейка защищена полностью — Судная ночь ей не страшна.';
+                else note = `Положите от ${fmtNum(d.min_deposit)} 💎 — их не ограбят в Судную ночь.`;
+                document.getElementById('vNote').innerText = note;
+                const on = 'py-2 rounded-xl font-bold text-xs text-white bg-gradient-to-b from-amber-500 to-amber-600 shadow-md transition-all';
+                const off = 'py-2 rounded-xl font-bold text-xs text-gray-400 transition-all';
+                document.getElementById('vModePts').className = d.mode === 'rub' ? off : on;
+                document.getElementById('vModeRub').className = d.mode === 'rub' ? on : off;
+                document.getElementById('vModePts').innerHTML = `💎 Очки · защита <span id="vPtsPct">${d.points_pct}</span>%`;
+                document.getElementById('vFee').innerText = d.balance > 0
+                    ? (d.mode === 'rub' ? `Абонентка: ${fmtNum(d.fee_rub)} ₽ в сутки с кэшбэка (у вас ${fmtNum(d.cashback)} ₽).` : `Абонентка: ${fmtNum(d.fee_points)} 💎 в сутки.`) + ' Списывается ночью и сгорает.'
+                    : `Абонентка от ${fmtNum(d.fee_min)} 💎 в сутки — зависит от суммы.`;
+            });
+        }
+        function vaultAct(action) {
+            const v = parseInt(document.getElementById('vAmount').value || '0', 10);
+            if (!v || v <= 0) { customAlert('Введите сумму в очках.', 'Банк', '🏦'); return; }
+            safeHaptic('impact', 'light');
+            apiCall('/api/vault_action', {action: action, amount: v}).then(d => {
+                if (d.error) { customAlert(d.error, 'Банк', '⚠️'); return; }
+                customAlert(d.msg, 'Банк', '🏦');
+                document.getElementById('vAmount').value = '';
+                loadVault(); loadInventory(); loadProfile();
+            });
+        }
+        function vaultMode(mode) {
+            const d = window._vault || {};
+            if (d.mode === mode) return;
+            apiCall('/api/vault_action', {action: 'mode', mode: mode}).then(r => {
+                if (r.error) { customAlert(r.error, 'Банк', '⚠️'); return; }
+                customAlert(r.msg, 'Банк', '🏦'); loadVault();
+            });
+        }
+        function vaultHelp() {
+            const d = window._vault || {};
+            customAlert(
+                'Ячейка прячет очки от грабежа в Судную ночь.\n\n' +
+                `• Тариф «Очки»: под защитой ${d.points_pct || 70}%, абонентка списывается очками.\n` +
+                '• Тариф «Кэшбэк»: под защитой 100%, абонентка списывается рублями кэшбэка.\n' +
+                `• Положенное защищается через ${d.fresh_h || 12} ч («деньги в пути»).\n` +
+                `• Абонентка раз в сутки: ${d.fee_min || 50} 💎 + процент от суммы, считается от максимума за сутки.\n` +
+                '• Не хватит кэшбэка — тариф сменится на «Очки». Не хватит очков — ячейка закроется, остаток вернётся в кошелёк.\n' +
+                '• Во время Судной ночи банк закрыт.',
+                'Банковская ячейка', '🏦');
         }
 
         function loadInventory() {

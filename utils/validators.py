@@ -74,6 +74,21 @@ def can_withdraw(uid):
         return False, f"вывод откроется после {MIN_MSGS_TO_WITHDRAW} сообщений в наших чатах или получения статуса (VIP / BEYOND / верификация / индульгенция / тег)."
     return True, ""
 
+def month_cap_error(uid, amount):
+    """Лимит вывода кэшбэка на человека за 30 дней (панель /glaz, 0 — без лимита). -> текст ошибки или None"""
+    from utils.netcfg import cfg
+    cap = int(cfg("cb_month_cap") or 0)
+    if cap <= 0:
+        return None
+    since = time.time() - 30 * 86400
+    r = list(db['withdrawals'].aggregate([
+        {"$match": {"user_id": uid, "timestamp": {"$gte": since}, "status": {"$in": ["pending", "paid"]}}},
+        {"$group": {"_id": None, "s": {"$sum": "$amount"}}}]))
+    used = int(r[0]["s"]) if r else 0
+    if used + amount > cap:
+        return f"лимит вывода — {cap}₽ за 30 дней. Уже выведено/в заявках: {used}₽, доступно: {max(0, cap - used)}₽."
+    return None
+
 def take_points_capped(uid, amount):
     """Атомарно забирает до `amount` очков, но НЕ глубже нуля. Возвращает реально снятое."""
     old = paid_collection.find_one_and_update(

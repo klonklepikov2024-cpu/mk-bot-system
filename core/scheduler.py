@@ -217,6 +217,45 @@ def luxury_tax():
     db['settings'].update_one({"_id": "lux_tax_run"}, {"$set": {"report": rep}})
     logger.info(f"🏛 Налог на роскошь: {rep}")
 
+
+def vault_fees():
+    """Раз в сутки: абонентка банковских ячеек (utils/vault.py). Время — то же, что у налога на роскошь."""
+    from core.bot import bot
+    from utils.vault import charge_fees
+    try:
+        charge_fees(bot, datetime.datetime.now(tz).strftime("%Y-%m-%d"))
+    except Exception as e:
+        logger.warning(f"vault_fees: {e}")
+
+
+def karma_regen():
+    """Раз в сутки: +N кармы тем, кто в минусе, но вчера нормально общался (10+ сообщений) и не в муте."""
+    from pymongo.errors import DuplicateKeyError
+    n = int(cfg("karma_regen_per_day") or 0)
+    if n <= 0:
+        return
+    today = datetime.datetime.now(tz).strftime("%Y-%m-%d")
+    try:
+        db['settings'].find_one_and_update({"_id": "karma_regen_run", "day": {"$ne": today}},
+                                           {"$set": {"day": today}}, upsert=True)
+    except DuplicateKeyError:
+        return
+    y = (datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5))) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    active = {d["uid"] for d in db['tasks_progress'].find({"date": y, "messages": {"$gte": 10}}, {"uid": 1})}
+    if not active:
+        return
+    now = time.time()
+    cnt = 0
+    for u in paid_collection.find({"uid": {"$in": list(active)}, "social_rating": {"$lt": 0}}, {"uid": 1, "game_mute_until": 1}):
+        if float(u.get("game_mute_until") or 0) > now:
+            continue
+        uu = db['users'].find_one({"_id": u["uid"]}, {"net_mute_until": 1}) or {}
+        if "net_mute_until" in uu and (int(uu.get("net_mute_until") or 0) == 0 or uu["net_mute_until"] > now):
+            continue   # в муте сети — не восстанавливаем
+        paid_collection.update_one({"uid": u["uid"], "social_rating": {"$lt": 0}}, {"$inc": {"social_rating": n}})
+        cnt += 1
+    logger.info(f"⭐ Самовосстановление кармы: +{n} у {cnt} игроков")
+
 def check_auctions_task():
     """Проверяет и завершает лоты Теневого Аукциона"""
     import time
@@ -233,14 +272,16 @@ def check_auctions_task():
             
         # Выдаем предмет победителю
         item_id = lot["type_id"]
+        # Сроки и число зарядов — из панели /glaz («🏛 Экономика»)
         if item_id == "casino_owner":
-            paid_collection.update_one({"uid": leader_uid}, {"$set": {"casino_owner_until": int(now) + (3 * 86400)}})
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"casino_owner_until": int(now) + (cfg("auction_casino_owner_days") * 86400)}})
         elif item_id == "offshore":
-            paid_collection.update_one({"uid": leader_uid}, {"$set": {"offshore_until": int(now) + (7 * 86400)}})
+            paid_collection.update_one({"uid": leader_uid}, {"$set": {"offshore_until": int(now) + (cfg("auction_offshore_days") * 86400)}})
         elif item_id == "golden_frame":
             paid_collection.update_one({"uid": leader_uid}, {"$set": {"golden_frame": True}})
         else:
-            paid_collection.update_one({"uid": leader_uid}, {"$push": {"elite_items": item_id}})
+            charges = max(1, int(cfg("auction_charges")))
+            paid_collection.update_one({"uid": leader_uid}, {"$push": {"elite_items": {"$each": [item_id] * charges}}})
             
         db['auction_lots'].update_one({"_id": lot["_id"]}, {"$set": {"status": "sold"}})
         
@@ -274,15 +315,19 @@ def auto_spawn_auction_lot():
         {"id": "raider", "name": "Рейдерский Захват", "desc": "Украсть урожай с чужой фермы (!рейд @user).", "icon": "🧲"},
         {"id": "gods_voice", "name": "Глас Бога", "desc": "Сообщение во все чаты сети (!глас текст).", "icon": "📢"},
         {"id": "guantanamo", "name": "Ордер Гуантанамо", "desc": "Неснимаемый мут на 24ч (!гуантанамо @user).", "icon": "🚷"},
-        {"id": "casino_owner", "name": "Владелец Казино", "desc": "3 дня: 10% с рулетки и дуэлей идут вам.", "icon": "🎰"},
-        {"id": "offshore", "name": "Офшорный Счет", "desc": "Неделя без комиссий на Черном Рынке.", "icon": "🏦"},
+        {"id": "casino_owner", "name": "Владелец Казино", "desc": f"{cfg('auction_casino_owner_days')} дн.: 10% с рулетки и дуэлей идут вам.", "icon": "🎰"},
+        {"id": "offshore", "name": "Офшорный Счет", "desc": f"{cfg('auction_offshore_days')} дн. без комиссий на Черном Рынке.", "icon": "🏦"},
         {"id": "master_key", "name": "Мастер-Ключ", "desc": "100% вскрытие сейфа (!вскрыть синий/красный).", "icon": "🗝"},
         {"id": "golden_frame", "name": "Золотая Рамка", "desc": "Элитный статус в профиле навсегда.", "icon": "⚜️"},
         {"id": "personal_npc", "name": "Личный NPC", "desc": "Создать свою RP-команду (!создать_нпс).", "icon": "🤖"}
     ]
     
     lot = random.choice(lots_pool)
-    end_time = int(time.time()) + (48 * 3600) # Даем 48 часов на торги (выходные)
+    _ch = max(1, int(cfg("auction_charges")))
+    if _ch > 1 and lot["id"] not in ("casino_owner", "offshore", "golden_frame"):
+        lot["desc"] += f" Зарядов: {_ch}."
+    hours = int(cfg("auction_hours"))
+    end_time = int(time.time()) + hours * 3600   # длительность торгов — из панели /glaz
     
     # Вкидываем в базу
     db['auction_lots'].insert_one({
@@ -290,7 +335,7 @@ def auto_spawn_auction_lot():
         "name": lot["name"],
         "desc": lot["desc"],
         "icon": lot["icon"],
-        "current_bid": 1000, 
+        "current_bid": cfg("auction_start_bid"), 
         "leader_uid": None,
         "end_time": end_time,
         "status": "active"
@@ -304,7 +349,7 @@ def auto_spawn_auction_lot():
         f"Скайнет выставил на торги уникальный лот:\n"
         f"<b>{lot['icon']} {lot['name']}</b>\n\n"
         f"<i>{lot['desc']}</i>\n\n"
-        f"Торги продлятся ровно 48 часов. Перебейте ставку конкурентов в Игровом Кабинете, чтобы забрать артефакт себе!"
+        f"Торги продлятся {hours} ч. Перебейте ставку конкурентов в Игровом Кабинете, чтобы забрать артефакт себе!"
     )
     
     try:
@@ -315,7 +360,7 @@ def auto_spawn_auction_lot():
         for cid in all_chats:
             try: 
                 sent_msg = bot.send_message(cid, msg_text, parse_mode="HTML", reply_markup=markup)
-                schedule_message_deletion(cid, sent_msg.message_id, 172800, bot)
+                schedule_message_deletion(cid, sent_msg.message_id, hours * 3600, bot)
                 time.sleep(0.3)
             except Exception as e: logger.debug(f"Игнор ошибки: {e}")
     except Exception as e: logger.debug(f"Игнор ошибки: {e}")
@@ -1111,6 +1156,7 @@ def _wanted_triggers():
     out["bomb_drop"] = ("interval", {"minutes": max(10, int(cfg("job_bomb_every_min")))})
     out["colorado_invasion"] = ("interval", {"minutes": max(5, int(cfg("job_beetle_every_min")))})
     h, m = _hm(cfg("lux_tax_time"), (4, 0)); out["luxury_tax"] = ("cron", {"hour": h, "minute": m})
+    out["vault_fees"] = ("cron", {"hour": h, "minute": (m + 5) % 60 if m < 55 else m})
     return out
 
 
@@ -1194,6 +1240,9 @@ def start_scheduler():
         
         # 🏛 Налог на роскошь (раз в сутки; включается и настраивается в панели /glaz)
         scheduler.add_job(luxury_tax, 'cron', hour=4, minute=0, id='luxury_tax', replace_existing=True)
+        # 🏦 Абонентка банковских ячеек (через 5 минут после налога) и ⭐ самовосстановление кармы
+        scheduler.add_job(vault_fees, 'cron', hour=4, minute=5, id='vault_fees', replace_existing=True)
+        scheduler.add_job(karma_regen, 'cron', hour=5, minute=10, id='karma_regen', replace_existing=True)
 
         # ⏰ Время и интервалы событий — из панели /glaz (проверка раз в минуту)
         scheduler.add_job(sync_job_schedule, 'interval', minutes=1, id='sync_job_schedule', replace_existing=True)

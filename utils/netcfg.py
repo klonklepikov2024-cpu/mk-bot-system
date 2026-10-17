@@ -65,11 +65,26 @@ DEFAULTS = {
     "karma_vote_cooldown_s": 120,
     "lux_tax_on": False, "lux_tax_tiers": "30000:1, 100000:2, 150000:3",
     "lux_tax_wallets": True, "lux_tax_time": "04:00", "lux_tax_notify": True,
+
+    # 💸 Кэшбэк: краны и предохранитель
+    "cb_month_cap": 0, "money_tree_rub": "10, 30", "agent_case_cash_rub": 500, "quest_comp_rub": 500,
+    # 🔨 Аукцион и артефакты
+    "auction_hours": 48, "auction_start_bid": 1000, "auction_step": 100, "auction_charges": 1,
+    "auction_casino_owner_days": 3, "auction_offshore_days": 7,
+    # 👶 / 🔥 прочие цены
+    "adopt_price": 1000, "anarchy_price": 10000, "anarchy_minutes": 60,
+    # ⭐ Карма: минусы и самовосстановление
+    "karma_minus_cooldown_h": 6, "karma_minus_daily_cap": 20, "karma_regen_per_day": 1,
+    "karma_bonus_penalty": "10, 20, 30",
+    # 🏦 Банковская ячейка
+    "vault_on": True, "vault_tiers": "0:0.5, 30000:1.5, 100000:2.5, 150000:3.5", "vault_fee_min": 50,
+    "vault_points_protect_pct": 70, "vault_rub_discount_pct": 50, "vault_fresh_h": 12, "vault_min_deposit": 500,
 }
 
 # Где 0 — осмысленное значение (выключено / без шанса), а не «пусто»
 _ZERO_OK = {"bonus_shard_pct", "casino_tax_pct", "casino_tax_outcast_pct", "casino_mini_shards", "casino_jackpot_points",
-            "safe_blue_tick", "safe_blue_start", "safe_red_start", "hack_chance", "anniv_reward_pct"}
+            "safe_blue_tick", "safe_blue_start", "safe_red_start", "hack_chance", "anniv_reward_pct",
+            "cb_month_cap", "agent_case_cash_rub", "quest_comp_rub", "karma_regen_per_day", "vault_fee_min"}
 
 _cache = {"t": 0.0, "d": {}}
 TTL = 20
@@ -151,6 +166,43 @@ def lux_tax_amount(balance):
         top = min(balance, tiers[i + 1][0]) if i + 1 < len(tiers) else balance
         tax += (top - thr) * pct / 100
     return int(tax)
+
+
+def _tiers0(key):
+    """«0:2, 50000:3» -> [(0, 2.0), (50000, 3.0)] (порог может быть 0)"""
+    for src in (cfg(key), DEFAULTS[key]):
+        try:
+            out = []
+            for part in str(src).replace(";", ",").split(","):
+                if part.strip():
+                    a, b = part.split(":")
+                    out.append((int(float(a)), float(b)))
+            if out and all(a >= 0 and b >= 0 for a, b in out):
+                return sorted(out)
+        except ValueError:
+            pass
+    return []
+
+
+def vault_fee_points(balance):
+    """Абонентка ячейки за сутки: минимум + ступени «порог:% в сутки» (каждая ставка — со своей части)."""
+    tiers = _tiers0("vault_tiers")
+    fee = 0.0
+    for i, (thr, pct) in enumerate(tiers):
+        if balance <= thr:
+            break
+        top = min(balance, tiers[i + 1][0]) if i + 1 < len(tiers) else balance
+        fee += (top - thr) * pct / 100
+    return int(cfg("vault_fee_min")) + int(fee)
+
+
+def karma_bonus_mult(karma):
+    """Штраф к ежедневному бонусу за минус в карме: «10, 20, 30» — % при −10 / −25 / −50 и ниже."""
+    v = (_ints("karma_bonus_penalty") + [0, 0, 0])[:3]
+    if karma <= -50: return max(0, 100 - v[2]) / 100
+    if karma <= -25: return max(0, 100 - v[1]) / 100
+    if karma <= -10: return max(0, 100 - v[0]) / 100
+    return 1.0
 
 
 def lux_tax_free_limit():
