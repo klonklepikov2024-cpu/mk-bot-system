@@ -145,8 +145,77 @@ def check_giveaways_task():
         broadcast_teaser(text, "🎫 Забрать билет", "giveaways")
 
 def tick_blue_safe():
-    """Каждую минуту добавляем 5 очков в Сейф Данных"""
-    db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": 5}})
+    """Каждую минуту добавляем очки в Сейф Данных (сколько — в панели /glaz, 0 — выключено)"""
+    n = int(cfg("safe_blue_tick") or 0)
+    if n > 0:
+        db['safes_state'].update_one({"_id": "safe_blue"}, {"$inc": {"balance": n}})
+
+
+# ================= 🏛 НАЛОГ НА РОСКОШЬ =================
+def luxury_tax():
+    """Раз в сутки: прогрессивный сбор с больших семейных копилок (и, если включено, кошельков).
+    Очки СГОРАЮТ (не в сейф): это сток против инфляции. Ступени и время — в панели /glaz."""
+    from pymongo.errors import DuplicateKeyError
+    from utils.netcfg import lux_tax_amount, lux_tax_free_limit
+    from database.mongo import log_ledger
+    from core.bot import bot
+    if not cfg("lux_tax_on"):
+        return
+    today = datetime.datetime.now(tz).strftime("%Y-%m-%d")
+    try:   # один раз в сутки, даже если планировщик запущен в нескольких процессах
+        db['settings'].find_one_and_update({"_id": "lux_tax_run", "day": {"$ne": today}},
+                                           {"$set": {"day": today, "ts": time.time()}}, upsert=True)
+    except DuplicateKeyError:
+        return
+    free = lux_tax_free_limit()
+    notify = cfg("lux_tax_notify")
+    from config import ADMIN_CHAT_IDS, OWNER_ID
+    staff = set(ADMIN_CHAT_IDS) | {OWNER_ID}
+    rep = {"banks_n": 0, "banks_sum": 0, "wallets_n": 0, "wallets_sum": 0}
+
+    def _dm(uid, text):
+        if not notify or not uid:
+            return
+        try:
+            bot.send_message(uid, text, parse_mode="HTML")
+        except Exception:
+            pass
+
+    # 1. Семейные копилки
+    for fam in db['family_banks'].find({"balance": {"$gt": free}}, {"balance": 1}):
+        bal = int(fam.get("balance") or 0)
+        tax = lux_tax_amount(bal)
+        if tax <= 0:
+            continue
+        if not db['family_banks'].find_one_and_update({"_id": fam["_id"], "balance": {"$gte": tax}},
+                                                      {"$inc": {"balance": -tax}, "$set": {"lux_tax_last": time.time()}}):
+            continue
+        log_ledger(None, "bounty_points", -tax, reason="scheduler.luxury_tax_bank")
+        rep["banks_n"] += 1; rep["banks_sum"] += tax
+        ids = [int(x) for x in str(fam["_id"]).split("_")[1:] if x.lstrip("-").isdigit()]
+        for u in ids:
+            _dm(u, f"🏛 <b>Налог на роскошь</b>\n\nС семейного фонда списано <b>{tax} 💎</b> (было {bal} 💎).\n"
+                   f"<i>Налог берётся только с суммы выше {free} 💎 и сгорает. Тратьте — копить миллионы стало дорого.</i>")
+
+    # 2. Личные кошельки
+    if cfg("lux_tax_wallets"):
+        for u in paid_collection.find({"bounty_points": {"$gt": free}}, {"uid": 1, "bounty_points": 1}):
+            uid = u.get("uid")
+            if not uid or uid in staff:
+                continue
+            bal = int(u.get("bounty_points") or 0)
+            tax = lux_tax_amount(bal)
+            if tax <= 0:
+                continue
+            if not paid_collection.find_one_and_update({"uid": uid, "bounty_points": {"$gte": tax}},
+                                                       {"$inc": {"bounty_points": -tax}}):
+                continue
+            rep["wallets_n"] += 1; rep["wallets_sum"] += tax
+            _dm(uid, f"🏛 <b>Налог на роскошь</b>\n\nС вашего кошелька списано <b>{tax} 💎</b> (было {bal} 💎).\n"
+                     f"<i>Налог берётся только с суммы выше {free} 💎 и сгорает.</i>")
+
+    db['settings'].update_one({"_id": "lux_tax_run"}, {"$set": {"report": rep}})
+    logger.info(f"🏛 Налог на роскошь: {rep}")
 
 def check_auctions_task():
     """Проверяет и завершает лоты Теневого Аукциона"""
@@ -1041,6 +1110,7 @@ def _wanted_triggers():
         out[_AUCTION_ID if n == 1 else f"{_AUCTION_ID}_{n}"] = ("cron", {"day_of_week": dow, "hour": h, "minute": m})
     out["bomb_drop"] = ("interval", {"minutes": max(10, int(cfg("job_bomb_every_min")))})
     out["colorado_invasion"] = ("interval", {"minutes": max(5, int(cfg("job_beetle_every_min")))})
+    h, m = _hm(cfg("lux_tax_time"), (4, 0)); out["luxury_tax"] = ("cron", {"hour": h, "minute": m})
     return out
 
 
@@ -1122,6 +1192,9 @@ def start_scheduler():
         scheduler.add_job(expire_temp_tags, 'interval', minutes=5, id='expire_temp_tags', replace_existing=True)
         scheduler.add_job(promo_expiry_job, 'cron', hour=11, minute=0, id='promo_expiry', replace_existing=True)
         
+        # 🏛 Налог на роскошь (раз в сутки; включается и настраивается в панели /glaz)
+        scheduler.add_job(luxury_tax, 'cron', hour=4, minute=0, id='luxury_tax', replace_existing=True)
+
         # ⏰ Время и интервалы событий — из панели /glaz (проверка раз в минуту)
         scheduler.add_job(sync_job_schedule, 'interval', minutes=1, id='sync_job_schedule', replace_existing=True)
 

@@ -33,7 +33,7 @@ import handlers.contests
 import handlers.market
 import handlers.start_menu
 from handlers.casino import create_unique_promo, msk_today, msk_day_of, msk_time_left
-from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, exchange_packs, withdraw_min, weighted, odds, _ints  # настройки из панели /glaz
+from utils.netcfg import cfg, to_rub, to_points, rub_to_stars, rub_to_stars_ceil, points_per_rub, shop_packs, support_prices, exchange_packs, withdraw_min, weighted, odds, _ints, range_pair  # настройки из панели /glaz
 
 paid_collection.create_index("game_no", unique=True, sparse=True)
 
@@ -178,10 +178,15 @@ def webapp_page():
             "packs": sorted(exchange_packs().items()),
             "min_phone": cfg("cb_min_phone"), "min_crypto": withdraw_min("crypto"), "min_card": cfg("cb_min_card"),
             "spin_price": cfg("casino_spin_price"), "chest_price": cfg("chest_price"), "craft_shards": cfg("craft_shards"),
+            "potato_seed": cfg("potato_seed"), "potato_dust": cfg("potato_dust"), "potato_spray": cfg("potato_spray"),
+            "potato_spray_h": cfg("potato_spray_h"), "potato_grow_s": cfg("potato_grow_h") * 3600,
+            "hack_cost": cfg("hack_cost"), "hack_chance": cfg("hack_chance"),
         }
     except Exception:
         econ = {"packs": [(50, 50), (150, 175), (250, 300), (500, 650)], "min_phone": 500, "min_crypto": 1000,
-                "min_card": 3500, "spin_price": 50, "chest_price": 1000, "craft_shards": 50}
+                "min_card": 3500, "spin_price": 50, "chest_price": 1000, "craft_shards": 50,
+                "potato_seed": 60, "potato_dust": 100, "potato_spray": 150, "potato_spray_h": 12, "potato_grow_s": 28800,
+                "hack_cost": 200, "hack_chance": 30}
     return render_template('webapp.html', econ=econ)
 
 # ================= 🏆 ЗАЛ СЛАВЫ: КАТАЛОГ ДОСТИЖЕНИЙ =================
@@ -315,16 +320,21 @@ def resolve_and_sync_marriage_info(uid, user_db):
 
     days_cnt = max(1, int((time.time() - m_ts) // 86400) + 1)
     dt_str = datetime.datetime.fromtimestamp(m_ts).strftime("%d.%m.%Y")
+    # Награды за годовщины — по стажу брака в боте (rewards_from), а не по дате из «!дата брака»:
+    # иначе любая пара вводила дату год назад и сразу получала все годовщины (~16 тыс. 💎 + щиты).
+    reward_days = max(1, int((time.time() - (fam_doc.get("rewards_from") or m_ts)) // 86400) + 1)
 
     cur_anniv = MARRIAGE_ANNIVERSARIES[0][1]
     next_anniv_str = "Высшая ступень союза"
     claimed = set(fam_doc.get("anniversaries_claimed", []))
     newly_rewarded = []
 
+    _apct = cfg("anniv_reward_pct")   # % от таблицы наград, из панели /glaz
     for req_days, title, r_pts, r_sh, r_shards in MARRIAGE_ANNIVERSARIES:
+        r_pts, r_sh, r_shards = int(r_pts * _apct / 100), int(r_sh * _apct / 100), int(r_shards * _apct / 100)
         if days_cnt >= req_days:
             cur_anniv = title
-            if req_days > 0 and req_days not in claimed:
+            if req_days > 0 and req_days not in claimed and reward_days >= req_days:
                 res = db['family_banks'].update_one(
                     {"_id": fam_id, "anniversaries_claimed": {"$ne": req_days}},
                     {"$addToSet": {"anniversaries_claimed": req_days}, "$inc": {"balance": r_pts}},
@@ -1208,16 +1218,14 @@ def api_item_exchange():
         db_field = "jackpot_shards"
         limit_key = f"{uid}_ex_shard_{d_str}"
         _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
-        _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
-        daily_max = _c("ex_shard_limit", 30) + (20 if _uk >= 2700 else (10 if _uk >= 350 else 0)) + (20 if _uk >= 2700 else (10 if _uk >= 350 else 0))
+        daily_max = _c("ex_shard_limit", 30) + (20 if _uk >= 2700 else (10 if _uk >= 350 else 0))
         unit_price = _c("ex_shard_buy", 150) if mode == 'buy' else _c("ex_shard_sell", 100)
         item_label = "🧩"
     elif item == 'shield':
         db_field = "immunity"
         limit_key = f"{uid}_ex_shield_{d_str}"
         _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
-        _uk = (paid_collection.find_one({"uid": uid}) or {}).get("social_rating", 0)
-        daily_max = _c("ex_shield_limit", 3) + (2 if _uk >= 2700 else (1 if _uk >= 350 else 0)) + (2 if _uk >= 2700 else (1 if _uk >= 350 else 0))
+        daily_max = _c("ex_shield_limit", 3) + (2 if _uk >= 2700 else (1 if _uk >= 350 else 0))
         unit_price = _c("ex_shield_buy", 1500) if mode == 'buy' else _c("ex_shield_sell", 1000)
         item_label = "🛡"
     else:
@@ -2763,7 +2771,6 @@ def api_farm_action():
         key_type = crop.get('key')
         key_chance = crop.get('key_chance', 0)
         if karma >= 6500: key_chance += 10
-        elif karma >= 6500: key_chance += 10
         elif karma >= 50: key_chance += 5 
         
         if key_type and random.randint(1, 100) <= key_chance:
@@ -2815,11 +2822,15 @@ def api_farm_action():
 # ================= КАРТОФЕЛЬНОЕ ПОЛЕ (БЭКЕНД) =================
 
 # ================= 🥔 КОЛХОЗНОЕ ПОЛЕ 10x10 =================
-POTATO_COST = 60                 # цена семян за клетку
-POTATO_GROW = 8 * 3600           # созревание
-POTATO_DUST_COST = 100           # Дуст: убрать всех жуков разом
-POTATO_SPRAY_COST = 150          # Обработка поля: жуки обходят поле
-POTATO_SPRAY_SECONDS = 12 * 3600
+# Цифры поля — из панели /glaz («🏛 Экономика: краны и налоги»), меняются без деплоя
+def _pot_cost():  return cfg("potato_seed")              # цена семян за клетку
+def _pot_grow():  return cfg("potato_grow_h") * 3600     # созревание
+def _pot_dust():  return cfg("potato_dust")              # Дуст: убрать всех жуков разом
+def _pot_spray(): return cfg("potato_spray")             # Обработка поля: жуки обходят поле
+def _pot_spray_s(): return cfg("potato_spray_h") * 3600
+def _pot_yield():
+    lo, hi = range_pair("potato_yield")
+    return random.randint(lo, hi)
 
 def _potato_get_field(uid):
     field = db['potato_fields'].find_one({"uid": uid})
@@ -2831,6 +2842,7 @@ def _potato_get_field(uid):
 
 def _potato_stats(field, now):
     cells = field.get("cells", [0] * 100)
+    POTATO_GROW, POTATO_COST = _pot_grow(), _pot_cost()
     return {
         "ready": sum(1 for c in cells if c > 0 and now - c >= POTATO_GROW),
         "growing": sum(1 for c in cells if c > 0 and now - c < POTATO_GROW),
@@ -2843,6 +2855,7 @@ def _potato_stats(field, now):
         "spray_left": max(0, int(field.get("protected_until", 0) - now)),
         "total_harvested": field.get("t_harv", 0),
         "total_squashed": field.get("t_squash", 0),
+        "grow": POTATO_GROW,
     }
 
 @app.route('/api/get_potato_field', methods=['POST'])
@@ -2869,6 +2882,8 @@ def api_potato_action():
     field = _potato_get_field(uid)
     cells = field['cells']
     fid = {"uid": uid}
+    POTATO_COST, POTATO_GROW, POTATO_DUST_COST = _pot_cost(), _pot_grow(), _pot_dust()
+    POTATO_SPRAY_COST, POTATO_SPRAY_SECONDS = _pot_spray(), _pot_spray_s()
     
     def reset_wave_if_empty():
         if all(c == 0 for c in cells):
@@ -2904,7 +2919,7 @@ def api_potato_action():
             if c > 0 and now - c >= POTATO_GROW:
                 res = db['potato_fields'].update_one({"uid": uid, f"cells.{i}": c}, {"$set": {f"cells.{i}": 0}})
                 if res.modified_count:
-                    total += random.randint(70, 110)
+                    total += _pot_yield()
                     cnt += 1
         if cnt == 0: return jsonify({"error": "Нет созревшей картохи!"}), 400
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": total}})
@@ -2968,7 +2983,7 @@ def api_potato_action():
         # Атомарно убираем клетку: двойной тап не выдаст награду дважды
         res = db['potato_fields'].update_one({"uid": uid, f"cells.{index}": planted_at}, {"$set": {f"cells.{index}": 0}})
         if res.modified_count == 0: return jsonify({"error": "Уже собрано!"}), 400
-        reward = random.randint(70, 110)
+        reward = _pot_yield()
         paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": reward}})
         db['potato_fields'].update_one(fid, {"$inc": {"s_harv": reward, "s_cnt": 1, "t_harv": 1}})
         return jsonify({"success": True, "reward": reward})
@@ -3077,6 +3092,18 @@ def api_crack_safe():
     prize = safe['balance']
     
     if guess_pin == real_pin:
+        # Атомарно: сейф забирает только первый, кто угадал (раньше двое одновременно получали куш оба)
+        import random
+        pin_len = 4 if safe_color == 'blue' else 6 # Было 3 и 4
+        new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
+        start_balance = cfg("safe_blue_start") if safe_color == 'blue' else cfg("safe_red_start")
+        won = db['safes_state'].find_one_and_update(
+            {"_id": safe_id, "pin_code": real_pin},
+            {"$set": {"pin_code": new_pin, "balance": start_balance, "logs": []}}
+        )
+        if not won:
+            return jsonify({"error": "Этот сейф только что вскрыл кто-то другой! PIN уже сменился."}), 409
+        prize = won.get('balance', prize)
         grant_achievement(uid, "safecracker", "Медвежатник", "🏦", None)
         if safe_color == 'blue':
             paid_collection.update_one({"uid": uid}, {"$inc": {"bounty_points": prize}})
@@ -3086,15 +3113,6 @@ def api_crack_safe():
             currency = "₽"
             # 👇 ЛОГИРУЕМ ВЗЛОМ
             db['ruble_ledger'].insert_one({"uid": uid, "amount": prize, "reason": "Взлом Финансового Сейфа", "timestamp": time.time()})
-            
-        import random
-        pin_len = 4 if safe_color == 'blue' else 6 # Было 3 и 4
-        new_pin = "".join([str(random.randint(0, 9)) for _ in range(pin_len)])
-        start_balance = 10000 if safe_color == 'blue' else 500
-        
-        db['safes_state'].update_one({"_id": safe_id}, {
-            "$set": {"pin_code": new_pin, "balance": start_balance, "logs": []}
-        })
         
         # 1. Отчет админам (Тихо)
         try:
@@ -4167,7 +4185,7 @@ def propose_marriage(message):
         bot.reply_to(message, f"💍 [{partner_name}](tg://user?id={partner_id}) уже состоит в браке! Отбивать чужих партнеров нельзя.", parse_mode="Markdown")
         return
         
-    PRICE = 500
+    PRICE = cfg("wedding_price")
     if init_data.get("bounty_points", 0) < PRICE:
         bot.reply_to(message, f"💸 Регистрация Синдиката стоит {PRICE} 💎! У вас недостаточно средств.")
         return
@@ -4196,7 +4214,7 @@ def handle_marriage_response(call):
         bot.answer_callback_query(call.id, "Эй! Предложение сделали не вам!", show_alert=True)
         return
         
-    PRICE = 500
+    PRICE = cfg("wedding_price")
     init_data = paid_collection.find_one({"uid": initiator_id}) or {}
     
     if init_data.get("partner_id") or (paid_collection.find_one({"uid": partner_id}) or {}).get("partner_id"):
@@ -4331,10 +4349,20 @@ def set_custom_marriage_date_cmd(message):
     now = time.time()
     if ts > now or ts < now - 366 * 86400:
         return bot.reply_to(message, "⚠️ Дата должна быть реальной (в пределах последнего года и не в будущем)!")
+    # Запоминаем, с какого момента считать НАГРАДЫ за годовщины: со стажа брака в боте.
+    # Введённая дата меняет только свидетельство и название годовщины.
+    resolve_and_sync_marriage_info(uid, u_db)   # фиксирует исходную дату и выдаёт честно заработанное
+    orig_ts = (paid_collection.find_one({"uid": uid}) or {}).get("married_at") or now
+    _fam = _family_bank_id(uid, u_db) or f"family_{min(uid, partner_id)}_{max(uid, partner_id)}"
+    try:
+        db['family_banks'].update_one({"_id": _fam, "rewards_from": {"$exists": False}},
+                                      {"$set": {"rewards_from": orig_ts}}, upsert=True)
+    except Exception:
+        pass   # rewards_from уже записан (DuplicateKeyError) — оставляем прежний
     paid_collection.update_one({"uid": uid}, {"$set": {"married_at": ts, "marriage_date_locked": True}})
     paid_collection.update_one({"uid": partner_id}, {"$set": {"married_at": ts, "marriage_date_locked": True}})
     cert = resolve_and_sync_marriage_info(uid, paid_collection.find_one({"uid": uid}) or {})
-    bot.reply_to(message, f"✅ <b>Архив ЗАГСа обновлён!</b>\nДата вашей свадьбы: <b>{cert['date']}</b> ({cert['days']} дн. вместе).\nТекущая годовщина: <b>{cert['anniversary']}</b>!", parse_mode="HTML")
+    bot.reply_to(message, f"✅ <b>Архив ЗАГСа обновлён!</b>\nДата вашей свадьбы: <b>{cert['date']}</b> ({cert['days']} дн. вместе).\nТекущая годовщина: <b>{cert['anniversary']}</b>!\n\n<i>Награды за годовщины начисляются по стажу брака в боте.</i>", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == '!развод')
 def divorce(message):
@@ -4346,7 +4374,7 @@ def divorce(message):
         bot.reply_to(message, "🤷‍♂️ Вы не состоите в браке. Разводиться не с кем!")
         return
         
-    PENALTY = 1000
+    PENALTY = cfg("divorce_price")
     charged = paid_collection.find_one_and_update(
         {"uid": uid, "partner_id": partner_id, "bounty_points": {"$gte": PENALTY}},
         {"$unset": {"partner_id": "", "married_at": "", "married_by": ""}, "$set": {"divorced": True}, "$inc": {"bounty_points": -PENALTY}}
@@ -5847,7 +5875,7 @@ def help_commands(message):
         "🤖 **БАЗА ДАННЫХ СКАЙНЕТА (КОМАНДЫ)** 🤖\n\n"
         "💍 **КИБЕР-СЕМЬЯ:**\n"
         "• `!свадьба` *(в ответ)* — сделать предложение\n"
-        "• `!развод` — расторгнуть брак (штраф 1000 💎)\n"
+        f"• `!развод` — расторгнуть брак (штраф {cfg('divorce_price')} 💎)\n"
         "• `!усыновить` *(в ответ)* — взять ребенка в семью\n"
         "• `!выгнать` *(в ответ)* — лишить наследства и выгнать\n"
         "• `!сбежать` — покинуть семью (с шансом обнести копилку)\n"
@@ -5914,7 +5942,7 @@ def handle_karma_vote(message):
     vote_key = f"karma_{voter_id}_{target_id}"
     last_vote = db['settings'].find_one({"_id": vote_key})
     
-    KARMA_COOLDOWN = 120  # секунд (было 3600)
+    KARMA_COOLDOWN = cfg("karma_vote_cooldown_s")  # секунд, из панели /glaz (было 120, ещё раньше 3600)
     if last_vote and (now - last_vote.get('time', 0) < KARMA_COOLDOWN):
         left_sec = int(KARMA_COOLDOWN - (now - last_vote['time']))
         return bot.reply_to(message, f"⏳ Вы уже оценивали этого гражданина! Система примет ваш следующий голос через {left_sec // 60} мин {left_sec % 60} сек.")

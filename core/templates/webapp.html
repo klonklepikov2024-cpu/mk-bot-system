@@ -1151,11 +1151,11 @@
             <div class="grid grid-cols-2 gap-2 mt-3">
                 <button onclick="potatoBulk('harvest_all')" class="surface rounded-xl p-2 text-xs font-bold border border-yellow-600/40 active:scale-95 transition-transform">🧺 Собрать всё</button>
                 <button onclick="potatoBulk('plant_all')" class="surface rounded-xl p-2 text-xs font-bold border border-green-600/40 active:scale-95 transition-transform">🌱 Посадить везде</button>
-                <button onclick="potatoBulk('dust')" class="surface rounded-xl p-2 text-xs font-bold border border-red-600/40 active:scale-95 transition-transform">☠️ Дуст · 100 💎</button>
-                <button onclick="potatoBulk('spray')" class="surface rounded-xl p-2 text-xs font-bold border border-blue-600/40 active:scale-95 transition-transform">🧪 Обработка 12ч · 150 💎</button>
+                <button onclick="potatoBulk('dust')" class="surface rounded-xl p-2 text-xs font-bold border border-red-600/40 active:scale-95 transition-transform">☠️ Дуст · {{ econ.potato_dust }} 💎</button>
+                <button onclick="potatoBulk('spray')" class="surface rounded-xl p-2 text-xs font-bold border border-blue-600/40 active:scale-95 transition-transform">🧪 Обработка {{ econ.potato_spray_h }}ч · {{ econ.potato_spray }} 💎</button>
             </div>
 
-            <p class="text-[9px] text-gray-400 text-center mt-3 uppercase tracking-widest">Тап по клетке: посадить (60 💎) / собрать / раздавить жука. Съеденный кустик не вернуть.</p>
+            <p class="text-[9px] text-gray-400 text-center mt-3 uppercase tracking-widest">Тап по клетке: посадить ({{ econ.potato_seed }} 💎) / собрать / раздавить жука. Съеденный кустик не вернуть.</p>
         </div>
 
     </div> <!-- 🔥 КОНЕЦ ВКЛАДКИ ФЕРМЫ 🔥 -->
@@ -2768,7 +2768,7 @@
             }
             else if(type === 'hack') {
                 title.innerText = "💻 Кибер-Атака"; 
-                desc.innerText = "Укажите @username или ID жертвы. Цена: 200 💎. Шанс: 30%.\n⚠️ ВНИМАНИЕ: Если у жертвы есть Щит, он сожжет ваш вирус!"; 
+                desc.innerText = "Укажите @username или ID жертвы. Цена: {{ econ.hack_cost }} 💎. Шанс: {{ econ.hack_chance }}%.\n⚠️ ВНИМАНИЕ: Если у жертвы есть Щит, он сожжет ваш вирус!"; 
                 input.placeholder = "@username или ID"; 
                 submitBtn.onclick = () => submitModalAction('hack', input.value);
             }
@@ -3275,6 +3275,7 @@
             lfHarvestFx(reward, reward >= 300, tap.x, tap.y);
         }
         // 🥔 Клетки поля: возвращает {html, count}. Рост по стадиям, готовые парят и светятся, жуки покачиваются
+        const POTATO_GROW_S = {{ econ.potato_grow_s|int }} || 28800;   // время созревания — из панели /glaz
         function lfPotatoCellsHtml(cells, now) {
             let html = '', count = 0;
             cells.forEach((cell, index) => {
@@ -3283,11 +3284,11 @@
                     cls += ' beetle'; inner = '<span class="lf-cell-ic">🪲</span>'; action = `potatoAction('squash', ${index})`;
                 } else if (cell > 0) {
                     count++;
-                    const left = (8 * 3600) - (now - cell);
+                    const left = POTATO_GROW_S - (now - cell);
                     if (left <= 0) {
                         cls += ' ready'; inner = '<span class="lf-cell-ic">🥔</span>'; action = `potatoAction('harvest', ${index})`;
                     } else {
-                        const f = Math.max(0, Math.min(1, 1 - left / (8 * 3600)));
+                        const f = Math.max(0, Math.min(1, 1 - left / POTATO_GROW_S));
                         cls += ' grow'; action = '';
                         inner = `<span class="lf-cell-ic"><span style="display:inline-block;transform:scale(${(0.75 + 0.35 * f).toFixed(2)})">${f < 0.4 ? '🌱' : '🌿'}</span></span>`;
                     }
@@ -3360,9 +3361,9 @@
 
         function potatoBulk(action) {
             const ask = {
-                plant_all: 'Посадить картошку на все свободные клетки (60 💎 за каждую)?',
-                dust: 'Купить Дуст за 100 💎 и убрать всех жуков с поля?',
-                spray: 'Обработать поле за 150 💎? Жуки будут обходить его 12 часов.'
+                plant_all: 'Посадить картошку на все свободные клетки ({{ econ.potato_seed }} 💎 за каждую)?',
+                dust: 'Купить Дуст за {{ econ.potato_dust }} 💎 и убрать всех жуков с поля?',
+                spray: 'Обработать поле за {{ econ.potato_spray }} 💎? Жуки будут обходить его {{ econ.potato_spray_h }} часов.'
             };
             if (ask[action] && !confirm(ask[action])) return;
             safeHaptic('impact', 'light');

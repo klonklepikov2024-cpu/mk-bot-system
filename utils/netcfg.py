@@ -55,10 +55,21 @@ DEFAULTS = {
     "job_scout": True, "job_scout_time": "10:00",
     "job_funnel": True, "job_funnel_every_h": 6,
     "job_farm_dm": True, "job_collectors": True,
+
+    # 🏛 Экономика: краны и налоги (раньше было зашито в коде)
+    "potato_seed": 60, "potato_yield": "70, 110", "potato_grow_h": 8,
+    "potato_dust": 100, "potato_spray": 150, "potato_spray_h": 12,
+    "safe_blue_tick": 5, "safe_blue_start": 10000, "safe_red_start": 500,
+    "hack_cost": 200, "hack_chance": 30, "hack_cooldown_min": 60,
+    "wedding_price": 500, "divorce_price": 1000, "anniv_reward_pct": 100,
+    "karma_vote_cooldown_s": 120,
+    "lux_tax_on": False, "lux_tax_tiers": "30000:1, 100000:2, 150000:3",
+    "lux_tax_wallets": True, "lux_tax_time": "04:00", "lux_tax_notify": True,
 }
 
 # Где 0 — осмысленное значение (выключено / без шанса), а не «пусто»
-_ZERO_OK = {"bonus_shard_pct", "casino_tax_pct", "casino_tax_outcast_pct", "casino_mini_shards", "casino_jackpot_points"}
+_ZERO_OK = {"bonus_shard_pct", "casino_tax_pct", "casino_tax_outcast_pct", "casino_mini_shards", "casino_jackpot_points",
+            "safe_blue_tick", "safe_blue_start", "safe_red_start", "hack_chance", "anniv_reward_pct"}
 
 _cache = {"t": 0.0, "d": {}}
 TTL = 20
@@ -118,6 +129,33 @@ def _pairs(key):
         except ValueError:
             pass
     return []
+
+
+def range_pair(key):
+    """«70, 110» -> (70, 110); перевёрнутое или кривое — значение по умолчанию"""
+    v = _ints(key)
+    if len(v) >= 2 and v[0] <= v[1]:
+        return v[0], v[1]
+    d = [int(x) for x in DEFAULTS[key].split(",")]
+    return d[0], d[1]
+
+
+def lux_tax_amount(balance):
+    """Налог на роскошь за сутки: «30000:1, 100000:2» — с части выше 30 000 берётся 1 %, выше 100 000 — 2 %
+    (как подоходный по ступеням: каждая ставка только со своей части)."""
+    tiers = sorted(_pairs("lux_tax_tiers"))
+    tax = 0.0
+    for i, (thr, pct) in enumerate(tiers):
+        if balance <= thr:
+            break
+        top = min(balance, tiers[i + 1][0]) if i + 1 < len(tiers) else balance
+        tax += (top - thr) * pct / 100
+    return int(tax)
+
+
+def lux_tax_free_limit():
+    tiers = sorted(_pairs("lux_tax_tiers"))
+    return tiers[0][0] if tiers else 0
 
 
 def fine_quick_buttons():

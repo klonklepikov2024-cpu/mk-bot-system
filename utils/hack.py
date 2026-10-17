@@ -15,8 +15,9 @@ from database.mongo import paid_collection, db
 from utils.gameids import game_no, family_bank_id
 from utils.logger import logger
 from utils.validators import take_points_capped
+from utils.netcfg import cfg
 
-HACK_COST = 200            # цена попытки, 💎
+HACK_COST = 200            # цена попытки, 💎 (по умолчанию; живое значение — из панели /glaz)
 MIN_WALLET = 100           # меньше этого у жертвы в кошельке — красть нечего (если копилка тоже пуста)
 COOLDOWN = 3600            # кулдаун хакера, сек
 COOLDOWN_ANARCHY = 900     # при Судной ночи
@@ -65,6 +66,11 @@ def _steal_family_bank(family_id, hacker_uid):
 
 
 def run_hack(uid, target_uid):
+    # Цена, шанс и кулдаун — из панели /glaz («🏛 Экономика: краны и налоги»)
+    HACK_COST = cfg("hack_cost")
+    COOLDOWN = cfg("hack_cooldown_min") * 60
+    CHANCE = cfg("hack_chance")
+    CHANCE_RAT = min(100, CHANCE + 10)
     if target_uid == uid:
         return True, "Нельзя взломать самого себя!"
 
